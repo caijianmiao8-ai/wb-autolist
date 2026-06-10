@@ -1,0 +1,51 @@
+name: Build desktop apps
+
+# Builds the Electron desktop installers on native runners (the ONLY reliable
+# way to get a working Windows build — native `sharp` + signing need Windows).
+# Trigger: push a tag like v1.0.0, or run manually from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: "--mac" # dmg, arm64 (Apple Silicon)
+            artifact: "*.dmg"
+            name: macos
+          - os: windows-latest
+            target: "--win" # nsis installer, x64
+            artifact: "*.exe"
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # installs platform-correct native deps (e.g. win32-x64 sharp on Windows)
+      - run: npm ci
+
+      # next build + copy static + strip dev data (cross-platform node script)
+      - run: npm run desktop:prep
+
+      - name: Build desktop installer
+        run: npx electron-builder ${{ matrix.target }} --publish never
+        env:
+          # no code-signing on CI by default; add certs as secrets later:
+          #   macOS: CSC_LINK / CSC_KEY_PASSWORD + APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
+          #   Windows: WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wb-autolist-${{ matrix.name }}
+          path: dist-desktop/${{ matrix.artifact }}
+          if-no-files-found: error

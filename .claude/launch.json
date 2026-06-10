@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wb-autolist",
+      "runtimeExecutable": "/Users/ruo/.local/node/bin/node",
+      "runtimeArgs": ["node_modules/next/dist/bin/next", "dev", "-p", "3100"],
+      "port": 3100
+    }
+  ]
+}

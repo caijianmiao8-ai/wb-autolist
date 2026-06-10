@@ -1,0 +1,64 @@
+{
+  "name": "wb-autolist",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Wildberries 商品自动化上架工作流 — 输入商品名+关键字，AI 生成主图与宣传图并一键上架",
+  "author": "WB AutoList",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "desktop:prep": "next build && node scripts/desktop-prep.mjs",
+    "electron:dev": "electron .",
+    "dist:mac": "npm run desktop:prep && electron-builder --mac",
+    "dist:win": "npm run desktop:prep && electron-builder --win"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "exceljs": "^4.4.0",
+    "lucide-react": "0.456.0",
+    "next": "^14.2.33",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sharp": "0.33.5"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.15",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "autoprefixer": "10.4.20",
+    "electron": "33.2.0",
+    "electron-builder": "25.1.8",
+    "postcss": "8.4.47",
+    "tailwindcss": "3.4.14",
+    "typescript": "5.6.3"
+  },
+  "build": {
+    "appId": "com.wbautolist.app",
+    "productName": "WB AutoList",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "electron/main.js",
+      "package.json",
+      "!**/node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "standalone"
+      }
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.business",
+      "identity": null
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
