@@ -2,9 +2,8 @@
   "name": "wb-autolist",
   "version": "1.0.0",
   "private": true,
-  "description": "Wildberries 商品自动化上架工作流 — 输入商品名+关键字，AI 生成主图与宣传图并一键上架",
+  "description": "Wildberries 商品自动化上架工作流 — 输入商品名+关键字，AI 生成主图与宣传图并一键上架（Tauri + Rust 桌面应用）",
   "author": "WB AutoList",
-  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -19,12 +18,10 @@
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
     "clsx": "2.1.1",
-    "exceljs": "^4.4.0",
     "lucide-react": "0.456.0",
     "next": "^14.2.33",
     "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "sharp": "0.33.5"
+    "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
@@ -32,51 +29,8 @@
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "autoprefixer": "10.4.20",
-    "electron": "33.2.0",
-    "electron-builder": "25.1.8",
     "postcss": "8.4.47",
     "tailwindcss": "3.4.14",
     "typescript": "5.6.3"
-  },
-  "build": {
-    "appId": "com.wbautolist.app",
-    "productName": "WB AutoList",
-    "directories": {
-      "output": "dist-desktop"
-    },
-    "files": [
-      "electron/main.js",
-      "package.json",
-      "!**/node_modules/**"
-    ],
-    "extraResources": [
-      {
-        "from": ".next/standalone",
-        "to": "standalone"
-      }
-    ],
-    "mac": {
-      "target": "dmg",
-      "category": "public.app-category.business",
-      "identity": null,
-      "icon": "assets/icon.png"
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowElevation": true,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false,
-      "shortcutName": "WB AutoList",
-      "uninstallDisplayName": "WB AutoList ${version}",
-      "language": "2052"
-    }
   }
 }
