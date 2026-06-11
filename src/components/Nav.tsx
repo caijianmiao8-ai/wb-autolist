@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Sparkles, Settings, History, Boxes, Layers } from "lucide-react";
+import { Sparkles, Settings, History, Layers } from "lucide-react";
 import clsx from "clsx";
 
 const links = [
@@ -18,9 +18,14 @@ export function Nav() {
     <header className="sticky top-0 z-30 -mx-4 mb-2 border-b border-white/[0.06] bg-wb-ink/60 px-4 py-3.5 backdrop-blur-xl sm:-mx-6 sm:px-6">
       <div className="flex items-center justify-between">
         <Link href="/" className="group flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-wb-purple to-wb-violet shadow-glow transition-transform duration-200 group-hover:scale-[1.04]">
-            <Boxes className="h-[18px] w-[18px] text-white" />
-          </span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.png"
+            alt="WB AutoList"
+            width={36}
+            height={36}
+            className="h-9 w-9 rounded-xl shadow-glow transition-transform duration-200 group-hover:scale-[1.04]"
+          />
           <span className="text-[15px] font-semibold tracking-tight text-slate-100">
             WB<span className="text-wb-pink">AutoList</span>
           </span>

@@ -55,10 +55,12 @@
     "mac": {
       "target": "dmg",
       "category": "public.app-category.business",
-      "identity": null
+      "identity": null,
+      "icon": "assets/icon.png"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/icon.png"
     }
   }
 }

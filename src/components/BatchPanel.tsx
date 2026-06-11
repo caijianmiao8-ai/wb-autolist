@@ -83,7 +83,7 @@ export function BatchPanel() {
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
   function addRow() {
-    setRows((rs) => [...rs, { productName: "", keywords: [], price: 1990, discount: 30 }]);
+    setRows((rs) => [...rs, { productName: "", keywords: [], brand: "", price: 1990, discount: 30 }]);
   }
 
   async function enqueue() {
@@ -160,16 +160,18 @@ export function BatchPanel() {
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="grid grid-cols-[1fr_1fr_72px_56px_28px] gap-2 px-1 text-[11px] uppercase tracking-wide text-slate-500">
-                  <span>商品名</span><span>关键字(逗号)</span><span>价格</span><span>折扣%</span><span />
+                <div className="grid grid-cols-[1fr_1fr_104px_72px_56px_28px] gap-2 px-1 text-[11px] uppercase tracking-wide text-slate-500">
+                  <span>商品名</span><span>关键字(逗号)</span><span>品牌(选填)</span><span>价格</span><span>折扣%</span><span />
                 </div>
                 <div className="max-h-[420px] space-y-2 overflow-auto">
                   {rows.map((r, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_1fr_72px_56px_28px] gap-2">
+                    <div key={i} className="grid grid-cols-[1fr_1fr_104px_72px_56px_28px] gap-2">
                       <input className="input px-2.5 py-1.5 text-xs" value={r.productName}
                         onChange={(e) => updateRow(i, { productName: e.target.value })} placeholder="商品名" />
                       <input className="input px-2.5 py-1.5 text-xs" value={r.keywords.join(", ")}
                         onChange={(e) => updateRow(i, { keywords: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) })} placeholder="降噪, 长续航" />
+                      <input className="input px-2.5 py-1.5 text-xs" value={r.brand ?? ""}
+                        onChange={(e) => updateRow(i, { brand: e.target.value })} placeholder="留空AI生成" />
                       <input type="number" className="input px-2 py-1.5 text-xs" value={r.price}
                         onChange={(e) => updateRow(i, { price: Number(e.target.value) })} />
                       <input type="number" className="input px-2 py-1.5 text-xs" value={r.discount}
