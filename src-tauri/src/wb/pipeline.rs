@@ -285,7 +285,9 @@ async fn run_pipeline(
             vec![json!({ "nmID": created.nm_id, "price": base, "discount": discount as i64 })],
         )
         .await?;
-        wait_for_price_task(state, &price_ctx, upload_id).await
+        // short wait during publish — a brand-new nmID usually isn't priceable
+        // yet; the user re-applies pricing later (retry_pricing, 3-min wait).
+        wait_for_price_task(state, &price_ctx, upload_id, 25).await
     }
     .await;
 
@@ -321,13 +323,13 @@ async fn run_pipeline(
             );
         }
         Err(e) => {
-            log(logs, "pricing", false, &format!("价格任务超时/失败：{}", e), on);
+            log(logs, "pricing", false, &format!("折扣暂未生效（{}）", e), on);
             log(
                 logs,
                 "live",
                 true,
                 &format!(
-                    "卡片已创建 nmID={}（WB 审核后生效）。WB 价格系统对新卡片有延迟，折扣暂未生效，可稍后在「上架记录」点「重试定价」。",
+                    "卡片已创建 nmID={}（WB 审核后生效）。新卡片通常要先通过 WB 审核才能定价，请稍后在「上架记录」点「重试定价」补上价格/折扣。",
                     created.nm_id
                 ),
                 on,

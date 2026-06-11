@@ -48,6 +48,8 @@ export const api = {
   trashCard: (id: string) => invoke<boolean>("trash_card", { id }),
   /** Re-apply price/discount for an already-created card (after WB activates it). */
   retryPricing: (id: string) => invoke<Listing>("retry_pricing", { id }),
+  /** Open an external URL in the system browser. */
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
   importExcel: (bytes: number[]) => invoke<ListingInput[]>("import_excel", { bytes }),
   listJobs: () => invoke<Job[]>("list_jobs"),
   enqueueJobs: (rows: ListingInput[], autoPublish: boolean) =>

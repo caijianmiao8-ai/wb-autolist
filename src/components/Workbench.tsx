@@ -590,14 +590,15 @@ function ProgressPanel({
                     </span>
                   )}
                   {!done.dryRun && !done.sandbox && (
-                    <a
-                      href={`https://www.wildberries.ru/catalog/${done.nmID}/detail.aspx`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() =>
+                        api.openUrl(`https://www.wildberries.ru/catalog/${done.nmID}/detail.aspx`)
+                      }
                       className="ml-2 underline"
                     >
                       查看商品页 ↗（WB 审核后可见）
-                    </a>
+                    </button>
                   )}
                 </div>
               )}

@@ -26,12 +26,15 @@ pub async fn upload_price_task(state: &AppState, ctx: &WbCtx, items: Vec<Value>)
 }
 
 /// Poll a price task. status 3 = done; 5 = partial. Returns (status, success, total).
+/// `timeout_secs` is short during publish (a brand-new card usually can't be
+/// priced yet) and long for an explicit retry.
 pub async fn wait_for_price_task(
     state: &AppState,
     ctx: &WbCtx,
     upload_id: i64,
+    timeout_secs: u64,
 ) -> Result<(i64, i64, i64)> {
-    let timeout = Duration::from_secs(3 * 60);
+    let timeout = Duration::from_secs(timeout_secs);
     let interval = Duration::from_secs(8);
     let start = Instant::now();
 

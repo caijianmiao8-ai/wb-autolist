@@ -37,6 +37,24 @@ pub fn ping() -> String {
     "pong".into()
 }
 
+/// Open an external URL in the system browser (Tauri webviews don't follow
+/// `<a target=_blank>` by themselves).
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("仅支持 http(s) 链接".into());
+    }
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &url])
+        .spawn();
+    #[cfg(target_os = "linux")]
+    let spawned = std::process::Command::new("xdg-open").arg(&url).spawn();
+    spawned.map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_settings(state: State<Arc<AppState>>) -> Value {
     redact_config(&get_config(&state.paths))
@@ -96,7 +114,7 @@ pub async fn retry_pricing(state: State<'_, Arc<AppState>>, id: String) -> Resul
     )
     .await
     .map_err(|e| e.to_string())?;
-    let (status, success, total) = wait_for_price_task(&st, &ctx, upload_id)
+    let (status, success, total) = wait_for_price_task(&st, &ctx, upload_id, 180)
         .await
         .map_err(|e| e.to_string())?;
     let ok = status == 3 && success >= total;

@@ -22,7 +22,15 @@ export function HistoryList() {
       alert("定价成功，折扣已生效。");
       await load();
     } catch (e) {
-      alert("折扣仍未生效：" + (e instanceof Error ? e.message : String(e)));
+      const msg = e instanceof Error ? e.message : String(e);
+      const url = msg.match(/https?:\/\/\S+/)?.[0];
+      if (url) {
+        if (confirm("折扣未生效。WB 返回了一条规则说明（多为：新卡片需先通过审核才能定价）。\n是否打开查看？\n\n" + msg)) {
+          api.openUrl(url);
+        }
+      } else {
+        alert("折扣仍未生效：" + msg);
+      }
     } finally {
       setPricingId(null);
     }
@@ -125,15 +133,15 @@ export function HistoryList() {
                     </button>
                   )}
                   {l.nmID && !l.dryRun && !l.sandbox && (
-                    <a
-                      href={`https://www.wildberries.ru/catalog/${l.nmID}/detail.aspx`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      onClick={() =>
+                        api.openUrl(`https://www.wildberries.ru/catalog/${l.nmID}/detail.aspx`)
+                      }
                       title="查看商品页（WB 审核后可见）"
                       className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-slate-200"
                     >
                       <ExternalLink className="h-4 w-4" />
-                    </a>
+                    </button>
                   )}
                   <button
                     onClick={() => remove(l.id, !!l.nmID && !l.dryRun)}
