@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Save, Check, Loader2, KeyRound, ImageIcon, Globe, ShieldAlert } from "lucide-react";
+import { api } from "@/lib/api";
 
 interface Redacted {
   authEnabled: boolean;
@@ -33,15 +34,13 @@ export function SettingsForm() {
   const [publicBaseUrl, setPublicBaseUrl] = useState("");
 
   useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((d: Redacted) => {
-        setRedacted(d);
-        setImageProvider(d.imageProvider || "pollinations");
-        setPublicBaseUrl(d.publicBaseUrl || "");
-        setWbSandbox(!!d.wbSandbox);
-        setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
-      });
+    api.getSettings().then((d) => {
+      setRedacted(d);
+      setImageProvider(d.imageProvider || "pollinations");
+      setPublicBaseUrl(d.publicBaseUrl || "");
+      setWbSandbox(!!d.wbSandbox);
+      setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
+    });
   }, []);
 
   async function save() {
@@ -59,12 +58,7 @@ export function SettingsForm() {
     if (aurixelChatModel) patch.aurixelChatModel = aurixelChatModel;
     if (pollinationsToken) patch.pollinationsToken = pollinationsToken;
 
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    const d = await res.json();
+    const d = await api.saveSettings(patch);
     setRedacted(d);
     setWbContentToken("");
     setWbPricesToken("");

@@ -14,6 +14,7 @@ import {
   Clock,
 } from "lucide-react";
 import clsx from "clsx";
+import { api } from "@/lib/api";
 import type { ListingInput } from "@/lib/types";
 
 interface Job {
@@ -47,8 +48,7 @@ export function BatchPanel() {
   // poll queue status while anything is in flight
   useEffect(() => {
     const load = async () => {
-      const r = await fetch("/api/batch/jobs");
-      if (r.ok) setJobs(await r.json());
+      setJobs(await api.listJobs());
     };
     load();
     pollRef.current = setInterval(load, 2500);
@@ -65,12 +65,9 @@ export function BatchPanel() {
     setError(null);
     setImporting(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/batch/import", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "导入失败");
-      setRows((prev) => [...prev, ...(data.products as ListingInput[])]);
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const products = await api.importExcel(Array.from(buf));
+      setRows((prev) => [...prev, ...products]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "导入失败");
     } finally {
@@ -95,14 +92,8 @@ export function BatchPanel() {
     setEnqueuing(true);
     setError(null);
     try {
-      const res = await fetch("/api/batch/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: valid, autoPublish }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "入队失败");
-      setJobs(data.jobs);
+      await api.enqueueJobs(valid, autoPublish);
+      setJobs(await api.listJobs());
       setRows([]); // moved into queue
     } catch (e) {
       setError(e instanceof Error ? e.message : "入队失败");
@@ -112,8 +103,7 @@ export function BatchPanel() {
   }
 
   async function clear(which: "finished" | "all") {
-    const r = await fetch(`/api/batch/jobs?which=${which}`, { method: "DELETE" });
-    if (r.ok) setJobs((await r.json()).jobs);
+    setJobs(await api.clearJobs(which));
   }
 
   const counts = {

@@ -16,6 +16,8 @@ import {
   Settings,
 } from "lucide-react";
 import clsx from "clsx";
+import { listen } from "@tauri-apps/api/event";
+import { api } from "@/lib/api";
 import type { Listing, StageLog } from "@/lib/types";
 
 type Step = "input" | "generating" | "preview" | "publishing" | "done";
@@ -50,10 +52,7 @@ export function Workbench() {
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then(setSettings)
-      .catch(() => {});
+    api.getSettings().then(setSettings).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -84,13 +83,7 @@ export function Workbench() {
     setDone(null);
     setLogs([]);
     try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productName, keywords, price, discount, brand }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "生成失败");
+      const data = await api.generate({ productName, keywords, price, discount, brand });
       setListing(data);
       setStep("preview");
     } catch (e) {
@@ -106,44 +99,37 @@ export function Workbench() {
     setDone(null);
     setError(null);
 
-    try {
-      const res = await fetch("/api/publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: listing.id }),
-      });
-      if (!res.body) throw new Error("无响应流");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done: rdone, value } = await reader.read();
-        if (rdone) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() || "";
-        for (const chunk of chunks) {
-          const evMatch = chunk.match(/^event: (.+)$/m);
-          const dataMatch = chunk.match(/^data: (.+)$/m);
-          if (!dataMatch) continue;
-          const payload = JSON.parse(dataMatch[1]);
-          const ev = evMatch?.[1];
-          if (ev === "progress") {
-            setLogs((l) => [
-              ...l,
-              { ts: new Date().toISOString(), ...payload },
-            ]);
-          } else if (ev === "done") {
-            setDone(payload);
-            setStep("done");
-          }
-        }
+    // Live progress arrives as "publish:progress" events from the Rust backend.
+    const unlisten = await listen<{ id: string; stage: string; ok: boolean; message: string }>(
+      "publish:progress",
+      (e) => {
+        if (e.payload.id !== listing.id) return;
+        setLogs((l) => [
+          ...l,
+          {
+            ts: new Date().toISOString(),
+            stage: e.payload.stage as StageLog["stage"],
+            ok: e.payload.ok,
+            message: e.payload.message,
+          },
+        ]);
       }
+    );
+    try {
+      const updated = await api.publish(listing.id);
+      setDone({
+        stage: updated.stage,
+        nmID: updated.nmID,
+        dryRun: updated.dryRun,
+        sandbox: updated.sandbox,
+        error: updated.error,
+      });
+      setStep("done");
     } catch (e) {
       setError(e instanceof Error ? e.message : "上架失败");
       setStep("preview");
+    } finally {
+      unlisten();
     }
   }
 

@@ -4,14 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Trash2, Package, ExternalLink, Loader2 } from "lucide-react";
 import { StageBadge } from "./StageBadge";
+import { api } from "@/lib/api";
 import type { Listing } from "@/lib/types";
 
 export function HistoryList() {
   const [listings, setListings] = useState<Listing[] | null>(null);
 
   async function load() {
-    const res = await fetch("/api/listings");
-    setListings(await res.json());
+    setListings(await api.listListings());
   }
 
   useEffect(() => {
@@ -19,7 +19,7 @@ export function HistoryList() {
   }, []);
 
   async function remove(id: string) {
-    await fetch(`/api/listings/${id}`, { method: "DELETE" });
+    await api.deleteListing(id);
     setListings((l) => (l ? l.filter((x) => x.id !== id) : l));
   }
 
