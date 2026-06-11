@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Check, Loader2, KeyRound, ImageIcon } from "lucide-react";
+import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes } from "lucide-react";
 import { api } from "@/lib/api";
+import type { Warehouse } from "@/lib/types";
 
 interface Redacted {
   authEnabled: boolean;
@@ -15,6 +16,9 @@ interface Redacted {
   aurixelChatModel: string;
   pollinationsTokenSet: boolean;
   publicBaseUrl: string;
+  defaultWarehouseId: number;
+  defaultStock: number;
+  autoStock: boolean;
 }
 
 export function SettingsForm() {
@@ -31,6 +35,10 @@ export function SettingsForm() {
   const [aurixelApiKey, setAurixelApiKey] = useState("");
   const [aurixelChatModel, setAurixelChatModel] = useState("gpt-5.5");
   const [pollinationsToken, setPollinationsToken] = useState("");
+  const [autoStock, setAutoStock] = useState(true);
+  const [defaultStock, setDefaultStock] = useState(99);
+  const [defaultWarehouseId, setDefaultWarehouseId] = useState(0);
+  const [warehouses, setWarehouses] = useState<Warehouse[] | null>(null);
 
   useEffect(() => {
     api.getSettings().then((d) => {
@@ -38,15 +46,23 @@ export function SettingsForm() {
       setImageProvider(d.imageProvider || "pollinations");
       setWbSandbox(!!d.wbSandbox);
       setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
+      setAutoStock(d.autoStock ?? true);
+      setDefaultStock(d.defaultStock ?? 99);
+      setDefaultWarehouseId(d.defaultWarehouseId ?? 0);
     });
+    // FBS warehouses need the Маркетплейс scope — failure just leaves the picker empty.
+    api.listWarehouses().then(setWarehouses).catch(() => setWarehouses([]));
   }, []);
 
   async function save() {
     setSaving(true);
     setSaved(false);
-    const patch: Record<string, string | boolean> = {
+    const patch: Record<string, string | boolean | number> = {
       imageProvider,
       wbSandbox,
+      autoStock,
+      defaultStock,
+      defaultWarehouseId,
     };
     // trim — pasted tokens often carry a trailing space/newline that would
     // corrupt the Authorization header.
@@ -72,19 +88,19 @@ export function SettingsForm() {
   return (
     <div className="mx-auto max-w-2xl animate-fade-up">
       <h1 className="mb-1 text-2xl font-semibold tracking-tight">设置</h1>
-      <p className="mb-6 text-sm text-slate-400">
-        所有配置（含密钥）仅保存在<b className="text-slate-300">本机</b>应用数据目录，不会上传任何服务器。
+      <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
+        所有配置（含密钥）仅保存在<b className="text-slate-700 dark:text-slate-300">本机</b>应用数据目录，不会上传任何服务器。
       </p>
 
       <div className="space-y-5">
         {/* WB */}
         <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-200">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
             <KeyRound className="h-4 w-4 text-wb-pink" /> Wildberries Token
           </div>
           <label className="label">
             内容(Контент) Token {redacted?.wbContentTokenSet && (
-              <span className="ml-1 text-emerald-400">已配置</span>
+              <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>
             )}
           </label>
           <input
@@ -96,7 +112,7 @@ export function SettingsForm() {
           />
           <label className="label">
             价格(Цены) Token（可选，留空复用上面的 Token）
-            {redacted?.wbPricesTokenSet && <span className="ml-1 text-emerald-400">已配置</span>}
+            {redacted?.wbPricesTokenSet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
           </label>
           <input
             type="password"
@@ -105,7 +121,7 @@ export function SettingsForm() {
             value={wbPricesToken}
             onChange={(e) => setWbPricesToken(e.target.value)}
           />
-          <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-slate-200">
+          <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-slate-800 dark:text-slate-200">
             <input
               type="checkbox"
               className="h-4 w-4 accent-wb-purple"
@@ -121,7 +137,7 @@ export function SettingsForm() {
 
         {/* Image */}
         <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-200">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
             <ImageIcon className="h-4 w-4 text-wb-pink" /> 文生图
           </div>
           <label className="label">提供方</label>
@@ -137,7 +153,7 @@ export function SettingsForm() {
           {imageProvider === "aurixel" && (
             <>
               <label className="label">
-                Aurixel API Key {redacted?.aurixelKeySet && <span className="ml-1 text-emerald-400">已配置</span>}
+                Aurixel API Key {redacted?.aurixelKeySet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
               </label>
               <input
                 type="password"
@@ -166,7 +182,7 @@ export function SettingsForm() {
           {imageProvider === "openai" && (
             <>
               <label className="label">
-                OpenAI API Key {redacted?.openaiKeySet && <span className="ml-1 text-emerald-400">已配置</span>}
+                OpenAI API Key {redacted?.openaiKeySet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
               </label>
               <input
                 type="password"
@@ -181,7 +197,7 @@ export function SettingsForm() {
             <>
               <label className="label">
                 Pollinations Token（可选，解除限流/水印）
-                {redacted?.pollinationsTokenSet && <span className="ml-1 text-emerald-400">已配置</span>}
+                {redacted?.pollinationsTokenSet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
               </label>
               <input
                 type="password"
@@ -195,6 +211,62 @@ export function SettingsForm() {
               </p>
             </>
           )}
+        </section>
+
+        {/* Stock (FBS) */}
+        <section className="card p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+            <Boxes className="h-4 w-4 text-wb-pink" /> 库存（FBS）
+          </div>
+          <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-800 dark:text-slate-200">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-wb-purple"
+              checked={autoStock}
+              onChange={(e) => setAutoStock(e.target.checked)}
+            />
+            <span>
+              上架后<b>自动设库存</b>
+              <span className="mt-0.5 block text-xs text-slate-500">
+                建卡成功后，按下面的仓库与数量自动设库存——商品在审核+定价后才能真正可售。
+              </span>
+            </span>
+          </label>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">默认仓库</label>
+              <select
+                className="input"
+                value={defaultWarehouseId || ""}
+                onChange={(e) => setDefaultWarehouseId(Number(e.target.value) || 0)}
+              >
+                <option value="">（不自动设库存）</option>
+                {warehouses?.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}（{w.id}）
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">默认库存数量</label>
+              <input
+                type="number"
+                min={0}
+                className="input"
+                value={defaultStock}
+                onChange={(e) => setDefaultStock(Math.max(0, Number(e.target.value) || 0))}
+              />
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            {warehouses === null
+              ? "正在读取仓库…"
+              : warehouses.length === 0
+              ? "未读取到仓库（Token 需含「Маркетплейс」范围）。可在「商品管理」里逐个设库存。"
+              : "也可在「商品管理」里对单个商品补货 / 下架。"}
+          </p>
         </section>
 
         <button className="btn-primary w-full" onClick={save} disabled={saving}>

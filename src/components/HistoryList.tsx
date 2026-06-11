@@ -66,12 +66,12 @@ export function HistoryList() {
   return (
     <div className="animate-fade-up">
       <h1 className="mb-1 text-2xl font-semibold tracking-tight">上架记录</h1>
-      <p className="mb-6 text-sm text-slate-400">共 {listings.length} 个商品</p>
+      <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">共 {listings.length} 个商品</p>
 
       {listings.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-20 text-center">
-          <Package className="mb-3 h-10 w-10 text-slate-600" />
-          <p className="text-sm text-slate-400">还没有商品</p>
+          <Package className="mb-3 h-10 w-10 text-slate-400 dark:text-slate-600" />
+          <p className="text-sm text-slate-500 dark:text-slate-400">还没有商品</p>
           <Link href="/" className="btn-primary mt-4">
             去生成第一个
           </Link>
@@ -90,31 +90,31 @@ export function HistoryList() {
                     className="h-20 w-16 shrink-0 rounded-lg object-cover"
                   />
                 ) : (
-                  <div className="grid h-20 w-16 shrink-0 place-items-center rounded-lg bg-white/5">
-                    <Package className="h-6 w-6 text-slate-600" />
+                  <div className="grid h-20 w-16 shrink-0 place-items-center rounded-lg bg-slate-900/[0.04] dark:bg-white/5">
+                    <Package className="h-6 w-6 text-slate-400 dark:text-slate-600" />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <h3 className="truncate font-medium text-slate-100">
+                    <h3 className="truncate font-medium text-slate-900 dark:text-slate-100">
                       {l.copy?.title || l.productName}
                     </h3>
                     <StageBadge stage={l.stage} />
                     {l.dryRun && (
-                      <span className="chip text-[10px] text-amber-300">演示</span>
+                      <span className="chip text-[10px] text-amber-600 dark:text-amber-300">演示</span>
                     )}
                     {!l.dryRun && l.sandbox && (
-                      <span className="chip text-[10px] text-sky-300">沙盒</span>
+                      <span className="chip text-[10px] text-sky-600 dark:text-sky-300">沙盒</span>
                     )}
                   </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                     <span>{l.price}₽ · -{l.discount}%</span>
                     <span>vendorCode: {l.vendorCode}</span>
                     {l.nmID && <span>nmID: {l.nmID}</span>}
                     <span>{new Date(l.createdAt).toLocaleString("zh-CN")}</span>
                   </div>
                   {l.error && (
-                    <p className="mt-1 truncate text-xs text-rose-400">{l.error}</p>
+                    <p className="mt-1 truncate text-xs text-rose-600 dark:text-rose-400">{l.error}</p>
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -123,7 +123,7 @@ export function HistoryList() {
                       onClick={() => retryPrice(l.id)}
                       disabled={pricingId === l.id}
                       title="重试定价（卡片激活后设置价格/折扣）"
-                      className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-slate-200 disabled:opacity-50"
+                      className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-900/[0.04] dark:hover:bg-white/5 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-50"
                     >
                       {pricingId === l.id ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -138,14 +138,14 @@ export function HistoryList() {
                         api.openUrl(`https://www.wildberries.ru/catalog/${l.nmID}/detail.aspx`)
                       }
                       title="查看商品页（WB 审核后可见）"
-                      className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                      className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-900/[0.04] dark:hover:bg-white/5 hover:text-slate-800 dark:hover:text-slate-200"
                     >
                       <ExternalLink className="h-4 w-4" />
                     </button>
                   )}
                   <button
                     onClick={() => remove(l.id, !!l.nmID && !l.dryRun)}
-                    className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-rose-500/10 hover:text-rose-400"
+                    className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 dark:text-slate-400 hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>

@@ -1,7 +1,12 @@
 // Thin typed wrapper over the Rust Tauri commands — replaces the former
 // fetch('/api/*') calls. Tauri maps camelCase JS arg keys to snake_case params.
 import { invoke } from "@tauri-apps/api/core";
-import type { Listing, ListingInput } from "./types";
+import type {
+  Listing,
+  ListingInput,
+  ManageResponse,
+  Warehouse,
+} from "./types";
 
 export interface RedactedConfig {
   authEnabled: boolean;
@@ -15,6 +20,12 @@ export interface RedactedConfig {
   aurixelChatModel: string;
   pollinationsTokenSet: boolean;
   publicBaseUrl: string;
+  /** Default FBS warehouse for auto-stock + management panel (0 = unset). */
+  defaultWarehouseId: number;
+  /** Quantity used for auto-stock on publish / quick refill. */
+  defaultStock: number;
+  /** Whether publish sets stock automatically once the card is created. */
+  autoStock: boolean;
 }
 
 export interface Job {
@@ -61,4 +72,19 @@ export const api = {
   enqueueJobs: (rows: ListingInput[], autoPublish: boolean) =>
     invoke<Job[]>("enqueue_jobs", { rows, autoPublish }),
   clearJobs: (which: "finished" | "all") => invoke<Job[]>("clear_jobs", { which }),
+
+  // ── Management panel (live WB) ──
+  /** Seller's FBS warehouses (for the warehouse picker). */
+  listWarehouses: () => invoke<Warehouse[]>("list_warehouses"),
+  /** Aggregate cards + prices + (optional) stock. One-shot; call on refresh only. */
+  manageCards: (warehouseId: number | null) =>
+    invoke<ManageResponse>("manage_cards", { warehouseId }),
+  /** Set absolute FBS stock for a card's barcodes (amount 0 = 下架). */
+  setCardStock: (warehouseId: number, skus: string[], amount: number) =>
+    invoke<void>("set_card_stock", { warehouseId, skus, amount }),
+  /** Re-apply price/discount by nmID (submit-only, base price as shown). */
+  setCardPrice: (nmId: number, price: number, discount: number) =>
+    invoke<void>("set_card_price", { nmId, price, discount }),
+  /** Move WB cards to trash by nmID (recoverable 30 days). */
+  trashCards: (nmIds: number[]) => invoke<void>("trash_cards", { nmIds }),
 };

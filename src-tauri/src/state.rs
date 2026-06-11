@@ -16,6 +16,9 @@ pub struct AppState {
     /// Per-host serial gates (WB allows ~1 concurrent request per host).
     pub gate_content: SerialGate,
     pub gate_prices: SerialGate,
+    /// Marketplace (FBS) host: warehouses + stocks. Generous limit (~300/min),
+    /// so a small gap is enough to stay polite.
+    pub gate_marketplace: SerialGate,
     /// WB category/dictionary caches (rarely change; avoid burning rate limit).
     pub caches: Mutex<WbCaches>,
     /// Batch job queue (persisted) + single-worker guard.
@@ -34,6 +37,7 @@ impl AppState {
                 .expect("failed to build reqwest client"),
             gate_content: SerialGate::new(Duration::from_millis(900)),
             gate_prices: SerialGate::new(Duration::from_millis(900)),
+            gate_marketplace: SerialGate::new(Duration::from_millis(300)),
             caches: Mutex::new(WbCaches::default()),
             queue: Mutex::new(jobs),
             worker_running: AtomicBool::new(false),

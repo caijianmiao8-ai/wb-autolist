@@ -76,3 +76,42 @@ export interface ListingInput {
   discount: number;
   brand?: string;
 }
+
+// ── Management panel (live WB state) ──
+
+export interface Warehouse {
+  id: number;
+  name: string;
+  officeId: number;
+  cargoType: number;
+  deliveryType: number;
+}
+
+export type ManagedStatus = "live" | "no_price" | "no_stock" | "rejected" | "ok";
+
+export interface ManagedCard {
+  nmID: number;
+  vendorCode: string;
+  subjectName: string;
+  brand: string;
+  title: string;
+  photo: string | null;
+  skus: string[];
+  price: number | null;
+  discountedPrice: number | null;
+  discount: number | null;
+  currency: string | null;
+  /** stock on the selected warehouse; null = no warehouse selected */
+  stock: number | null;
+  characteristics: number;
+  status: ManagedStatus;
+  statusNote: string;
+}
+
+export interface ManageResponse {
+  cards: ManagedCard[];
+  total: number;
+  truncated: boolean;
+  warehouseId: number | null;
+  warnings: string[];
+}

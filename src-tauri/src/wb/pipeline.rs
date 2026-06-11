@@ -12,6 +12,7 @@ use crate::wb::barcode::generate_ean13;
 use crate::wb::cards::{upload_cards, wait_for_card};
 use crate::wb::categories::{get_characteristics, get_colors, get_tnved, resolve_subject};
 use crate::wb::client::WbCtx;
+use crate::wb::marketplace::set_stocks;
 use crate::wb::media::upload_media_bytes;
 use crate::wb::prices::upload_price_task;
 use crate::wb::types::{WbCharacteristic, WbColor};
@@ -190,6 +191,7 @@ async fn run_pipeline(
     }
 
     let mut created: Option<crate::wb::types::WbCardListItem> = None;
+    let mut used_sku: Option<String> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for (i, brand) in brand_attempts.iter().enumerate() {
         let vendor_code = if i == 0 {
@@ -207,7 +209,7 @@ async fn run_pipeline(
                 "brand": brand,
                 "dimensions": { "length": 20, "width": 15, "height": 5, "weightBrutto": 0.3 },
                 "characteristics": characteristics,
-                "sizes": [{ "price": base, "skus": [sku] }]
+                "sizes": [{ "price": base, "skus": [sku.clone()] }]
             }]
         });
         upload_cards(state, &ctx, vec![card]).await?;
@@ -229,6 +231,7 @@ async fn run_pipeline(
         {
             Ok(c) => {
                 created = Some(c);
+                used_sku = Some(sku);
                 break;
             }
             Err(e) => {
@@ -301,6 +304,44 @@ async fn run_pipeline(
                 ),
                 on,
             );
+        }
+    }
+
+    // ── Step 7: stock (FBS) — a card needs stock > 0 to be buyable. If the user
+    // picked a default warehouse + quantity, set it now. Non-fatal: missing
+    // marketplace scope / no warehouse just leaves it for the management panel.
+    if cfg.auto_stock && cfg.default_warehouse_id > 0 && cfg.default_stock > 0 && !cfg.wb_sandbox {
+        if let Some(sku) = &used_sku {
+            let mp_ctx = WbCtx {
+                token: cfg.wb_content_token.clone(),
+                sandbox: false,
+            };
+            match set_stocks(
+                state,
+                &mp_ctx,
+                cfg.default_warehouse_id,
+                &[(sku.clone(), cfg.default_stock)],
+            )
+            .await
+            {
+                Ok(_) => log(
+                    logs,
+                    "live",
+                    true,
+                    &format!(
+                        "已设库存 {} 件（仓库 {}）——商品在审核+定价后即可售。",
+                        cfg.default_stock, cfg.default_warehouse_id
+                    ),
+                    on,
+                ),
+                Err(e) => log(
+                    logs,
+                    "live",
+                    false,
+                    &format!("库存未自动设置（可在「商品管理」补货）：{}", e),
+                    on,
+                ),
+            }
         }
     }
     Ok(result)

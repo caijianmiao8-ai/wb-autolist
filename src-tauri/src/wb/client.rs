@@ -16,11 +16,14 @@ use std::time::Duration;
 
 pub const HOST_CONTENT: &str = "https://content-api.wildberries.ru";
 pub const HOST_PRICES: &str = "https://discounts-prices-api.wildberries.ru";
+pub const HOST_MARKETPLACE: &str = "https://marketplace-api.wildberries.ru";
 
 #[derive(Clone, Copy)]
 pub enum Host {
     Content,
     Prices,
+    /// FBS marketplace: warehouses + stocks. No sandbox variant exists.
+    Marketplace,
 }
 
 #[derive(Clone)]
@@ -88,6 +91,12 @@ impl WbReq {
     pub fn post(path: &str) -> Self {
         Self::new(Method::POST, path)
     }
+    pub fn put(path: &str) -> Self {
+        Self::new(Method::PUT, path)
+    }
+    pub fn delete(path: &str) -> Self {
+        Self::new(Method::DELETE, path)
+    }
     pub fn on(mut self, host: Host) -> Self {
         self.host = host;
         self
@@ -115,9 +124,15 @@ impl WbReq {
 }
 
 fn base_host(host: Host, sandbox: bool) -> String {
+    // Marketplace has no sandbox host — always hit production (stock ops only
+    // make sense against the live FBS warehouse).
+    if let Host::Marketplace = host {
+        return HOST_MARKETPLACE.to_string();
+    }
     let base = match host {
         Host::Content => HOST_CONTENT,
         Host::Prices => HOST_PRICES,
+        Host::Marketplace => HOST_MARKETPLACE,
     };
     if sandbox {
         base.replace("-api.wildberries.ru", "-api-sandbox.wildberries.ru")
@@ -160,6 +175,7 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
     let gate = match req.host {
         Host::Content => &state.gate_content,
         Host::Prices => &state.gate_prices,
+        Host::Marketplace => &state.gate_marketplace,
     };
     let mut attempt: u64 = 0;
     // WB wants the raw token; Bearer is only a 401 fallback.

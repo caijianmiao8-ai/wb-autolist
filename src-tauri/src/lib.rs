@@ -48,6 +48,11 @@ pub fn run() {
             commands::list_jobs,
             commands::enqueue_jobs,
             commands::clear_jobs,
+            commands::list_warehouses,
+            commands::manage_cards,
+            commands::set_card_stock,
+            commands::set_card_price,
+            commands::trash_cards,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -14,11 +14,16 @@ use crate::state::AppState;
 use crate::store;
 use crate::types::{Listing, ListingInput, ListingStage};
 use crate::util::original_price;
-use crate::wb::cards::delete_cards;
-use crate::wb::client::WbCtx;
+use crate::wb::cards::{delete_cards, list_card_errors};
+use crate::wb::client::{wb_fetch, WbCtx, WbReq};
+use crate::wb::marketplace::{
+    list_warehouses as mp_list_warehouses, read_stocks, set_stocks, Warehouse,
+};
 use crate::wb::pipeline::publish_listing;
-use crate::wb::prices::upload_price_task;
+use crate::wb::prices::{read_all_prices, upload_price_task};
+use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
@@ -234,4 +239,338 @@ pub async fn clear_jobs(
 ) -> Result<Vec<BatchJob>, String> {
     let st = state.inner().clone();
     Ok(queue::clear_jobs(&st, &which).await)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 商品管理面板：实时读取 WB 上的卡片 + 价格 + 库存，并允许设库存/改价/删卡。
+// 读接口都是「一次性拉取」，绝不轮询（价格写接口才是硬限流的那个）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One row in the management panel: live WB state for a single card.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedCard {
+    #[serde(rename = "nmID")]
+    pub nm_id: i64,
+    pub vendor_code: String,
+    pub subject_name: String,
+    pub brand: String,
+    pub title: String,
+    /// First photo URL from WB CDN (defensive — may be absent on a brand-new card).
+    pub photo: Option<String>,
+    /// Barcodes (the FBS stock key).
+    pub skus: Vec<String>,
+    pub price: Option<i64>,
+    pub discounted_price: Option<i64>,
+    pub discount: Option<i64>,
+    pub currency: Option<String>,
+    /// Stock summed across the card's skus on the selected warehouse.
+    /// None = no warehouse selected (or stock read failed).
+    pub stock: Option<i64>,
+    pub characteristics: i64,
+    /// Derived: "live" | "no_price" | "no_stock" | "rejected" | "ok".
+    pub status: String,
+    pub status_note: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManageResponse {
+    pub cards: Vec<ManagedCard>,
+    pub total: usize,
+    pub truncated: bool,
+    pub warehouse_id: Option<i64>,
+    /// Non-fatal issues (e.g. price/stock read failed) surfaced to the UI.
+    pub warnings: Vec<String>,
+}
+
+fn extract_skus(c: &Value) -> Vec<String> {
+    c.get("sizes")
+        .and_then(|s| s.as_array())
+        .map(|sizes| {
+            sizes
+                .iter()
+                .filter_map(|s| s.get("skus").and_then(|x| x.as_array()))
+                .flatten()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_photo(c: &Value) -> Option<String> {
+    let first = c.get("photos").and_then(|p| p.as_array()).and_then(|a| a.first())?;
+    // photo entries are objects keyed by size; pick a small-but-clear one.
+    if let Some(obj) = first.as_object() {
+        for k in ["c246x328", "big", "square", "c516x688", "tm"] {
+            if let Some(u) = obj.get(k).and_then(|v| v.as_str()) {
+                if u.starts_with("http") {
+                    return Some(u.to_string());
+                }
+            }
+        }
+        // fall back to the first http string value in the object
+        return obj
+            .values()
+            .filter_map(|v| v.as_str())
+            .find(|u| u.starts_with("http"))
+            .map(|s| s.to_string());
+    }
+    // some responses give an array of plain URL strings
+    first.as_str().filter(|u| u.starts_with("http")).map(|s| s.to_string())
+}
+
+fn s(c: &Value, k: &str) -> String {
+    c.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+}
+
+/// List the seller's FBS warehouses (for the warehouse picker).
+#[tauri::command]
+pub async fn list_warehouses(state: State<'_, Arc<AppState>>) -> Result<Vec<Warehouse>, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token，无法读取仓库。".into());
+    }
+    let ctx = WbCtx {
+        token: cfg.wb_content_token.clone(),
+        sandbox: false,
+    };
+    mp_list_warehouses(&st, &ctx).await.map_err(|e| e.to_string())
+}
+
+/// Aggregate WB cards + prices + (optionally) stock for the management panel.
+/// One-shot load; the frontend re-calls this only on explicit refresh.
+#[tauri::command]
+pub async fn manage_cards(
+    state: State<'_, Arc<AppState>>,
+    warehouse_id: Option<i64>,
+) -> Result<ManageResponse, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token（演示模式下没有真实商品可管理）。".into());
+    }
+    let ctx = WbCtx {
+        token: cfg.wb_content_token.clone(),
+        sandbox: cfg.wb_sandbox,
+    };
+    let mut warnings: Vec<String> = vec![];
+
+    // 1) all cards via cursor pagination (capped at 1500 to bound worst case).
+    let mut raw_cards: Vec<Value> = vec![];
+    let mut cursor = json!({ "limit": 100 });
+    let mut truncated = false;
+    const MAX_PAGES: u32 = 15;
+    for page in 0..MAX_PAGES {
+        let v = wb_fetch(
+            &st,
+            &ctx,
+            WbReq::post("/content/v2/get/cards/list").body(json!({
+                "settings": {
+                    "sort": { "ascending": false },
+                    "filter": { "withPhoto": -1 },
+                    "cursor": cursor
+                }
+            })),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let cards = v.get("cards").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+        let n = cards.len();
+        let upd = v.pointer("/cursor/updatedAt").cloned();
+        let last_nm = v.pointer("/cursor/nmID").cloned();
+        raw_cards.extend(cards);
+        if n < 100 {
+            break;
+        }
+        if page + 1 == MAX_PAGES {
+            truncated = true;
+            break;
+        }
+        cursor = json!({ "limit": 100, "updatedAt": upd, "nmID": last_nm });
+    }
+
+    // 2) prices (one-shot; non-fatal on failure).
+    let prices = match read_all_prices(
+        &st,
+        &WbCtx {
+            token: prices_token(&cfg),
+            sandbox: cfg.wb_sandbox,
+        },
+    )
+    .await
+    {
+        Ok(m) => m,
+        Err(e) => {
+            warnings.push(format!("价格读取失败：{}", e));
+            std::collections::HashMap::new()
+        }
+    };
+
+    // 3) stock for the chosen warehouse (non-fatal). All skus in one batched read.
+    let all_skus: Vec<String> = raw_cards.iter().flat_map(extract_skus).collect();
+    let stocks = match warehouse_id {
+        Some(wh) if !all_skus.is_empty() => {
+            let mp_ctx = WbCtx {
+                token: cfg.wb_content_token.clone(),
+                sandbox: false,
+            };
+            match read_stocks(&st, &mp_ctx, wh, &all_skus).await {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    warnings.push(format!("库存读取失败：{}", e));
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
+    // 4) rejected vendorCodes (non-fatal).
+    let rejected: HashSet<String> = match list_card_errors(&st, &ctx).await {
+        Ok(list) => list
+            .into_iter()
+            .filter(|(_, e)| !e.is_empty())
+            .map(|(vc, _)| vc)
+            .collect(),
+        Err(_) => HashSet::new(),
+    };
+
+    // 5) assemble
+    let mut cards: Vec<ManagedCard> = vec![];
+    for c in &raw_cards {
+        let nm = c.get("nmID").and_then(|x| x.as_i64()).unwrap_or(0);
+        let vendor_code = s(c, "vendorCode");
+        let skus = extract_skus(c);
+        let price = prices.get(&nm);
+        let stock = stocks
+            .as_ref()
+            .map(|m| skus.iter().map(|sk| m.get(sk).copied().unwrap_or(0)).sum::<i64>());
+        let characteristics = c
+            .get("characteristics")
+            .and_then(|x| x.as_array())
+            .map(|a| a.len() as i64)
+            .unwrap_or(0);
+
+        let (status, note) = if rejected.contains(&vendor_code) {
+            ("rejected", "被 WB 拒绝（见卡片错误/上架记录）".to_string())
+        } else if price.is_none() {
+            ("no_price", "未定价".to_string())
+        } else if let Some(amt) = stock {
+            if amt <= 0 {
+                ("no_stock", "无库存（补货后可售）".to_string())
+            } else {
+                ("live", format!("可售 · 库存 {}", amt))
+            }
+        } else {
+            ("ok", "已定价（选择仓库可查看库存）".to_string())
+        };
+
+        cards.push(ManagedCard {
+            nm_id: nm,
+            vendor_code,
+            subject_name: s(c, "subjectName"),
+            brand: s(c, "brand"),
+            title: s(c, "title"),
+            photo: extract_photo(c),
+            skus,
+            price: price.map(|p| p.price),
+            discounted_price: price.map(|p| p.discounted_price),
+            discount: price.map(|p| p.discount),
+            currency: price.map(|p| p.currency.clone()),
+            stock,
+            characteristics,
+            status: status.to_string(),
+            status_note: note,
+        });
+    }
+
+    let total = cards.len();
+    Ok(ManageResponse {
+        cards,
+        total,
+        truncated,
+        warehouse_id,
+        warnings,
+    })
+}
+
+/// Set absolute FBS stock for a card's barcodes on a warehouse. amount=0 = 下架.
+#[tauri::command]
+pub async fn set_card_stock(
+    state: State<'_, Arc<AppState>>,
+    warehouse_id: i64,
+    skus: Vec<String>,
+    amount: i64,
+) -> Result<(), String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token。".into());
+    }
+    if warehouse_id <= 0 {
+        return Err("请先选择仓库。".into());
+    }
+    if skus.is_empty() {
+        return Err("该商品没有条码(sku)，无法设库存。".into());
+    }
+    let ctx = WbCtx {
+        token: cfg.wb_content_token.clone(),
+        sandbox: false,
+    };
+    let items: Vec<(String, i64)> = skus.into_iter().map(|sk| (sk, amount.max(0))).collect();
+    set_stocks(&st, &ctx, warehouse_id, &items)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Re-apply price/discount for a card by nmID (submit-only, no polling).
+/// `price` is the WB base (pre-discount) price as shown in the panel.
+#[tauri::command]
+pub async fn set_card_price(
+    state: State<'_, Arc<AppState>>,
+    nm_id: i64,
+    price: i64,
+    discount: i64,
+) -> Result<(), String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token。".into());
+    }
+    let ctx = WbCtx {
+        token: prices_token(&cfg),
+        sandbox: cfg.wb_sandbox,
+    };
+    let d = discount.clamp(0, 99);
+    upload_price_task(
+        &st,
+        &ctx,
+        vec![json!({ "nmID": nm_id, "price": price, "discount": d })],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Move one or more WB cards to trash by nmID (recoverable 30 days).
+#[tauri::command]
+pub async fn trash_cards(
+    state: State<'_, Arc<AppState>>,
+    nm_ids: Vec<i64>,
+) -> Result<(), String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token。".into());
+    }
+    if nm_ids.is_empty() {
+        return Ok(());
+    }
+    let ctx = WbCtx {
+        token: cfg.wb_content_token.clone(),
+        sandbox: cfg.wb_sandbox,
+    };
+    delete_cards(&st, &ctx, nm_ids).await.map_err(|e| e.to_string())
 }

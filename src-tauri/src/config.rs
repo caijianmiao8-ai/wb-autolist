@@ -20,6 +20,13 @@ pub struct AppConfig {
     pub aurixel_chat_model: String,
     pub pollinations_token: String,
     pub public_base_url: String,
+    /// FBS warehouse used for auto-stock on publish + the management panel's
+    /// default selection. 0 = not chosen yet.
+    pub default_warehouse_id: i64,
+    /// Quantity to set when auto-stocking a freshly-published card / quick refill.
+    pub default_stock: i64,
+    /// Whether publish should set stock automatically once the card is created.
+    pub auto_stock: bool,
 }
 
 impl Default for AppConfig {
@@ -34,6 +41,9 @@ impl Default for AppConfig {
             aurixel_chat_model: "gpt-5.5".into(),
             pollinations_token: String::new(),
             public_base_url: String::new(),
+            default_warehouse_id: 0,
+            default_stock: 99,
+            auto_stock: true,
         }
     }
 }
@@ -89,6 +99,15 @@ fn apply_file(cfg: &mut AppConfig, file: &Path) {
     set_if(&mut cfg.aurixel_chat_model, s("aurixelChatModel"));
     set_if(&mut cfg.pollinations_token, s("pollinationsToken"));
     set_if(&mut cfg.public_base_url, s("publicBaseUrl"));
+    if let Some(n) = obj.get("defaultWarehouseId").and_then(|x| x.as_i64()) {
+        cfg.default_warehouse_id = n;
+    }
+    if let Some(n) = obj.get("defaultStock").and_then(|x| x.as_i64()) {
+        cfg.default_stock = n;
+    }
+    if let Some(b) = obj.get("autoStock").and_then(|x| x.as_bool()) {
+        cfg.auto_stock = b;
+    }
 }
 
 pub fn get_config(paths: &Paths) -> AppConfig {
@@ -145,5 +164,8 @@ pub fn redact_config(cfg: &AppConfig) -> Value {
         "aurixelChatModel": cfg.aurixel_chat_model,
         "pollinationsTokenSet": !cfg.pollinations_token.is_empty(),
         "publicBaseUrl": cfg.public_base_url,
+        "defaultWarehouseId": cfg.default_warehouse_id,
+        "defaultStock": cfg.default_stock,
+        "autoStock": cfg.auto_stock,
     })
 }
