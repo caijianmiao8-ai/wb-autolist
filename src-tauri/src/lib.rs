@@ -41,6 +41,7 @@ pub fn run() {
             commands::list_listings,
             commands::get_listing,
             commands::delete_listing,
+            commands::trash_card,
             commands::import_excel,
             commands::list_jobs,
             commands::enqueue_jobs,

@@ -10,14 +10,20 @@ use crate::config::AppConfig;
 use crate::state::AppState;
 use crate::types::{GeneratedImage, Listing, ListingInput, ListingStage, ProductCopy};
 use crate::util::{make_vendor_code, new_id, now_iso, original_price};
+use crate::wb::pipeline::Progress;
 use anyhow::Result;
 
 const QUALITY_SUFFIX: &str = ", professional studio product photography, clean white seamless background, soft diffused lighting, sharp focus, ultra detailed, high resolution, commercial e-commerce hero shot, centered composition";
+
+/// WB rejects unregistered/non-Latin brands ("Бренд … не найден"). Use the
+/// universally-accepted "no brand" value unless the user supplies one.
+const NO_BRAND: &str = "Нет бренда";
 
 pub async fn generate_listing(
     state: &AppState,
     cfg: &AppConfig,
     raw: &ListingInput,
+    on: &Progress,
 ) -> Result<Listing> {
     // sanitize — batch/queue calls this directly, so a missing price must still
     // get a sensible default here.
@@ -25,6 +31,7 @@ pub async fn generate_listing(
     let discount = raw.discount.clamp(0.0, 99.0).round();
     let brand_in = raw.brand.clone();
 
+    on("generate", true, "生成俄文文案中…");
     let copy = generate_copy(
         &state.http,
         cfg,
@@ -55,6 +62,7 @@ pub async fn generate_listing(
     let mut images: Vec<GeneratedImage> = vec![];
 
     // Main product image (3:4). Fall back to a branded placeholder.
+    on("generate", true, "文案完成，正在生成主图（AI 出图较慢，约 1-2 分钟）…");
     let mut ai_ok = false;
     let main_buf: Vec<u8> = match generate_image(&state.http, cfg, &base_prompt, 1024, 1365, Some(1000))
         .await
@@ -78,6 +86,7 @@ pub async fn generate_listing(
         "jpg",
     ));
 
+    on("generate", true, "主图完成，生成细节图与宣传图…");
     // Detail shot — derived from the main image (no extra network call).
     let detail = if ai_ok {
         derive_detail(&main_buf, 1200, 1600)
@@ -125,12 +134,17 @@ pub async fn generate_listing(
         "jpg",
     ));
 
+    on("generate", true, "全部生成完成");
     let now = now_iso();
+    // WB card brand: the user's brand if they typed one, else "Нет бренда".
+    // (The AI-written brand stays in the copy for display, but isn't forced
+    // onto the WB brand field — an unregistered brand gets rejected.)
     let brand = brand_in
         .as_ref()
+        .map(|b| b.trim())
         .filter(|b| !b.is_empty())
-        .cloned()
-        .unwrap_or_else(|| copy.brand.clone());
+        .map(|b| b.to_string())
+        .unwrap_or_else(|| NO_BRAND.to_string());
 
     Ok(Listing {
         id: new_id("lst_"),

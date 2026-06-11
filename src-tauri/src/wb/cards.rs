@@ -22,6 +22,17 @@ pub async fn upload_cards(state: &AppState, ctx: &WbCtx, items: Vec<Value>) -> R
     Ok(())
 }
 
+/// Move cards to trash by nmID. Recoverable for 30 days; not a hard delete.
+pub async fn delete_cards(state: &AppState, ctx: &WbCtx, nm_ids: Vec<i64>) -> Result<()> {
+    wb_fetch(
+        state,
+        ctx,
+        WbReq::post("/content/v2/cards/delete/trash").body(json!({ "nmIDs": nm_ids })),
+    )
+    .await?;
+    Ok(())
+}
+
 /// Look up a card by the seller's vendorCode (textSearch).
 pub async fn find_card_by_vendor_code(
     state: &AppState,

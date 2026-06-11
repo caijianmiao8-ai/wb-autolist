@@ -13,6 +13,8 @@ use crate::queue::{self, BatchJob};
 use crate::state::AppState;
 use crate::store;
 use crate::types::{Listing, ListingInput};
+use crate::wb::cards::delete_cards;
+use crate::wb::client::WbCtx;
 use crate::wb::pipeline::publish_listing;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -46,16 +48,49 @@ pub fn save_settings(state: State<Arc<AppState>>, patch: Value) -> Value {
 
 #[tauri::command]
 pub async fn generate(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     input: ListingInput,
 ) -> Result<Listing, String> {
     let st = state.inner().clone();
     let cfg = get_config(&st.paths);
-    let listing = generate_listing(&st, &cfg, &input)
+    let app2 = app.clone();
+    // live progress so the (slow ~90s) generation feels responsive
+    let on = move |stage: &str, ok: bool, msg: &str| {
+        let _ = app2.emit("generate:progress", json!({ "stage": stage, "ok": ok, "message": msg }));
+    };
+    let listing = generate_listing(&st, &cfg, &input, &on)
         .await
         .map_err(|e| e.to_string())?;
     store::save_listing(&st.paths, listing.clone());
-    Ok(hydrate(&st.paths, listing))
+    let hydrated = hydrate(&st.paths, listing);
+    // also emit so a tab that was navigated away during generation can reconnect
+    let _ = app.emit("generate:done", &hydrated);
+    Ok(hydrated)
+}
+
+/// Move a listing's WB card to trash (if it was really published) and delete the
+/// local record.
+#[tauri::command]
+pub async fn trash_card(state: State<'_, Arc<AppState>>, id: String) -> Result<bool, String> {
+    let st = state.inner().clone();
+    if let Some(l) = store::get_listing(&st.paths, &id) {
+        if let Some(nm) = l.nm_id {
+            if !l.dry_run {
+                let cfg = get_config(&st.paths);
+                if !cfg.wb_content_token.is_empty() {
+                    let ctx = WbCtx {
+                        token: cfg.wb_content_token.clone(),
+                        sandbox: l.sandbox,
+                    };
+                    delete_cards(&st, &ctx, vec![nm])
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    Ok(store::delete_listing(&st.paths, &id))
 }
 
 #[tauri::command]

@@ -18,9 +18,19 @@ export function HistoryList() {
     load();
   }, []);
 
-  async function remove(id: string) {
-    await api.deleteListing(id);
-    setListings((l) => (l ? l.filter((x) => x.id !== id) : l));
+  async function remove(id: string, hasCard: boolean) {
+    if (
+      hasCard &&
+      !confirm("该商品已上架到 WB。删除会把卡片移入 WB 回收站（30 天内可恢复），并从本列表移除。确定？")
+    ) {
+      return;
+    }
+    try {
+      await api.trashCard(id);
+      setListings((l) => (l ? l.filter((x) => x.id !== id) : l));
+    } catch (e) {
+      alert("删除失败：" + (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   if (!listings) {
@@ -98,7 +108,7 @@ export function HistoryList() {
                     </a>
                   )}
                   <button
-                    onClick={() => remove(l.id)}
+                    onClick={() => remove(l.id, !!l.nmID && !l.dryRun)}
                     className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-rose-500/10 hover:text-rose-400"
                   >
                     <Trash2 className="h-4 w-4" />

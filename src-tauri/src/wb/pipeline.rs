@@ -178,30 +178,71 @@ async fn run_pipeline(
         on,
     );
 
-    // ── Step 3: create card (price = pre-discount base) ──
+    // ── Step 3+4: create card + poll nmID, with a brand fallback ──
     let discount = listing.discount.clamp(0.0, 99.0).round();
     let base = original_price(listing.price, discount) as i64;
-    let sku = generate_ean13();
-    let card = json!({
-        "subjectID": subject.subject_id,
-        "variants": [{
-            "vendorCode": listing.vendor_code,
-            "title": copy.title,
-            "description": copy.description,
-            "brand": copy.brand,
-            "dimensions": { "length": 20, "width": 15, "height": 5, "weightBrutto": 0.3 },
-            "characteristics": characteristics,
-            "sizes": [{ "price": base, "skus": [sku] }]
-        }]
-    });
-    upload_cards(state, &ctx, vec![card]).await?;
-    log(logs, "creating", true, "卡片已提交，等待 WB 分配 nmID…", on);
 
-    // ── Step 4: poll for nmID ──
-    let created = wait_for_card(state, &ctx, &listing.vendor_code, |n| {
-        on("creating", true, &format!("轮询 nmID… (#{})", n))
-    })
-    .await?;
+    // Try the listing's brand first; if WB rejects it ("Бренд … не найден"),
+    // retry once with the universally-accepted "Нет бренда" (fresh vendorCode).
+    let mut brand_attempts: Vec<String> = vec![listing.brand.clone()];
+    if listing.brand != "Нет бренда" {
+        brand_attempts.push("Нет бренда".to_string());
+    }
+
+    let mut created: Option<crate::wb::types::WbCardListItem> = None;
+    let mut last_err: Option<anyhow::Error> = None;
+    for (i, brand) in brand_attempts.iter().enumerate() {
+        let vendor_code = if i == 0 {
+            listing.vendor_code.clone()
+        } else {
+            format!("{}-R{}", listing.vendor_code, i)
+        };
+        let sku = generate_ean13();
+        let card = json!({
+            "subjectID": subject.subject_id,
+            "variants": [{
+                "vendorCode": vendor_code,
+                "title": copy.title,
+                "description": copy.description,
+                "brand": brand,
+                "dimensions": { "length": 20, "width": 15, "height": 5, "weightBrutto": 0.3 },
+                "characteristics": characteristics,
+                "sizes": [{ "price": base, "skus": [sku] }]
+            }]
+        });
+        upload_cards(state, &ctx, vec![card]).await?;
+        if i == 0 {
+            log(logs, "creating", true, "卡片已提交，等待 WB 分配 nmID…", on);
+        } else {
+            log(
+                logs,
+                "creating",
+                true,
+                &format!("品牌「{}」被 WB 拒绝，改用「Нет бренда」重试…", listing.brand),
+                on,
+            );
+        }
+        match wait_for_card(state, &ctx, &vendor_code, |n| {
+            on("creating", true, &format!("轮询 nmID… (#{})", n))
+        })
+        .await
+        {
+            Ok(c) => {
+                created = Some(c);
+                break;
+            }
+            Err(e) => {
+                let lower = e.to_string().to_lowercase();
+                let brand_issue = lower.contains("бренд") || lower.contains("brand");
+                if brand_issue && i + 1 < brand_attempts.len() {
+                    last_err = Some(e);
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+    let created = created.ok_or_else(|| last_err.unwrap_or_else(|| anyhow!("建卡失败")))?;
     result.nm_id = Some(created.nm_id);
     result.imt_id = Some(created.imt_id);
     result.stage = ListingStage::Media;

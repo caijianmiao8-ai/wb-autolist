@@ -8,6 +8,8 @@ use crate::config::get_config;
 use crate::generate::generate_listing;
 use crate::state::AppState;
 use crate::types::{ListingInput, ListingStage};
+use crate::wb::cards::delete_cards;
+use crate::wb::client::WbCtx;
 use crate::wb::pipeline::publish_listing;
 use std::time::Instant;
 
@@ -40,7 +42,8 @@ async fn real_generate_and_publish() {
     // ── generate ──
     eprintln!("\n──────── GENERATE (real Aurixel) ────────");
     let t0 = Instant::now();
-    let listing = generate_listing(&state, &cfg, &input)
+    let gen_progress = |stage: &str, ok: bool, msg: &str| eprintln!("  · [{}] {} {}", stage, if ok { "✓" } else { "✗" }, msg);
+    let listing = generate_listing(&state, &cfg, &input, &gen_progress)
         .await
         .expect("generate_listing failed");
     let copy = listing.copy.as_ref().expect("copy");
@@ -77,6 +80,18 @@ async fn real_generate_and_publish() {
     eprintln!("  sandbox = {}", result.sandbox);
     eprintln!("  dry_run = {}", result.dry_run);
     eprintln!("  error   = {:?}", result.error);
+
+    // clean up: move the test card to trash (also validates delete_cards)
+    if let (Some(nm), true) = (result.nm_id, result.sandbox) {
+        let ctx = WbCtx {
+            token: cfg.wb_content_token.clone(),
+            sandbox: true,
+        };
+        match delete_cards(&state, &ctx, vec![nm]).await {
+            Ok(_) => eprintln!("  ✓ 测试卡片 {} 已移入回收站（清理）", nm),
+            Err(e) => eprintln!("  ⚠ 删除测试卡片失败: {}", e),
+        }
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 

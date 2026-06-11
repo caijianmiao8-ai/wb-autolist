@@ -49,6 +49,7 @@ export function Workbench() {
   } | null>(null);
 
   const [settings, setSettings] = useState<SettingsState | null>(null);
+  const [genMsg, setGenMsg] = useState("");
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -58,17 +59,48 @@ export function Workbench() {
   // Restore the in-progress product when returning to this tab (navigation
   // unmounts the component, so the generated preview would otherwise be lost).
   useEffect(() => {
-    const id = typeof window !== "undefined" ? sessionStorage.getItem("wb:listingId") : null;
-    if (!id) return;
-    api
-      .getListing(id)
-      .then((l) => {
-        if (l) {
-          setListing(l);
-          setStep("preview");
-        }
-      })
-      .catch(() => {});
+    if (typeof window === "undefined") return;
+    // mid-generation when we left → show the generating state again
+    if (sessionStorage.getItem("wb:generating")) {
+      setStep("generating");
+    } else {
+      const id = sessionStorage.getItem("wb:listingId");
+      if (id) {
+        api
+          .getListing(id)
+          .then((l) => {
+            if (l) {
+              setListing(l);
+              setStep("preview");
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
+    // live generation progress + completion (works even after navigating back)
+    let alive = true;
+    let unProgress: (() => void) | null = null;
+    let unDone: (() => void) | null = null;
+    listen<{ message: string }>("generate:progress", (e) => setGenMsg(e.payload.message)).then(
+      (u) => (alive ? (unProgress = u) : u())
+    );
+    listen<Listing>("generate:done", (e) => {
+      setListing(e.payload);
+      setStep("preview");
+      setGenMsg("");
+      try {
+        sessionStorage.setItem("wb:listingId", e.payload.id);
+        sessionStorage.removeItem("wb:generating");
+      } catch {
+        /* ignore */
+      }
+    }).then((u) => (alive ? (unDone = u) : u()));
+    return () => {
+      alive = false;
+      unProgress?.();
+      unDone?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -98,18 +130,31 @@ export function Workbench() {
     setListing(null);
     setDone(null);
     setLogs([]);
+    setGenMsg("开始生成…");
+    try {
+      sessionStorage.setItem("wb:generating", "1");
+    } catch {
+      /* ignore */
+    }
     try {
       const data = await api.generate({ productName, keywords, price, discount, brand });
       setListing(data);
       setStep("preview");
+      setGenMsg("");
       try {
         sessionStorage.setItem("wb:listingId", data.id);
+        sessionStorage.removeItem("wb:generating");
       } catch {
         /* ignore */
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "生成失败");
       setStep("input");
+      try {
+        sessionStorage.removeItem("wb:generating");
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -297,7 +342,7 @@ export function Workbench() {
         {/* ── Preview / Result ── */}
         <div className="space-y-6">
           {step === "input" && !listing && <EmptyState />}
-          {step === "generating" && <GeneratingState />}
+          {step === "generating" && <GeneratingState msg={genMsg} />}
 
           {listing && (
             <>
@@ -344,11 +389,11 @@ function EmptyState() {
   );
 }
 
-function GeneratingState() {
+function GeneratingState({ msg }: { msg?: string }) {
   return (
     <div className="card p-6">
       <div className="mb-4 flex items-center gap-2 text-sm text-slate-300">
-        <Loader2 className="h-4 w-4 animate-spin text-wb-pink" /> 正在生成图片与文案…
+        <Loader2 className="h-4 w-4 animate-spin text-wb-pink" /> {msg || "正在生成图片与文案…"}
       </div>
       <div className="grid grid-cols-3 gap-3">
         {[0, 1, 2].map((i) => (
