@@ -10,10 +10,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "desktop:prep": "next build && node scripts/desktop-prep.mjs",
-    "electron:dev": "electron .",
-    "dist:mac": "npm run desktop:prep && electron-builder --mac",
-    "dist:win": "npm run desktop:prep && electron-builder --win"
+    "fe:dev": "next dev -p 3100",
+    "fe:build": "next build",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build"
   },
   "dependencies": {
     "clsx": "2.1.1",
