@@ -42,6 +42,7 @@ export const api = {
   generate: (input: GenerateInput) => invoke<Listing>("generate", { input }),
   publish: (id: string) => invoke<Listing>("publish", { id }),
   listListings: () => invoke<Listing[]>("list_listings"),
+  getListing: (id: string) => invoke<Listing | null>("get_listing", { id }),
   deleteListing: (id: string) => invoke<boolean>("delete_listing", { id }),
   importExcel: (bytes: number[]) => invoke<ListingInput[]>("import_excel", { bytes }),
   listJobs: () => invoke<Job[]>("list_jobs"),

@@ -95,6 +95,12 @@ pub fn get_config(paths: &Paths) -> AppConfig {
     let mut cfg = AppConfig::default();
     apply_env(&mut cfg);
     apply_file(&mut cfg, &paths.config());
+    // Defensive: tokens often arrive with trailing whitespace/newline from a
+    // paste, which corrupts the Authorization header. Strip it.
+    cfg.wb_content_token = cfg.wb_content_token.trim().to_string();
+    cfg.wb_prices_token = cfg.wb_prices_token.trim().to_string();
+    cfg.aurixel_api_key = cfg.aurixel_api_key.trim().to_string();
+    cfg.openai_api_key = cfg.openai_api_key.trim().to_string();
     cfg
 }
 

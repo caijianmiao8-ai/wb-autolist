@@ -55,6 +55,22 @@ export function Workbench() {
     api.getSettings().then(setSettings).catch(() => {});
   }, []);
 
+  // Restore the in-progress product when returning to this tab (navigation
+  // unmounts the component, so the generated preview would otherwise be lost).
+  useEffect(() => {
+    const id = typeof window !== "undefined" ? sessionStorage.getItem("wb:listingId") : null;
+    if (!id) return;
+    api
+      .getListing(id)
+      .then((l) => {
+        if (l) {
+          setListing(l);
+          setStep("preview");
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
@@ -86,6 +102,11 @@ export function Workbench() {
       const data = await api.generate({ productName, keywords, price, discount, brand });
       setListing(data);
       setStep("preview");
+      try {
+        sessionStorage.setItem("wb:listingId", data.id);
+      } catch {
+        /* ignore */
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "生成失败");
       setStep("input");
@@ -139,6 +160,11 @@ export function Workbench() {
     setLogs([]);
     setDone(null);
     setError(null);
+    try {
+      sessionStorage.removeItem("wb:listingId");
+    } catch {
+      /* ignore */
+    }
   }
 
   return (

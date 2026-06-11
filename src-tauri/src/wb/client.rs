@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 //! WB Supplier/Content API client (ported from src/lib/wb/client.ts).
 //!
-//! Auth: `Authorization: Bearer <token>`, falling back to the raw token on 401.
+//! Auth: WB expects the RAW token in `Authorization` (NO "Bearer " prefix) —
+//! a Bearer prefix makes the gateway reject it ("token is malformed: invalid
+//! number of segments"). We send raw first and fall back to Bearer only on 401.
 //! WB's gateway allows ~1 concurrent request per host, so requests are
 //! serialized per host with a ≥900ms gap (SerialGate); 429/5xx are retried.
 
@@ -160,7 +162,8 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
         Host::Prices => &state.gate_prices,
     };
     let mut attempt: u64 = 0;
-    let mut use_bearer = true;
+    // WB wants the raw token; Bearer is only a 401 fallback.
+    let mut use_bearer = false;
     loop {
         attempt += 1;
         let auth = if use_bearer {
@@ -190,9 +193,10 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
         let text = res.text().await.unwrap_or_default();
         let json: Option<Value> = serde_json::from_str(&text).ok();
 
-        // one-time fallback: Bearer rejected → retry raw (don't consume an attempt)
-        if status == 401 && use_bearer {
-            use_bearer = false;
+        // one-time fallback: raw rejected with 401 → retry with Bearer (don't
+        // consume an attempt)
+        if status == 401 && !use_bearer {
+            use_bearer = true;
             attempt -= 1;
             continue;
         }
@@ -206,7 +210,7 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
                 .as_ref()
                 .and_then(err_msg)
                 .unwrap_or_else(|| format!("HTTP {}", status));
-            return Err(anyhow!("WB API {}: {}", req.path, msg));
+            return Err(anyhow!("WB API {}: {}", req.path, with_token_diag(msg, &ctx.token)));
         }
         // WB content API often wraps errors in a 200 with {error:true,errorText}
         if let Some(j) = &json {
@@ -216,7 +220,7 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
                     .and_then(|v| v.as_str())
                     .unwrap_or("ошибка")
                     .to_string();
-                return Err(anyhow!("WB API {}: {}", req.path, msg));
+                return Err(anyhow!("WB API {}: {}", req.path, with_token_diag(msg, &ctx.token)));
             }
         }
         return Ok(json.unwrap_or(Value::String(text)));
@@ -230,4 +234,21 @@ fn err_msg(j: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// For token-shaped errors, append a non-sensitive diagnostic (length + segment
+/// count) so a truncated/whitespace-mangled stored token is obvious. A valid WB
+/// JWT has 3 dot-separated segments.
+fn with_token_diag(msg: String, token: &str) -> String {
+    let lower = msg.to_lowercase();
+    if lower.contains("token") || lower.contains("segment") || lower.contains("malformed") {
+        format!(
+            "{} [本地 token: {} 字符 / {} 段（正常应为 3 段 JWT）]",
+            msg,
+            token.chars().count(),
+            token.split('.').count()
+        )
+    } else {
+        msg
+    }
 }

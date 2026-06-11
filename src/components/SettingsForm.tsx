@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Check, Loader2, KeyRound, ImageIcon, Globe, ShieldAlert } from "lucide-react";
+import { Save, Check, Loader2, KeyRound, ImageIcon } from "lucide-react";
 import { api } from "@/lib/api";
 
 interface Redacted {
@@ -31,13 +31,11 @@ export function SettingsForm() {
   const [aurixelApiKey, setAurixelApiKey] = useState("");
   const [aurixelChatModel, setAurixelChatModel] = useState("gpt-5.5");
   const [pollinationsToken, setPollinationsToken] = useState("");
-  const [publicBaseUrl, setPublicBaseUrl] = useState("");
 
   useEffect(() => {
     api.getSettings().then((d) => {
       setRedacted(d);
       setImageProvider(d.imageProvider || "pollinations");
-      setPublicBaseUrl(d.publicBaseUrl || "");
       setWbSandbox(!!d.wbSandbox);
       setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
     });
@@ -48,15 +46,16 @@ export function SettingsForm() {
     setSaved(false);
     const patch: Record<string, string | boolean> = {
       imageProvider,
-      publicBaseUrl,
       wbSandbox,
     };
-    if (wbContentToken) patch.wbContentToken = wbContentToken;
-    if (wbPricesToken) patch.wbPricesToken = wbPricesToken;
-    if (openaiApiKey) patch.openaiApiKey = openaiApiKey;
-    if (aurixelApiKey) patch.aurixelApiKey = aurixelApiKey;
+    // trim — pasted tokens often carry a trailing space/newline that would
+    // corrupt the Authorization header.
+    if (wbContentToken.trim()) patch.wbContentToken = wbContentToken.trim();
+    if (wbPricesToken.trim()) patch.wbPricesToken = wbPricesToken.trim();
+    if (openaiApiKey.trim()) patch.openaiApiKey = openaiApiKey.trim();
+    if (aurixelApiKey.trim()) patch.aurixelApiKey = aurixelApiKey.trim();
     if (aurixelChatModel) patch.aurixelChatModel = aurixelChatModel;
-    if (pollinationsToken) patch.pollinationsToken = pollinationsToken;
+    if (pollinationsToken.trim()) patch.pollinationsToken = pollinationsToken.trim();
 
     const d = await api.saveSettings(patch);
     setRedacted(d);
@@ -74,17 +73,8 @@ export function SettingsForm() {
     <div className="mx-auto max-w-2xl animate-fade-up">
       <h1 className="mb-1 text-2xl font-semibold tracking-tight">设置</h1>
       <p className="mb-6 text-sm text-slate-400">
-        密钥建议通过环境变量(<code className="text-slate-300">.env.local</code>)注入；此处保存的非密钥项写入服务端 <code className="text-slate-300">data/config.json</code>。
+        所有配置（含密钥）仅保存在<b className="text-slate-300">本机</b>应用数据目录，不会上传任何服务器。
       </p>
-
-      {redacted && !redacted.authEnabled && (
-        <div className="mb-6 flex items-start gap-3 rounded-2xl border border-rose-400/25 bg-rose-500/[0.07] px-4 py-3.5 text-sm text-rose-200/90">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
-          <div className="leading-relaxed">
-            <b className="font-semibold">未设置访问密码</b>，应用当前对任何能访问到地址的人开放。仅限本机/内网使用；<b>公网部署前务必设置 <code className="text-rose-100">APP_PASSWORD</code> 环境变量</b>（设置后全站需登录）。
-          </div>
-        </div>
-      )}
 
       <div className="space-y-5">
         {/* WB */}
@@ -205,23 +195,6 @@ export function SettingsForm() {
               </p>
             </>
           )}
-        </section>
-
-        {/* Public URL */}
-        <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-200">
-            <Globe className="h-4 w-4 text-wb-pink" /> 公网地址（可选）
-          </div>
-          <label className="label">PUBLIC_BASE_URL</label>
-          <input
-            className="input"
-            placeholder="https://your-app.vercel.app"
-            value={publicBaseUrl}
-            onChange={(e) => setPublicBaseUrl(e.target.value)}
-          />
-          <p className="mt-3 text-xs text-slate-500">
-            部署后填写，供 WB 通过公网 URL 拉取图片。本地默认用字节直传，无需填写。
-          </p>
         </section>
 
         <button className="btn-primary w-full" onClick={save} disabled={saving}>
