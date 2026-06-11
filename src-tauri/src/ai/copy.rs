@@ -59,7 +59,8 @@ fn prompt(product_name: &str, keywords: &[String], brand: Option<&str>) -> Strin
     p.push_str("title (заголовок ≤60 символов), description (SEO-описание на русском 600-1500 символов), ");
     p.push_str("bullets (массив 4-6 преимуществ), brand (латиница), keywords (массив 8-15 ключевых слов на русском), ");
     p.push_str("categoryHint (точное название категории/предмета Wildberries на русском, напр. \"Наушники\", \"Платья\"), ");
-    p.push_str("imagePrompt (detailed ENGLISH prompt for a professional studio product photo).\n\n");
+    p.push_str("imagePrompt (detailed ENGLISH prompt for a professional studio product photo).\n");
+    p.push_str("ВАЖНО: title, description, bullets, keywords, categoryHint — СТРОГО на русском языке. Переведи на русский ЛЮБЫЕ иностранные слова (в т.ч. китайские); НЕ оставляй китайские иероглифы.\n\n");
     p.push_str(&format!("Товар (может быть на любом языке): {}\n", product_name));
     p.push_str(&format!("Ключевые слова: {}\n", keywords.join(", ")));
     if let Some(b) = brand {
@@ -198,10 +199,23 @@ fn arr_field(v: &Value, k: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// True if the string contains CJK (Chinese) characters — used to drop any
+/// keyword the model failed to translate to Russian.
+fn has_cjk(s: &str) -> bool {
+    s.chars()
+        .any(|c| matches!(c, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}'))
+}
+
 fn normalize(c: &Value, brand_in: Option<&str>) -> ProductCopy {
-    let mut bullets = arr_field(c, "bullets");
+    let mut bullets: Vec<String> = arr_field(c, "bullets")
+        .into_iter()
+        .filter(|b| !has_cjk(b))
+        .collect();
     bullets.truncate(6);
-    let mut keywords = arr_field(c, "keywords");
+    let mut keywords: Vec<String> = arr_field(c, "keywords")
+        .into_iter()
+        .filter(|k| !has_cjk(k))
+        .collect();
     keywords.truncate(20);
     let brand = brand_in
         .filter(|b| !b.is_empty())

@@ -109,6 +109,14 @@ export function Workbench() {
 
   const dryRun = settings ? settings.dryRun : true;
 
+  // What WB actually receives: the pre-discount "struck-through" base price
+  // (= final ÷ (1−discount)). Surface it so a high price/discount doesn't
+  // silently exceed WB's allowed range and get rejected.
+  const dClamped = Math.max(0, Math.min(99, discount || 0));
+  const wbBase =
+    price > 0 ? (dClamped > 0 ? Math.round(price / (1 - dClamped / 100)) : Math.round(price)) : 0;
+  const priceOutOfRange = wbBase > 0 && (wbBase < 4 || wbBase > 850000);
+
   function addKeyword() {
     const parts = keywordInput
       .split(/[,，]/)
@@ -286,9 +294,9 @@ export function Workbench() {
             </div>
           )}
 
-          <div className="mb-4 grid grid-cols-2 gap-3">
+          <div className="mb-1.5 grid grid-cols-2 gap-3">
             <div>
-              <label className="label">价格 (₽)</label>
+              <label className="label">到手价（按店铺币种）</label>
               <input
                 type="number"
                 className="input"
@@ -309,6 +317,18 @@ export function Workbench() {
               />
             </div>
           </div>
+          {price > 0 && (
+            <p
+              className={clsx(
+                "mb-4 text-xs leading-relaxed",
+                priceOutOfRange ? "text-rose-400" : "text-slate-500"
+              )}
+            >
+              提交给 WB 的划线价 ≈ <b>{wbBase.toLocaleString()}</b>（到手 {price} ÷ (1−{dClamped}%)）
+              {priceOutOfRange &&
+                "；⚠ 超出常见区间 4–850000，可能被 WB 拒绝（跨境店按 CNY 计）"}
+            </p>
+          )}
 
           <label className="label">品牌（可选）</label>
           <input
