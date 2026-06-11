@@ -272,35 +272,68 @@ async fn run_pipeline(
         slot += 1;
     }
 
-    // ── Step 6: price ──
+    // ── Step 6: price (best-effort, non-fatal) ──
+    // Card + media already succeeded. Pricing goes through a SEPARATE WB
+    // subsystem (discounts-prices) that often doesn't yet know a brand-new nmID,
+    // so the task can time out — that's expected, not a listing failure. Mark
+    // the card live; the user can re-apply pricing later (retry_pricing).
     log(logs, "pricing", true, "提交价格任务…", on);
-    let upload_id = upload_price_task(
-        state,
-        &price_ctx,
-        vec![json!({ "nmID": created.nm_id, "price": base, "discount": discount as i64 })],
-    )
-    .await?;
-    let (status, success, total) = wait_for_price_task(state, &price_ctx, upload_id).await?;
-    let price_ok = status == 3 && success >= total;
-    log(
-        logs,
-        "pricing",
-        price_ok,
-        &format!("价格任务 status={} ({}/{})", status, success, total),
-        on,
-    );
-    if !price_ok {
-        result.stage = ListingStage::Error;
-        result.error = Some(format!(
-            "卡片已建(nmID={})但价格未全部生效(status={})，请重试定价。",
-            created.nm_id, status
-        ));
-        log(logs, "error", false, result.error.as_ref().unwrap(), on);
-        return Ok(result);
+    let pricing = async {
+        let upload_id = upload_price_task(
+            state,
+            &price_ctx,
+            vec![json!({ "nmID": created.nm_id, "price": base, "discount": discount as i64 })],
+        )
+        .await?;
+        wait_for_price_task(state, &price_ctx, upload_id).await
     }
+    .await;
 
     result.stage = ListingStage::Live;
-    log(logs, "live", true, "上架完成（WB 审核后生效）", on);
+    match pricing {
+        Ok((status, success, total)) if status == 3 && success >= total => {
+            log(
+                logs,
+                "pricing",
+                true,
+                &format!("价格任务 status={} ({}/{})", status, success, total),
+                on,
+            );
+            log(logs, "live", true, "上架完成（WB 审核后生效）", on);
+        }
+        Ok((status, success, total)) => {
+            log(
+                logs,
+                "pricing",
+                false,
+                &format!("折扣暂未生效 status={} ({}/{})", status, success, total),
+                on,
+            );
+            log(
+                logs,
+                "live",
+                true,
+                &format!(
+                    "卡片已创建 nmID={}（WB 审核后生效）。折扣暂未生效，可稍后在「上架记录」点「重试定价」。",
+                    created.nm_id
+                ),
+                on,
+            );
+        }
+        Err(e) => {
+            log(logs, "pricing", false, &format!("价格任务超时/失败：{}", e), on);
+            log(
+                logs,
+                "live",
+                true,
+                &format!(
+                    "卡片已创建 nmID={}（WB 审核后生效）。WB 价格系统对新卡片有延迟，折扣暂未生效，可稍后在「上架记录」点「重试定价」。",
+                    created.nm_id
+                ),
+                on,
+            );
+        }
+    }
     Ok(result)
 }
 

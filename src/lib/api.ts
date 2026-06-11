@@ -46,6 +46,8 @@ export const api = {
   deleteListing: (id: string) => invoke<boolean>("delete_listing", { id }),
   /** Move the WB card to trash (if published) + delete the local record. */
   trashCard: (id: string) => invoke<boolean>("trash_card", { id }),
+  /** Re-apply price/discount for an already-created card (after WB activates it). */
+  retryPricing: (id: string) => invoke<Listing>("retry_pricing", { id }),
   importExcel: (bytes: number[]) => invoke<ListingInput[]>("import_excel", { bytes }),
   listJobs: () => invoke<Job[]>("list_jobs"),
   enqueueJobs: (rows: ListingInput[], autoPublish: boolean) =>

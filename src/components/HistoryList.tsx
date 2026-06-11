@@ -2,16 +2,30 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Trash2, Package, ExternalLink, Loader2 } from "lucide-react";
+import { Trash2, Package, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { StageBadge } from "./StageBadge";
 import { api } from "@/lib/api";
 import type { Listing } from "@/lib/types";
 
 export function HistoryList() {
   const [listings, setListings] = useState<Listing[] | null>(null);
+  const [pricingId, setPricingId] = useState<string | null>(null);
 
   async function load() {
     setListings(await api.listListings());
+  }
+
+  async function retryPrice(id: string) {
+    setPricingId(id);
+    try {
+      await api.retryPricing(id);
+      alert("定价成功，折扣已生效。");
+      await load();
+    } catch (e) {
+      alert("折扣仍未生效：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setPricingId(null);
+    }
   }
 
   useEffect(() => {
@@ -96,6 +110,20 @@ export function HistoryList() {
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  {l.nmID && !l.dryRun && (
+                    <button
+                      onClick={() => retryPrice(l.id)}
+                      disabled={pricingId === l.id}
+                      title="重试定价（卡片激活后设置价格/折扣）"
+                      className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-slate-200 disabled:opacity-50"
+                    >
+                      {pricingId === l.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </button>
+                  )}
                   {l.nmID && !l.dryRun && !l.sandbox && (
                     <a
                       href={`https://www.wildberries.ru/catalog/${l.nmID}/detail.aspx`}
