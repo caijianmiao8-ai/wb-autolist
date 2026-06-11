@@ -61,6 +61,19 @@
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "WB AutoList",
+      "uninstallDisplayName": "WB AutoList ${version}",
+      "language": "2052"
     }
   }
 }

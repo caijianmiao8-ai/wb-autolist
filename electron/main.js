@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, dialog, utilityProcess } = require("electron");
+const { app, BrowserWindow, Menu, shell, dialog, utilityProcess } = require("electron");
 const path = require("node:path");
 const net = require("node:net");
 const http = require("node:http");
@@ -87,6 +87,7 @@ function createWindow(port) {
     minHeight: 700,
     backgroundColor: "#09080f",
     title: "WB AutoList",
+    autoHideMenuBar: true, // no Alt-to-reveal chrome menu on Windows/Linux
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
   win.loadURL(`http://127.0.0.1:${port}/`);
@@ -114,6 +115,10 @@ function resumeQueue(port) {
 }
 
 app.whenReady().then(async () => {
+  // Drop the default Electron menu bar (File/Edit/View…) on Windows/Linux — it
+  // looks unprofessional for a consumer app. macOS keeps its menu so the
+  // standard ⌘C/⌘V/⌘Q accelerators and app menu remain.
+  if (process.platform !== "darwin") Menu.setApplicationMenu(null);
   try {
     serverPort = await startServer();
     createWindow(serverPort);
