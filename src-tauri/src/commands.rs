@@ -6,7 +6,8 @@
 use crate::ai::assets::to_data_url;
 use crate::ai::excel::parse_excel;
 use crate::ai::organize::organize_rows;
-use crate::config::{get_config, prices_token, redact_config, save_config};
+use crate::config::{get_config, prices_token, redact_config, save_config, AppConfig};
+use crate::db;
 use crate::generate::generate_listing;
 use crate::paths::Paths;
 use crate::queue::{self, BatchJob};
@@ -21,9 +22,10 @@ use crate::wb::marketplace::{
 };
 use crate::wb::pipeline::publish_listing;
 use crate::wb::prices::{read_all_prices, upload_price_task};
+use base64::Engine;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
@@ -246,42 +248,131 @@ pub async fn clear_jobs(
 // 读接口都是「一次性拉取」，绝不轮询（价格写接口才是硬限流的那个）。
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// One row in the management panel: live WB state for a single card.
+/// Per-data-type freshness + the live prices-domain cooldown, for the UI.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ManagedCard {
-    #[serde(rename = "nmID")]
-    pub nm_id: i64,
-    pub vendor_code: String,
-    pub subject_name: String,
-    pub brand: String,
-    pub title: String,
-    /// First photo URL from WB CDN (defensive — may be absent on a brand-new card).
-    pub photo: Option<String>,
-    /// Barcodes (the FBS stock key).
-    pub skus: Vec<String>,
-    pub price: Option<i64>,
-    pub discounted_price: Option<i64>,
-    pub discount: Option<i64>,
-    pub currency: Option<String>,
-    /// Stock summed across the card's skus on the selected warehouse.
-    /// None = no warehouse selected (or stock read failed).
-    pub stock: Option<i64>,
-    pub characteristics: i64,
-    /// Derived: "live" | "no_price" | "no_stock" | "rejected" | "ok".
-    pub status: String,
-    pub status_note: String,
+pub struct SyncStatus {
+    products: db::MetaRow,
+    prices: db::MetaRow,
+    stocks: db::MetaRow,
+    warehouses: db::MetaRow,
+    /// Seconds until the prices domain can be synced again (0 = ready).
+    prices_cooldown_remaining: i64,
+    now_epoch: i64,
+}
+
+/// Everything the panel needs, read entirely from the local DB (instant).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManageView {
+    cards: Vec<db::ManagedCard>,
+    warehouses: Vec<Warehouse>,
+    sync: SyncStatus,
+    warehouse_id: Option<i64>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ManageResponse {
-    pub cards: Vec<ManagedCard>,
-    pub total: usize,
-    pub truncated: bool,
-    pub warehouse_id: Option<i64>,
-    /// Non-fatal issues (e.g. price/stock read failed) surfaced to the UI.
-    pub warnings: Vec<String>,
+pub struct SyncResult {
+    ok: bool,
+    count: usize,
+    message: String,
+    prices_cooldown_remaining: i64,
+}
+
+fn now_epoch() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// Lock the cache DB, recovering from poison. The cache is disposable, so a
+/// panic while a guard is held must NOT permanently brick the panel.
+fn lock_db(st: &AppState) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
+    st.db.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn prices_cooldown(st: &AppState) -> i64 {
+    (st.prices_cooldown_until.load(Ordering::Relaxed) - now_epoch()).max(0)
+}
+
+/// Cache namespace = environment + supplier id (JWT `oid`/`sid`/`id` claim,
+/// accepted as number OR string). When it changes (sandbox↔live, or a different
+/// seller), the cache is wiped so we never show one account's data under another.
+fn account_key(cfg: &AppConfig) -> String {
+    let env = if cfg.wb_sandbox { "sandbox" } else { "live" };
+    let claims = cfg
+        .wb_content_token
+        .split('.')
+        .nth(1)
+        .and_then(|b| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(b).ok())
+        .and_then(|by| serde_json::from_slice::<Value>(&by).ok());
+    let id = claims
+        .as_ref()
+        .and_then(|v| {
+            ["oid", "sid", "id"].iter().find_map(|k| {
+                v.get(*k).and_then(|x| {
+                    x.as_i64().map(|n| n.to_string()).or_else(|| x.as_str().map(|s| s.to_string()))
+                })
+            })
+        })
+        .unwrap_or_else(|| "unknown".into());
+    format!("{}:{}", env, id)
+}
+
+/// Pull ALL cards via cursor pagination. Returns `(cards, truncated)` where
+/// `truncated` = we hit the page cap with a still-full page (more cards exist
+/// than we fetched). The caller must NOT treat a truncated result as a complete
+/// snapshot, or cards beyond the cap would be wrongly deleted from the cache.
+async fn fetch_all_cards(st: &AppState, ctx: &WbCtx) -> Result<(Vec<Value>, bool), String> {
+    let mut raw: Vec<Value> = vec![];
+    let mut cursor = json!({ "limit": 100 });
+    const MAX_PAGES: u32 = 15;
+    let mut truncated = false;
+    for page in 0..MAX_PAGES {
+        let v = wb_fetch(
+            st,
+            ctx,
+            WbReq::post("/content/v2/get/cards/list").body(json!({
+                "settings": { "sort": { "ascending": false }, "filter": { "withPhoto": -1 }, "cursor": cursor }
+            })),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let cards = v.get("cards").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+        let n = cards.len();
+        let upd = v.pointer("/cursor/updatedAt").cloned();
+        let last_nm = v.pointer("/cursor/nmID").cloned();
+        raw.extend(cards);
+        if n < 100 {
+            break; // natural exhaustion → complete snapshot
+        }
+        if page + 1 == MAX_PAGES {
+            truncated = true; // full page AND out of page budget → more remain
+            break;
+        }
+        cursor = json!({ "limit": 100, "updatedAt": upd, "nmID": last_nm });
+    }
+    Ok((raw, truncated))
+}
+
+async fn fetch_rejected(st: &AppState, ctx: &WbCtx) -> Vec<String> {
+    match list_card_errors(st, ctx).await {
+        Ok(list) => list.into_iter().filter(|(_, e)| !e.is_empty()).map(|(vc, _)| vc).collect(),
+        Err(_) => vec![],
+    }
+}
+
+fn to_product_row(c: &Value) -> db::ProductRow {
+    db::ProductRow {
+        nm_id: c.get("nmID").and_then(|x| x.as_i64()).unwrap_or(0),
+        vendor_code: s(c, "vendorCode"),
+        title: s(c, "title"),
+        brand: s(c, "brand"),
+        subject_id: c.get("subjectID").and_then(|x| x.as_i64()).unwrap_or(0),
+        subject_name: s(c, "subjectName"),
+        photo: extract_photo(c),
+        characteristics: c.get("characteristics").and_then(|x| x.as_array()).map(|a| a.len() as i64).unwrap_or(0),
+        skus: extract_skus(c),
+    }
 }
 
 fn extract_skus(c: &Value) -> Vec<String> {
@@ -334,166 +425,194 @@ pub async fn list_warehouses(state: State<'_, Arc<AppState>>) -> Result<Vec<Ware
     }
     let ctx = WbCtx {
         token: cfg.wb_content_token.clone(),
-        sandbox: false,
+        sandbox: cfg.wb_sandbox,
     };
     mp_list_warehouses(&st, &ctx).await.map_err(|e| e.to_string())
 }
 
-/// Aggregate WB cards + prices + (optionally) stock for the management panel.
-/// One-shot load; the frontend re-calls this only on explicit refresh.
+/// Read the whole panel from the LOCAL DB — instant, offline, no rate-limit
+/// risk. Never touches WB. The frontend calls the sync_* commands to refresh.
 #[tauri::command]
-pub async fn manage_cards(
-    state: State<'_, Arc<AppState>>,
+pub fn db_list_cards(
+    state: State<Arc<AppState>>,
     warehouse_id: Option<i64>,
-) -> Result<ManageResponse, String> {
+) -> Result<ManageView, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let key = account_key(&cfg);
+    let conn = lock_db(&st);
+    db::ensure_account(&conn, &key).map_err(|e| e.to_string())?;
+    let prices_meta = db::get_meta(&conn, "prices");
+    let prices_synced = prices_meta.last_sync_at > 0;
+    let cards = db::get_managed_cards(&conn, warehouse_id, prices_synced).map_err(|e| e.to_string())?;
+    let warehouses = db::get_warehouses(&conn).map_err(|e| e.to_string())?;
+    let sync = SyncStatus {
+        products: db::get_meta(&conn, "products"),
+        prices: prices_meta,
+        stocks: db::get_meta(&conn, "stocks"),
+        warehouses: db::get_meta(&conn, "warehouses"),
+        prices_cooldown_remaining: prices_cooldown(&st),
+        now_epoch: now_epoch(),
+    };
+    Ok(ManageView { cards, warehouses, sync, warehouse_id })
+}
+
+/// Sync the seller's FBS warehouses (marketplace, 300/min — safe) → DB.
+#[tauri::command]
+pub async fn sync_warehouses(state: State<'_, Arc<AppState>>) -> Result<SyncResult, String> {
     let st = state.inner().clone();
     let cfg = get_config(&st.paths);
     if cfg.wb_content_token.is_empty() {
-        return Err("未配置 WB Token（演示模式下没有真实商品可管理）。".into());
+        return Err("未配置 WB Token。".into());
     }
-    let ctx = WbCtx {
-        token: cfg.wb_content_token.clone(),
-        sandbox: cfg.wb_sandbox,
-    };
-    let mut warnings: Vec<String> = vec![];
-
-    // 1) all cards via cursor pagination (capped at 1500 to bound worst case).
-    let mut raw_cards: Vec<Value> = vec![];
-    let mut cursor = json!({ "limit": 100 });
-    let mut truncated = false;
-    const MAX_PAGES: u32 = 15;
-    for page in 0..MAX_PAGES {
-        let v = wb_fetch(
-            &st,
-            &ctx,
-            WbReq::post("/content/v2/get/cards/list").body(json!({
-                "settings": {
-                    "sort": { "ascending": false },
-                    "filter": { "withPhoto": -1 },
-                    "cursor": cursor
-                }
-            })),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        let cards = v.get("cards").and_then(|c| c.as_array()).cloned().unwrap_or_default();
-        let n = cards.len();
-        let upd = v.pointer("/cursor/updatedAt").cloned();
-        let last_nm = v.pointer("/cursor/nmID").cloned();
-        raw_cards.extend(cards);
-        if n < 100 {
-            break;
-        }
-        if page + 1 == MAX_PAGES {
-            truncated = true;
-            break;
-        }
-        cursor = json!({ "limit": 100, "updatedAt": upd, "nmID": last_nm });
-    }
-
-    // 2) prices (one-shot; non-fatal on failure).
-    let prices = match read_all_prices(
-        &st,
-        &WbCtx {
-            token: prices_token(&cfg),
-            sandbox: cfg.wb_sandbox,
-        },
-    )
-    .await
+    let key = account_key(&cfg);
     {
+        let conn = lock_db(&st);
+        db::ensure_account(&conn, &key).map_err(|e| e.to_string())?;
+    }
+    let ctx = WbCtx { token: cfg.wb_content_token.clone(), sandbox: cfg.wb_sandbox };
+    let whs = mp_list_warehouses(&st, &ctx).await.map_err(|e| e.to_string())?;
+    let now = now_epoch();
+    let n = {
+        let mut conn = lock_db(&st);
+        let n = db::upsert_warehouses(&mut conn, &whs, now).map_err(|e| e.to_string())?;
+        db::set_meta(&conn, "warehouses", now, "ok", &format!("{} 个仓库", n), 0)
+            .map_err(|e| e.to_string())?;
+        n
+    };
+    Ok(SyncResult { ok: true, count: n, message: format!("已同步 {} 个仓库", n), prices_cooldown_remaining: 0 })
+}
+
+/// Sync product cards + rejection state (content, 100/min — safe) → DB.
+#[tauri::command]
+pub async fn sync_products(state: State<'_, Arc<AppState>>) -> Result<SyncResult, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token。".into());
+    }
+    let key = account_key(&cfg);
+    {
+        let conn = lock_db(&st);
+        db::ensure_account(&conn, &key).map_err(|e| e.to_string())?;
+    }
+    let ctx = WbCtx { token: cfg.wb_content_token.clone(), sandbox: cfg.wb_sandbox };
+    let (cards, truncated) = fetch_all_cards(&st, &ctx).await?;
+    let rejected = fetch_rejected(&st, &ctx).await;
+    let rows: Vec<db::ProductRow> = cards.iter().map(to_product_row).collect();
+    let now = now_epoch();
+    let n = {
+        let mut conn = lock_db(&st);
+        // full_snapshot = !truncated → only prune stale cards when we got them all
+        let n = db::upsert_products(&mut conn, &rows, now, !truncated).map_err(|e| e.to_string())?;
+        db::apply_rejections(&conn, &rejected).map_err(|e| e.to_string())?;
+        let detail = if truncated {
+            format!("{} 个商品(超 1500 已截断) · {} 被拒", n, rejected.len())
+        } else {
+            format!("{} 个商品 · {} 被拒", n, rejected.len())
+        };
+        db::set_meta(&conn, "products", now, "ok", &detail, 0).map_err(|e| e.to_string())?;
+        n
+    };
+    let message = if truncated {
+        format!("已同步 {} 个商品（超过 1500，已截断）", n)
+    } else {
+        format!("已同步 {} 个商品", n)
+    };
+    Ok(SyncResult { ok: true, count: n, message, prices_cooldown_remaining: 0 })
+}
+
+/// Sync FBS stock for one warehouse (marketplace, 300/min — safe) → DB.
+#[tauri::command]
+pub async fn sync_stocks(state: State<'_, Arc<AppState>>, warehouse_id: i64) -> Result<SyncResult, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token。".into());
+    }
+    if warehouse_id <= 0 {
+        return Err("请先选择仓库。".into());
+    }
+    // skus come from already-synced products in the DB.
+    let skus: Vec<String> = {
+        let conn = lock_db(&st);
+        let mut stmt = conn.prepare("SELECT skus FROM products").map_err(|e| e.to_string())?;
+        let it = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for j in it.flatten() {
+            if let Ok(v) = serde_json::from_str::<Vec<String>>(&j) {
+                for sk in v {
+                    set.insert(sk);
+                }
+            }
+        }
+        set.into_iter().collect()
+    };
+    if skus.is_empty() {
+        return Err("本地还没有商品，请先「同步商品」。".into());
+    }
+    let ctx = WbCtx { token: cfg.wb_content_token.clone(), sandbox: cfg.wb_sandbox };
+    let map = read_stocks(&st, &ctx, warehouse_id, &skus).await.map_err(|e| e.to_string())?;
+    let rows: Vec<(String, i64)> = map.into_iter().collect();
+    let now = now_epoch();
+    let n = {
+        let mut conn = lock_db(&st);
+        let n = db::upsert_stocks(&mut conn, warehouse_id, &rows, now).map_err(|e| e.to_string())?;
+        db::set_meta(&conn, "stocks", now, "ok", &format!("仓库 {} · {} 条有货", warehouse_id, n), 0)
+            .map_err(|e| e.to_string())?;
+        n
+    };
+    Ok(SyncResult { ok: true, count: n, message: format!("已同步仓库 {} 的库存", warehouse_id), prices_cooldown_remaining: 0 })
+}
+
+/// Sync prices — the GUARDED one. Blocked while the prices domain is cooling
+/// down (set from a prior 429's X-Ratelimit-Retry). One call, no polling.
+#[tauri::command]
+pub async fn sync_prices(state: State<'_, Arc<AppState>>) -> Result<SyncResult, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    if cfg.wb_content_token.is_empty() {
+        return Err("未配置 WB Token。".into());
+    }
+    let remaining = prices_cooldown(&st);
+    if remaining > 0 {
+        return Err(format!("价格接口冷却中，约 {} 秒后可再同步价格。", remaining));
+    }
+    let key = account_key(&cfg);
+    {
+        let conn = lock_db(&st);
+        db::ensure_account(&conn, &key).map_err(|e| e.to_string())?;
+    }
+    let ctx = WbCtx { token: prices_token(&cfg), sandbox: cfg.wb_sandbox };
+    let map = match read_all_prices(&st, &ctx).await {
         Ok(m) => m,
         Err(e) => {
-            warnings.push(format!("价格读取失败：{}", e));
-            std::collections::HashMap::new()
+            // wb_fetch already recorded the cooldown on a 429.
+            let cd = st.prices_cooldown_until.load(Ordering::Relaxed);
+            let conn = lock_db(&st);
+            let last = db::get_meta(&conn, "prices").last_sync_at;
+            let _ = db::set_meta(&conn, "prices", last, "error", &e.to_string(), cd);
+            return Err(e.to_string());
         }
     };
-
-    // 3) stock for the chosen warehouse (non-fatal). All skus in one batched read.
-    let all_skus: Vec<String> = raw_cards.iter().flat_map(extract_skus).collect();
-    let stocks = match warehouse_id {
-        Some(wh) if !all_skus.is_empty() => {
-            let mp_ctx = WbCtx {
-                token: cfg.wb_content_token.clone(),
-                sandbox: false,
-            };
-            match read_stocks(&st, &mp_ctx, wh, &all_skus).await {
-                Ok(m) => Some(m),
-                Err(e) => {
-                    warnings.push(format!("库存读取失败：{}", e));
-                    None
-                }
-            }
-        }
-        _ => None,
-    };
-
-    // 4) rejected vendorCodes (non-fatal).
-    let rejected: HashSet<String> = match list_card_errors(&st, &ctx).await {
-        Ok(list) => list
-            .into_iter()
-            .filter(|(_, e)| !e.is_empty())
-            .map(|(vc, _)| vc)
-            .collect(),
-        Err(_) => HashSet::new(),
-    };
-
-    // 5) assemble
-    let mut cards: Vec<ManagedCard> = vec![];
-    for c in &raw_cards {
-        let nm = c.get("nmID").and_then(|x| x.as_i64()).unwrap_or(0);
-        let vendor_code = s(c, "vendorCode");
-        let skus = extract_skus(c);
-        let price = prices.get(&nm);
-        let stock = stocks
-            .as_ref()
-            .map(|m| skus.iter().map(|sk| m.get(sk).copied().unwrap_or(0)).sum::<i64>());
-        let characteristics = c
-            .get("characteristics")
-            .and_then(|x| x.as_array())
-            .map(|a| a.len() as i64)
-            .unwrap_or(0);
-
-        let (status, note) = if rejected.contains(&vendor_code) {
-            ("rejected", "被 WB 拒绝（见卡片错误/上架记录）".to_string())
-        } else if price.is_none() {
-            ("no_price", "未定价".to_string())
-        } else if let Some(amt) = stock {
-            if amt <= 0 {
-                ("no_stock", "无库存（补货后可售）".to_string())
-            } else {
-                ("live", format!("可售 · 库存 {}", amt))
-            }
-        } else {
-            ("ok", "已定价（选择仓库可查看库存）".to_string())
-        };
-
-        cards.push(ManagedCard {
+    let rows: Vec<db::PriceRow> = map
+        .into_iter()
+        .map(|(nm, p)| db::PriceRow {
             nm_id: nm,
-            vendor_code,
-            subject_name: s(c, "subjectName"),
-            brand: s(c, "brand"),
-            title: s(c, "title"),
-            photo: extract_photo(c),
-            skus,
-            price: price.map(|p| p.price),
-            discounted_price: price.map(|p| p.discounted_price),
-            discount: price.map(|p| p.discount),
-            currency: price.map(|p| p.currency.clone()),
-            stock,
-            characteristics,
-            status: status.to_string(),
-            status_note: note,
-        });
-    }
-
-    let total = cards.len();
-    Ok(ManageResponse {
-        cards,
-        total,
-        truncated,
-        warehouse_id,
-        warnings,
-    })
+            price: p.price,
+            discounted_price: p.discounted_price,
+            discount: p.discount,
+            currency: p.currency,
+        })
+        .collect();
+    let now = now_epoch();
+    let n = {
+        let mut conn = lock_db(&st);
+        let n = db::upsert_prices(&mut conn, &rows, now).map_err(|e| e.to_string())?;
+        db::set_meta(&conn, "prices", now, "ok", &format!("{} 个有价", n), 0).map_err(|e| e.to_string())?;
+        n
+    };
+    Ok(SyncResult { ok: true, count: n, message: format!("已同步 {} 个价格", n), prices_cooldown_remaining: 0 })
 }
 
 /// Set absolute FBS stock for a card's barcodes on a warehouse. amount=0 = 下架.
@@ -517,12 +636,18 @@ pub async fn set_card_stock(
     }
     let ctx = WbCtx {
         token: cfg.wb_content_token.clone(),
-        sandbox: false,
+        sandbox: cfg.wb_sandbox,
     };
-    let items: Vec<(String, i64)> = skus.into_iter().map(|sk| (sk, amount.max(0))).collect();
+    let items: Vec<(String, i64)> = skus.iter().map(|sk| (sk.clone(), amount.max(0))).collect();
     set_stocks(&st, &ctx, warehouse_id, &items)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    {
+        let conn = lock_db(&st);
+        let _ = db::ensure_account(&conn, &account_key(&cfg));
+        let _ = db::local_set_stock(&conn, warehouse_id, &skus, amount.max(0), now_epoch());
+    }
+    Ok(())
 }
 
 /// Re-apply price/discount for a card by nmID (submit-only, no polling).
@@ -551,6 +676,11 @@ pub async fn set_card_price(
     )
     .await
     .map_err(|e| e.to_string())?;
+    {
+        let conn = lock_db(&st);
+        let _ = db::ensure_account(&conn, &account_key(&cfg));
+        let _ = db::local_set_price(&conn, nm_id, price, d, now_epoch());
+    }
     Ok(())
 }
 
@@ -572,5 +702,11 @@ pub async fn trash_cards(
         token: cfg.wb_content_token.clone(),
         sandbox: cfg.wb_sandbox,
     };
-    delete_cards(&st, &ctx, nm_ids).await.map_err(|e| e.to_string())
+    delete_cards(&st, &ctx, nm_ids.clone()).await.map_err(|e| e.to_string())?;
+    {
+        let conn = lock_db(&st);
+        let _ = db::ensure_account(&conn, &account_key(&cfg));
+        let _ = db::local_delete(&conn, &nm_ids);
+    }
+    Ok(())
 }

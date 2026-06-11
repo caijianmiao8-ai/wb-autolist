@@ -4,7 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Listing,
   ListingInput,
-  ManageResponse,
+  ManageView,
+  SyncResult,
   Warehouse,
 } from "./types";
 
@@ -73,12 +74,21 @@ export const api = {
     invoke<Job[]>("enqueue_jobs", { rows, autoPublish }),
   clearJobs: (which: "finished" | "all") => invoke<Job[]>("clear_jobs", { which }),
 
-  // ── Management panel (live WB) ──
-  /** Seller's FBS warehouses (for the warehouse picker). */
+  // ── Management panel (local-first: read DB, sync on demand) ──
+  /** Seller's FBS warehouses, live (used by Settings). */
   listWarehouses: () => invoke<Warehouse[]>("list_warehouses"),
-  /** Aggregate cards + prices + (optional) stock. One-shot; call on refresh only. */
-  manageCards: (warehouseId: number | null) =>
-    invoke<ManageResponse>("manage_cards", { warehouseId }),
+  /** Read the whole panel from the local DB — instant, no network. */
+  dbListCards: (warehouseId: number | null) =>
+    invoke<ManageView>("db_list_cards", { warehouseId }),
+  /** Sync cards (content, safe) → DB. */
+  syncProducts: () => invoke<SyncResult>("sync_products"),
+  /** Sync warehouses (marketplace, safe) → DB. */
+  syncWarehouses: () => invoke<SyncResult>("sync_warehouses"),
+  /** Sync stock for a warehouse (marketplace, safe) → DB. */
+  syncStocks: (warehouseId: number) =>
+    invoke<SyncResult>("sync_stocks", { warehouseId }),
+  /** Sync prices (GUARDED — blocked while the prices domain is cooling down). */
+  syncPrices: () => invoke<SyncResult>("sync_prices"),
   /** Set absolute FBS stock for a card's barcodes (amount 0 = 下架). */
   setCardStock: (warehouseId: number, skus: string[], amount: number) =>
     invoke<void>("set_card_stock", { warehouseId, skus, amount }),

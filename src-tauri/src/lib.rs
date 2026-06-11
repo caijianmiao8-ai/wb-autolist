@@ -1,6 +1,7 @@
 mod ai;
 mod commands;
 mod config;
+mod db;
 #[cfg(test)]
 mod e2e;
 mod generate;
@@ -49,7 +50,11 @@ pub fn run() {
             commands::enqueue_jobs,
             commands::clear_jobs,
             commands::list_warehouses,
-            commands::manage_cards,
+            commands::db_list_cards,
+            commands::sync_products,
+            commands::sync_warehouses,
+            commands::sync_stocks,
+            commands::sync_prices,
             commands::set_card_stock,
             commands::set_card_price,
             commands::trash_cards,

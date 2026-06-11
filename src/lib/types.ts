@@ -87,7 +87,13 @@ export interface Warehouse {
   deliveryType: number;
 }
 
-export type ManagedStatus = "live" | "no_price" | "no_stock" | "rejected" | "ok";
+export type ManagedStatus =
+  | "live"
+  | "no_price"
+  | "price_unknown"
+  | "no_stock"
+  | "rejected"
+  | "ok";
 
 export interface ManagedCard {
   nmID: number;
@@ -108,10 +114,35 @@ export interface ManagedCard {
   statusNote: string;
 }
 
-export interface ManageResponse {
+/** Freshness of one synced data type. */
+export interface MetaRow {
+  lastSyncAt: number; // epoch seconds, 0 = never
+  status: string; // "ok" | "error" | ""
+  detail: string;
+  cooldownUntil: number; // epoch seconds
+}
+
+export interface SyncStatus {
+  products: MetaRow;
+  prices: MetaRow;
+  stocks: MetaRow;
+  warehouses: MetaRow;
+  /** seconds until prices can be synced again (0 = ready) */
+  pricesCooldownRemaining: number;
+  nowEpoch: number;
+}
+
+/** Everything the panel needs — read entirely from the local DB. */
+export interface ManageView {
   cards: ManagedCard[];
-  total: number;
-  truncated: boolean;
+  warehouses: Warehouse[];
+  sync: SyncStatus;
   warehouseId: number | null;
-  warnings: string[];
+}
+
+export interface SyncResult {
+  ok: boolean;
+  count: number;
+  message: string;
+  pricesCooldownRemaining: number;
 }

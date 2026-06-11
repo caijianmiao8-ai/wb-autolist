@@ -22,7 +22,8 @@ pub const HOST_MARKETPLACE: &str = "https://marketplace-api.wildberries.ru";
 pub enum Host {
     Content,
     Prices,
-    /// FBS marketplace: warehouses + stocks. No sandbox variant exists.
+    /// FBS marketplace: warehouses + stocks. Has a `marketplace-api-sandbox`
+    /// host (verified live), so it honors the sandbox flag like the others.
     Marketplace,
 }
 
@@ -124,16 +125,12 @@ impl WbReq {
 }
 
 fn base_host(host: Host, sandbox: bool) -> String {
-    // Marketplace has no sandbox host — always hit production (stock ops only
-    // make sense against the live FBS warehouse).
-    if let Host::Marketplace = host {
-        return HOST_MARKETPLACE.to_string();
-    }
     let base = match host {
         Host::Content => HOST_CONTENT,
         Host::Prices => HOST_PRICES,
         Host::Marketplace => HOST_MARKETPLACE,
     };
+    // All three domains have a `*-api-sandbox.wildberries.ru` host.
     if sandbox {
         base.replace("-api.wildberries.ru", "-api-sandbox.wildberries.ru")
     } else {
@@ -201,11 +198,15 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
             }
         };
         let status = res.status().as_u16();
-        let retry_after = res
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok());
+        // WB uses a token bucket and reports it via X-Ratelimit-* headers.
+        // Prefer X-Ratelimit-Retry; fall back to standard Retry-After.
+        let header_u64 = |name: &str| {
+            res.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+        };
+        let retry_after = header_u64("x-ratelimit-retry").or_else(|| header_u64("retry-after"));
         let text = res.text().await.unwrap_or_default();
         let json: Option<Value> = serde_json::from_str(&text).ok();
 
@@ -215,6 +216,20 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
             use_bearer = true;
             attempt -= 1;
             continue;
+        }
+        // Prices domain has a tiny bucket (read+write share it). On 429 record a
+        // cooldown from X-Ratelimit-Retry and FAIL FAST — retrying just burns
+        // more of an already-empty bucket. Sync code gates on this cooldown.
+        if status == 429 && matches!(req.host, Host::Prices) {
+            let retry = retry_after.unwrap_or(60);
+            let until = chrono::Utc::now().timestamp() + retry as i64;
+            state
+                .prices_cooldown_until
+                .store(until, std::sync::atomic::Ordering::Relaxed);
+            return Err(anyhow!(
+                "WB 价格接口限流(429)，约 {} 秒后可再同步价格。",
+                retry
+            ));
         }
         if (status == 429 || status >= 500) && attempt < 3 {
             let wait = retry_after.unwrap_or(attempt * 2);

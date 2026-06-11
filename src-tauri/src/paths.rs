@@ -25,6 +25,9 @@ impl Paths {
     pub fn queue(&self) -> PathBuf {
         self.data_dir.join("queue.json")
     }
+    pub fn db(&self) -> PathBuf {
+        self.data_dir.join("wb.db")
+    }
     pub fn images(&self) -> PathBuf {
         self.data_dir.join("images")
     }
