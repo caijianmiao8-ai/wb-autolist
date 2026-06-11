@@ -1,5 +1,10 @@
+mod config;
+mod paths;
+mod state;
+mod store;
 mod types;
 mod util;
+mod wb;
 
 /// Liveness probe used by the frontend to confirm the Rust backend is up.
 #[tauri::command]
