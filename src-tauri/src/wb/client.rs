@@ -205,6 +205,21 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
             tokio::time::sleep(Duration::from_secs(wait)).await;
             continue;
         }
+        if status == 429 {
+            // WB returns the rate-limit doc URL in `detail`; surface it as a
+            // human message instead of a bare link.
+            let link = json
+                .as_ref()
+                .and_then(|j| j.get("detail").and_then(|v| v.as_str()))
+                .filter(|s| s.starts_with("http"))
+                .map(|s| format!("（说明: {}）", s))
+                .unwrap_or_default();
+            return Err(anyhow!(
+                "WB API {}: 请求过于频繁(429)，接口限流，请稍候再试{}",
+                req.path,
+                link
+            ));
+        }
         if !(200..300).contains(&status) {
             let msg = json
                 .as_ref()

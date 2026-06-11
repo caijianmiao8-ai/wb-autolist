@@ -17,7 +17,7 @@ use crate::util::original_price;
 use crate::wb::cards::delete_cards;
 use crate::wb::client::WbCtx;
 use crate::wb::pipeline::publish_listing;
-use crate::wb::prices::{upload_price_task, wait_for_price_task};
+use crate::wb::prices::upload_price_task;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -107,32 +107,19 @@ pub async fn retry_pricing(state: State<'_, Arc<AppState>>, id: String) -> Resul
     };
     let discount = l.discount.clamp(0.0, 99.0).round();
     let base = original_price(l.price, discount) as i64;
-    let upload_id = upload_price_task(
+    // Submit once, no polling (the prices API is ≈1 req/min — polling 429s).
+    upload_price_task(
         &st,
         &ctx,
         vec![json!({ "nmID": nm, "price": base, "discount": discount as i64 })],
     )
     .await
     .map_err(|e| e.to_string())?;
-    let (status, success, total) = wait_for_price_task(&st, &ctx, upload_id, 180)
-        .await
-        .map_err(|e| e.to_string())?;
-    let ok = status == 3 && success >= total;
     let updated = store::update_listing(&st.paths, &id, |x| {
         x.stage = ListingStage::Live;
-        x.error = if ok {
-            None
-        } else {
-            Some(format!("折扣仍未生效 (status={} {}/{})", status, success, total))
-        };
+        x.error = None;
     })
     .unwrap_or(l);
-    if !ok {
-        return Err(format!(
-            "折扣仍未生效 (status={} {}/{})。卡片可能尚未激活，请过几分钟再试。",
-            status, success, total
-        ));
-    }
     Ok(hydrate(&st.paths, updated))
 }
 

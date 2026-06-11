@@ -19,7 +19,7 @@ export function HistoryList() {
     setPricingId(id);
     try {
       await api.retryPricing(id);
-      alert("定价成功，折扣已生效。");
+      alert("价格/折扣已提交，WB 约 1 分钟后异步生效（可在 WB 后台核对）。");
       await load();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

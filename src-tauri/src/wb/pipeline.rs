@@ -12,7 +12,7 @@ use crate::wb::cards::{upload_cards, wait_for_card};
 use crate::wb::categories::{get_characteristics, get_colors, get_tnved, resolve_subject};
 use crate::wb::client::WbCtx;
 use crate::wb::media::upload_media_bytes;
-use crate::wb::prices::{upload_price_task, wait_for_price_task};
+use crate::wb::prices::upload_price_task;
 use crate::wb::types::{WbCharacteristic, WbColor};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -272,64 +272,31 @@ async fn run_pipeline(
         slot += 1;
     }
 
-    // ── Step 6: price (best-effort, non-fatal) ──
-    // Card + media already succeeded. Pricing goes through a SEPARATE WB
-    // subsystem (discounts-prices) that often doesn't yet know a brand-new nmID,
-    // so the task can time out — that's expected, not a listing failure. Mark
-    // the card live; the user can re-apply pricing later (retry_pricing).
-    log(logs, "pricing", true, "提交价格任务…", on);
-    let pricing = async {
-        let upload_id = upload_price_task(
-            state,
-            &price_ctx,
-            vec![json!({ "nmID": created.nm_id, "price": base, "discount": discount as i64 })],
-        )
-        .await?;
-        // short wait during publish — a brand-new nmID usually isn't priceable
-        // yet; the user re-applies pricing later (retry_pricing, 3-min wait).
-        wait_for_price_task(state, &price_ctx, upload_id, 25).await
-    }
-    .await;
-
+    // ── Step 6: price (submit once, no polling) ──
+    // WB's discounts-prices API is rate-limited HARD (≈1 req/min per seller).
+    // So we ONLY submit the price/discount task and let WB process it async —
+    // polling here would instantly trip 429. Non-fatal: the card is already up.
+    log(logs, "pricing", true, "提交价格/折扣任务…", on);
     result.stage = ListingStage::Live;
-    match pricing {
-        Ok((status, success, total)) if status == 3 && success >= total => {
-            log(
-                logs,
-                "pricing",
-                true,
-                &format!("价格任务 status={} ({}/{})", status, success, total),
-                on,
-            );
+    match upload_price_task(
+        state,
+        &price_ctx,
+        vec![json!({ "nmID": created.nm_id, "price": base, "discount": discount as i64 })],
+    )
+    .await
+    {
+        Ok(_) => {
+            log(logs, "pricing", true, "价格/折扣已提交（WB 异步处理，约 1 分钟生效）", on);
             log(logs, "live", true, "上架完成（WB 审核后生效）", on);
         }
-        Ok((status, success, total)) => {
-            log(
-                logs,
-                "pricing",
-                false,
-                &format!("折扣暂未生效 status={} ({}/{})", status, success, total),
-                on,
-            );
-            log(
-                logs,
-                "live",
-                true,
-                &format!(
-                    "卡片已创建 nmID={}（WB 审核后生效）。折扣暂未生效，可稍后在「上架记录」点「重试定价」。",
-                    created.nm_id
-                ),
-                on,
-            );
-        }
         Err(e) => {
-            log(logs, "pricing", false, &format!("折扣暂未生效（{}）", e), on);
+            log(logs, "pricing", false, &format!("价格暂未提交：{}", e), on);
             log(
                 logs,
                 "live",
                 true,
                 &format!(
-                    "卡片已创建 nmID={}（WB 审核后生效）。新卡片通常要先通过 WB 审核才能定价，请稍后在「上架记录」点「重试定价」补上价格/折扣。",
+                    "卡片已创建 nmID={}（WB 审核后生效）。价格接口限流较严（约每分钟 1 次），可稍后在「上架记录」点「重试定价」补价格/折扣。",
                     created.nm_id
                 ),
                 on,
