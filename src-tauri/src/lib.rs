@@ -1,6 +1,8 @@
 mod ai;
 mod commands;
 mod config;
+#[cfg(test)]
+mod e2e;
 mod generate;
 mod paths;
 mod queue;
