@@ -205,5 +205,8 @@ fn clean_parts(
         price,
         discount,
         brand: if brand.is_empty() { None } else { Some(brand) },
+        custom_prompt: None,
+        image_count: None,
+        base_photos: vec![],
     }
 }

@@ -3,17 +3,90 @@
 //! main/gallery product images + a composed promo banner → a draft Listing.
 
 use crate::ai::assets::save_image;
-use crate::ai::banner::{compose_promo, derive_detail, make_placeholder, normalize_main, PromoSpec};
+use crate::ai::banner::{make_placeholder, normalize_main, to_png_square};
 use crate::ai::copy::generate_copy;
-use crate::ai::image::generate_image;
+use crate::ai::image::{edit_image, generate_image};
 use crate::config::AppConfig;
 use crate::state::AppState;
 use crate::types::{GeneratedImage, Listing, ListingInput, ListingStage, ProductCopy};
-use crate::util::{make_vendor_code, new_id, now_iso, original_price};
+use crate::util::{make_vendor_code, new_id, now_iso};
 use crate::wb::pipeline::Progress;
 use anyhow::Result;
+use base64::Engine;
 
 const QUALITY_SUFFIX: &str = ", professional studio product photography, clean white seamless background, soft diffused lighting, sharp focus, ultra detailed, high resolution, commercial e-commerce hero shot, centered composition";
+
+/// Strip an optional `data:...;base64,` prefix and decode.
+fn decode_image_input(s: &str) -> Option<Vec<u8>> {
+    let b64 = s.rsplit(',').next().unwrap_or(s).trim();
+    base64::engine::general_purpose::STANDARD.decode(b64).ok()
+}
+
+/// Image types to produce, in rotation order (index 0 is always the WB main).
+fn image_plan(n: usize) -> Vec<&'static str> {
+    const CYCLE: [&str; 8] = [
+        "main", "info", "scene", "angle", "info", "scene", "angle", "info",
+    ];
+    let n = n.clamp(1, 8);
+    CYCLE.iter().take(n).copied().collect()
+}
+
+fn wb_slot(kind: &str) -> &'static str {
+    match kind {
+        "main" => "main",
+        "info" => "promo",
+        _ => "gallery",
+    }
+}
+
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "main" => "主图",
+        "info" => "信息图",
+        "scene" => "场景图",
+        _ => "细节图",
+    }
+}
+
+/// Build the per-image prompt. `is_edit` = we have a real product photo to keep.
+fn build_image_prompt(
+    kind: &str,
+    is_edit: bool,
+    title_ru: &str,
+    name: &str,
+    callouts: &str,
+    custom: &str,
+) -> String {
+    let head = if is_edit {
+        "Keep this exact product unchanged.".to_string()
+    } else {
+        format!("Professional studio image of {}.", name)
+    };
+    let body = match kind {
+        "main" => {
+            "Clean white studio e-commerce product photo, centered, soft shadow, premium, no text."
+                .to_string()
+        }
+        "info" => format!(
+            "Clean Wildberries product infographic, white background. Bold Russian title at top: \"{}\". Feature callouts with small icons: {}. Modern professional retail card, accurate legible Russian text, no price.",
+            title_ru, callouts
+        ),
+        "scene" => {
+            "Place it in an attractive, relevant real-life lifestyle scene with premium photography and natural lighting, no text."
+                .to_string()
+        }
+        _ => {
+            "Close-up detail shot highlighting texture and quality, clean background, no text."
+                .to_string()
+        }
+    };
+    let tail = if custom.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" {}", custom.trim())
+    };
+    format!("{} {}{}", head, body, tail)
+}
 
 /// WB rejects unregistered/non-Latin brands ("Бренд … не найден"). Use the
 /// universally-accepted "no brand" value unless the user supplies one.
@@ -57,82 +130,66 @@ pub async fn generate_listing(
                 }
             )
         });
-    let base_prompt = format!("{}{}", core_prompt, QUALITY_SUFFIX);
+    // ── Images: N images by type rotation. img2img if the user uploaded a real
+    // product photo (keeps the exact product), else text-to-image. ──
+    let bases: Vec<Vec<u8>> = raw
+        .base_photos
+        .iter()
+        .filter_map(|s| decode_image_input(s))
+        .collect();
+    let is_edit = !bases.is_empty();
+    let count = raw.image_count.unwrap_or(3).clamp(1, 8) as usize;
+    let callouts = copy
+        .bullets
+        .iter()
+        .filter(|b| !b.trim().is_empty())
+        .take(4)
+        .map(|b| b.chars().take(24).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let custom = raw.custom_prompt.clone().unwrap_or_default();
+    let plan = image_plan(count);
+
+    on(
+        "generate",
+        true,
+        &format!(
+            "文案完成，开始生成 {} 张图（{}，每张约 1-2 分钟）…",
+            count,
+            if is_edit { "用你的产品图 img2img" } else { "AI 文生图" }
+        ),
+    );
 
     let mut images: Vec<GeneratedImage> = vec![];
-
-    // Main product image (3:4). Fall back to a branded placeholder.
-    on("generate", true, "文案完成，正在生成主图（AI 出图较慢，约 1-2 分钟）…");
-    let mut ai_ok = false;
-    let main_buf: Vec<u8> = match generate_image(&state.http, cfg, &base_prompt, 1024, 1365, Some(1000))
-        .await
-    {
-        Ok(bytes) => match normalize_main(&bytes, 1200, 1600) {
-            Ok(b) => {
-                ai_ok = true;
-                b
+    for (i, kind) in plan.iter().enumerate() {
+        on(
+            "generate",
+            true,
+            &format!("生成第 {}/{} 张（{}）…", i + 1, count, kind_label(kind)),
+        );
+        let prompt = build_image_prompt(kind, is_edit, &copy.title, &raw.product_name, &callouts, &custom);
+        let raw_bytes: Result<Vec<u8>> = if is_edit {
+            match to_png_square(&bases[i % bases.len()], 1024) {
+                Ok(png) => edit_image(&state.http, cfg, &png, &prompt, "1024x1536").await,
+                Err(e) => Err(e),
             }
-            Err(_) => make_placeholder(&raw.product_name, &raw.keywords, 1200, 1600, 0)?,
-        },
-        Err(_) => make_placeholder(&raw.product_name, &raw.keywords, 1200, 1600, 0)?,
-    };
-    images.push(save_image(
-        &state.paths,
-        &main_buf,
-        "main",
-        &base_prompt,
-        1200,
-        1600,
-        "jpg",
-    ));
-
-    on("generate", true, "主图完成，生成细节图与宣传图…");
-    // Detail shot — derived from the main image (no extra network call).
-    let detail = if ai_ok {
-        derive_detail(&main_buf, 1200, 1600)
-    } else {
-        make_placeholder(&raw.product_name, &raw.keywords, 1200, 1600, 1)
-    };
-    if let Ok(d) = detail {
+        } else {
+            generate_image(&state.http, cfg, &prompt, 1024, 1536, Some(1000 + i as u64)).await
+        };
+        let buf = match raw_bytes {
+            Ok(b) => normalize_main(&b, 1200, 1600).unwrap_or(b),
+            Err(_) => make_placeholder(&raw.product_name, &raw.keywords, 1200, 1600, i as u32)?,
+        };
         images.push(save_image(
             &state.paths,
-            &d,
-            "gallery",
-            &format!("{} (detail)", base_prompt),
+            &buf,
+            wb_slot(kind),
+            &prompt,
             1200,
             1600,
             "jpg",
         ));
     }
-
-    // Promo banner — oldPrice = pre-discount base, same as WB submission.
-    let old_price = if discount > 0.0 {
-        Some(original_price(price, discount))
-    } else {
-        None
-    };
-    let promo = compose_promo(
-        &main_buf,
-        &PromoSpec {
-            title: copy.title.clone(),
-            subtitle: copy.bullets.first().cloned(),
-            price: Some(price),
-            old_price,
-            discount: if discount > 0.0 { Some(discount) } else { None },
-            badge: Some("ХИТ".to_string()),
-            width: Some(1080),
-            height: Some(1440),
-        },
-    )?;
-    images.push(save_image(
-        &state.paths,
-        &promo,
-        "promo",
-        "promo banner",
-        1080,
-        1440,
-        "jpg",
-    ));
 
     on("generate", true, "全部生成完成");
     let now = now_iso();

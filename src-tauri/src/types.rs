@@ -96,4 +96,14 @@ pub struct ListingInput {
     pub discount: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brand: Option<String>,
+    /// Free-text styling/instructions injected into the image prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_prompt: Option<String>,
+    /// How many images to generate (default 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_count: Option<u32>,
+    /// Real product photos (base64, optionally a data: URL) → img2img base.
+    /// Empty → text-to-image.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub base_photos: Vec<String>,
 }

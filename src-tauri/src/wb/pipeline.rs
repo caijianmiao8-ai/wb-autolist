@@ -3,9 +3,10 @@
 //! Without a content token it runs DRY-RUN: validation + banner files are real,
 //! but no WB HTTP happens and a fake nmID is assigned.
 
+use crate::ai::charcs::fill_characteristics;
 use crate::config::{prices_token, AppConfig};
 use crate::state::AppState;
-use crate::types::{GeneratedImage, Listing, ListingStage, StageLog};
+use crate::types::{GeneratedImage, Listing, ListingStage, ProductCopy, StageLog};
 use crate::util::{now_iso, original_price};
 use crate::wb::barcode::generate_ean13;
 use crate::wb::cards::{upload_cards, wait_for_card};
@@ -16,6 +17,7 @@ use crate::wb::prices::upload_price_task;
 use crate::wb::types::{WbCharacteristic, WbColor};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::time::Duration;
 
 /// Progress sink: (stage, ok, message). Send+Sync so the publish future stays
@@ -151,25 +153,23 @@ async fn run_pipeline(
         on,
     );
 
-    // ── Step 2: characteristics + colors + tnved ──
+    // ── Step 2: characteristics (AI-filled) + colors + tnved ──
     let charcs = get_characteristics(state, &ctx, subject.subject_id).await?;
-    let required: Vec<WbCharacteristic> = charcs
-        .into_iter()
-        .filter(|c| c.required && c.charc_type != 0)
-        .collect();
     let colors = get_colors(state, &ctx).await.unwrap_or_default();
     let tnved = get_tnved(state, &ctx, subject.subject_id, None)
         .await
         .unwrap_or(None);
-    let characteristics = build_characteristics(&required, listing, &colors, &tnved);
+    let characteristics =
+        build_characteristics(state, cfg, listing, copy, &subject.subject_name, &charcs, &colors, &tnved)
+            .await;
     log(
         logs,
         "creating",
         true,
         &format!(
-            "填充 {} 项特征（必填 {} 项）{}",
+            "填充 {} 项特征（类目共 {} 项可选）{}",
             characteristics.len(),
-            required.len(),
+            charcs.len(),
             tnved
                 .as_ref()
                 .map(|t| format!(", TNVED={}", t))
@@ -395,53 +395,72 @@ fn validate_listing(listing: &Listing) -> Vec<String> {
     p
 }
 
-/// Best-effort fill of required characteristics from copy + directories.
-fn build_characteristics(
-    required: &[WbCharacteristic],
+/// Fill the card's characteristics. WB rarely marks anything `required`, so we
+/// take the required + popular (then a few more) and let the AI produce values;
+/// колор/ТНВЭД get a deterministic fallback if the model skips them.
+async fn build_characteristics(
+    state: &AppState,
+    cfg: &AppConfig,
     listing: &Listing,
+    copy: &ProductCopy,
+    category: &str,
+    charcs: &[WbCharacteristic],
     colors: &[WbColor],
     tnved: &Option<String>,
 ) -> Vec<Value> {
-    let kw: Vec<String> = listing
-        .copy
-        .as_ref()
-        .map(|c| c.keywords.clone())
-        .unwrap_or_default();
-    let mut out = vec![];
-    for c in required {
-        let name_lc = c.name.to_lowercase();
-        if name_lc.contains("цвет") {
-            let matched = colors
-                .iter()
-                .find(|col| kw.iter().any(|k| col.name.to_lowercase() == k.to_lowercase()))
-                .map(|c| c.name.clone())
-                .or_else(|| colors.first().map(|c| c.name.clone()))
-                .unwrap_or_else(|| "разноцветный".to_string());
-            out.push(json!({ "id": c.charc_id, "value": [matched] }));
-            continue;
+    // candidates: required → popular → rest, deduped, capped
+    let mut seen: HashSet<i64> = HashSet::new();
+    let mut candidates: Vec<WbCharacteristic> = vec![];
+    for c in charcs.iter().filter(|c| c.required) {
+        if seen.insert(c.charc_id) {
+            candidates.push(c.clone());
         }
-        if name_lc.contains("тнвэд") || name_lc.contains("тн вэд") {
+    }
+    for c in charcs.iter().filter(|c| c.popular) {
+        if seen.insert(c.charc_id) {
+            candidates.push(c.clone());
+        }
+    }
+    for c in charcs.iter() {
+        if candidates.len() >= 30 {
+            break;
+        }
+        if seen.insert(c.charc_id) {
+            candidates.push(c.clone());
+        }
+    }
+
+    let filled = fill_characteristics(
+        &state.http,
+        cfg,
+        &listing.product_name,
+        &copy.keywords,
+        &copy.title,
+        category,
+        &candidates,
+    )
+    .await;
+
+    let kw = &copy.keywords;
+    let mut out: Vec<Value> = vec![];
+    for c in &candidates {
+        let name_lc = c.name.to_lowercase();
+        if let Some(v) = filled.get(&c.charc_id) {
+            out.push(json!({ "id": c.charc_id, "value": v }));
+        } else if name_lc.contains("тнвэд") || name_lc.contains("тн вэд") {
             if let Some(t) = tnved {
                 out.push(json!({ "id": c.charc_id, "value": t }));
             }
-            continue;
+        } else if name_lc.contains("цвет") {
+            let col = colors
+                .iter()
+                .find(|col| kw.iter().any(|k| col.name.to_lowercase() == k.to_lowercase()))
+                .map(|c| c.name.clone())
+                .or_else(|| colors.first().map(|c| c.name.clone()));
+            if let Some(col) = col {
+                out.push(json!({ "id": c.charc_id, "value": [col] }));
+            }
         }
-        if c.charc_type == 4 {
-            out.push(json!({ "id": c.charc_id, "value": [1] }));
-            continue;
-        }
-        let val = kw
-            .first()
-            .cloned()
-            .or_else(|| {
-                listing
-                    .copy
-                    .as_ref()
-                    .map(|c| c.brand.clone())
-                    .filter(|b| !b.is_empty())
-            })
-            .unwrap_or_else(|| listing.product_name.clone());
-        out.push(json!({ "id": c.charc_id, "value": [val] }));
     }
     out
 }

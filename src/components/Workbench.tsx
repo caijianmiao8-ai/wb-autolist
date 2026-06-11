@@ -36,6 +36,10 @@ export function Workbench() {
   const [price, setPrice] = useState(1990);
   const [discount, setDiscount] = useState(30);
   const [brand, setBrand] = useState("");
+  const [basePhotos, setBasePhotos] = useState<string[]>([]);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [imageCount, setImageCount] = useState(3);
+  const photoRef = useRef<HTMLInputElement>(null);
 
   const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +121,22 @@ export function Workbench() {
     price > 0 ? (dClamped > 0 ? Math.round(price / (1 - dClamped / 100)) : Math.round(price)) : 0;
   const priceOutOfRange = wbBase > 0 && (wbBase < 4 || wbBase > 850000);
 
+  async function onPhotos(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    const urls = await Promise.all(
+      files.map(
+        (f) =>
+          new Promise<string>((res) => {
+            const r = new FileReader();
+            r.onload = () => res(r.result as string);
+            r.readAsDataURL(f);
+          })
+      )
+    );
+    setBasePhotos((a) => [...a, ...urls].slice(0, 8));
+    if (photoRef.current) photoRef.current.value = "";
+  }
+
   function addKeyword() {
     const parts = keywordInput
       .split(/[,，]/)
@@ -145,7 +165,16 @@ export function Workbench() {
       /* ignore */
     }
     try {
-      const data = await api.generate({ productName, keywords, price, discount, brand });
+      const data = await api.generate({
+        productName,
+        keywords,
+        price,
+        discount,
+        brand,
+        customPrompt,
+        imageCount,
+        basePhotos,
+      });
       setListing(data);
       setStep("preview");
       setGenMsg("");
@@ -332,10 +361,54 @@ export function Workbench() {
 
           <label className="label">品牌（可选）</label>
           <input
-            className="input mb-5"
+            className="input mb-4"
             placeholder="留空则自动生成"
             value={brand}
             onChange={(e) => setBrand(e.target.value)}
+          />
+
+          <label className="label">产品图（可选，上传则保留真实产品）</label>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {basePhotos.map((p, i) => (
+              <div key={i} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p} alt="" className="h-14 w-14 rounded-lg border border-white/10 object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setBasePhotos((a) => a.filter((_, idx) => idx !== i))}
+                  className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-rose-500 text-[10px] text-white"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => photoRef.current?.click()}
+              className="grid h-14 w-14 place-items-center rounded-lg border border-dashed border-white/15 text-slate-400 hover:border-white/30 hover:text-slate-200"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={onPhotos} />
+          </div>
+
+          <label className="label">自定义提示词（可选）</label>
+          <textarea
+            className="input mb-4"
+            rows={2}
+            placeholder="如：极简风、青绿配色、突出 304 不锈钢"
+            value={customPrompt}
+            onChange={(e) => setCustomPrompt(e.target.value)}
+          />
+
+          <label className="label">生成图片数量（1–8）</label>
+          <input
+            type="number"
+            className="input mb-5"
+            min={1}
+            max={8}
+            value={imageCount}
+            onChange={(e) => setImageCount(Math.max(1, Math.min(8, Number(e.target.value) || 3)))}
           />
 
           <button

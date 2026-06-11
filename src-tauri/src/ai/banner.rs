@@ -135,6 +135,29 @@ pub fn derive_detail(base: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
     to_jpeg(&rgba, 92)
 }
 
+/// Decode any image and letterbox it onto a white square PNG — the input format
+/// the img2img (edits) endpoint expects.
+pub fn to_png_square(bytes: &[u8], size: u32) -> Result<Vec<u8>> {
+    let img = image::load_from_memory(bytes)?;
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    let scale = (size as f32 / w as f32).min(size as f32 / h as f32);
+    let nw = ((w as f32 * scale).round() as u32).clamp(1, size);
+    let nh = ((h as f32 * scale).round() as u32).clamp(1, size);
+    let resized = img
+        .resize_exact(nw, nh, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
+    let mut canvas = image::RgbaImage::from_pixel(size, size, image::Rgba([255, 255, 255, 255]));
+    image::imageops::overlay(
+        &mut canvas,
+        &resized,
+        ((size - nw) / 2) as i64,
+        ((size - nh) / 2) as i64,
+    );
+    let mut buf = std::io::Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(canvas).write_to(&mut buf, image::ImageFormat::Png)?;
+    Ok(buf.into_inner())
+}
+
 /// Compose a promo banner: AI product image + gradient shade + title/price/badge.
 pub fn compose_promo(base: &[u8], spec: &PromoSpec) -> Result<Vec<u8>> {
     let w = spec.width.unwrap_or(1080);
@@ -144,6 +167,99 @@ pub fn compose_promo(base: &[u8], spec: &PromoSpec) -> Result<Vec<u8>> {
     let overlay = render_svg(&build_promo_svg(spec, w, h), w, h)?;
     composite_over(&mut canvas, &overlay);
     to_jpeg(&canvas, 90)
+}
+
+/// Infographic-style promo: AI product photo + a designed text layer (bold
+/// headline + feature chips, NO price — matching real WB seller cards).
+pub fn compose_infographic(
+    base: &[u8],
+    title: &str,
+    features: &[String],
+    badge: Option<&str>,
+    w: u32,
+    h: u32,
+) -> Result<Vec<u8>> {
+    let img = image::load_from_memory(base)?;
+    let mut canvas = resize_cover(img, w, h).to_rgba8();
+    let overlay = render_svg(&build_infographic_svg(title, features, badge, w, h), w, h)?;
+    composite_over(&mut canvas, &overlay);
+    to_jpeg(&canvas, 90)
+}
+
+fn build_infographic_svg(
+    title: &str,
+    features: &[String],
+    badge: Option<&str>,
+    w: u32,
+    h: u32,
+) -> String {
+    const ACCENT: &str = "#cb11ab";
+    const INK: &str = "#16181d";
+
+    // headline (top), 2 lines max
+    let title_lines = wrap(title, 18, 2);
+    let hx = 64i32;
+    let mut hy = 138i32;
+    let mut headline = String::new();
+    for line in &title_lines {
+        headline.push_str(&format!(
+            r##"<text x="{}" y="{}" font-size="62" font-weight="800" fill="{}" font-family="Arial, sans-serif">{}</text>"##,
+            hx, hy, INK, esc(line)
+        ));
+        hy += 80;
+    }
+    let underline = format!(
+        r##"<rect x="{}" y="{}" width="132" height="10" rx="5" fill="{}"/>"##,
+        hx,
+        hy - 50,
+        ACCENT
+    );
+
+    // accent badge, top-right
+    let badge_svg = match badge {
+        Some(b) if !b.is_empty() => {
+            let bl = b.chars().count() as i32;
+            let bw = 44 + bl * 28;
+            format!(
+                r##"<g transform="translate({},56)"><rect x="0" y="0" width="{}" height="66" rx="33" fill="{}"/><text x="{}" y="44" font-size="34" font-weight="800" fill="#fff" text-anchor="middle" font-family="Arial, sans-serif">{}</text></g>"##,
+                w as i32 - 64 - bw,
+                bw,
+                ACCENT,
+                bw / 2,
+                esc(b)
+            )
+        }
+        _ => String::new(),
+    };
+
+    // feature chips, bottom row (up to 3, auto width by char count)
+    let mut chips = String::new();
+    let mut cx = 56i32;
+    let cy = h as i32 - 150;
+    for f in features.iter().filter(|s| !s.trim().is_empty()).take(3) {
+        let t: String = f.trim().chars().take(16).collect();
+        let cl = t.chars().count() as i32;
+        let cw = 48 + cl * 22;
+        if cx + cw > w as i32 - 56 {
+            break;
+        }
+        chips.push_str(&format!(
+            r##"<g transform="translate({},{})"><rect x="0" y="0" width="{}" height="74" rx="37" fill="#ffffff" stroke="{}" stroke-width="3"/><text x="{}" y="48" font-size="30" font-weight="700" fill="{}" text-anchor="middle" font-family="Arial, sans-serif">{}</text></g>"##,
+            cx, cy, cw, ACCENT, cw / 2, ACCENT, esc(&t)
+        ));
+        cx += cw + 18;
+    }
+
+    format!(
+        r##"<svg width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="top" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(255,255,255,0.96)"/><stop offset="100%" stop-color="rgba(255,255,255,0)"/></linearGradient><linearGradient id="bot" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="rgba(255,255,255,0.94)"/><stop offset="100%" stop-color="rgba(255,255,255,0)"/></linearGradient></defs><rect width="{w}" height="400" fill="url(#top)"/><rect y="{boty}" width="{w}" height="300" fill="url(#bot)"/>{headline}{underline}{badge}{chips}</svg>"##,
+        w = w,
+        h = h,
+        boty = h as i32 - 300,
+        headline = headline,
+        underline = underline,
+        badge = badge_svg,
+        chips = chips
+    )
 }
 
 /// Zero-config fallback: a branded gradient placeholder with the product name.

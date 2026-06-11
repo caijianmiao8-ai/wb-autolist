@@ -33,6 +33,12 @@ export interface GenerateInput {
   price: number;
   discount: number;
   brand?: string;
+  /** Free-text styling injected into the image prompt. */
+  customPrompt?: string;
+  /** Number of images to generate (1–8). */
+  imageCount?: number;
+  /** Real product photos (data URLs) → img2img base; empty = text-to-image. */
+  basePhotos?: string[];
 }
 
 export const api = {
