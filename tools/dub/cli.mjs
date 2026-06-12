@@ -46,6 +46,7 @@ Options:
   --rate <chars/sec>           TTS speaking rate for length budgeting (default 12; raise for faster engines)
   --no-normalize               disable per-clip loudness normalization
   --no-gate                    don't mute the dub during the original's silent gaps
+  --no-background              don't keep the original M&E/background (dub over silence)
   --mode segment|whole         timing strategy (default segment)
   --keep-original-audio 0..1   duck original under dub (default 0 = full replace)
   --dry-run                    skip all paid calls (free wiring test)
@@ -96,6 +97,7 @@ async function main() {
   if (a.rate && a.rate !== true) overrides.RU_CHARS_PER_SEC = a.rate;
   if (a['no-normalize']) overrides.NORMALIZE = 'false';
   if (a['no-gate']) overrides.GATE_SILENCE = 'false';
+  if (a['no-background']) overrides.KEEP_BACKGROUND = 'false';
   // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.
   if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen') overrides.OUT_FORMAT = 'wav';
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];

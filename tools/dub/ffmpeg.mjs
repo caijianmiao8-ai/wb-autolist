@@ -12,6 +12,7 @@
 //  - adelay takes one value PER CHANNEL separated by '|', in MILLISECONDS.
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -196,12 +197,26 @@ export function makeFf(cfg = {}) {
 
   /**
    * Mux a dub track into the source video.
-   *  - default: REPLACE the original audio entirely (-c:v copy, fast, no re-encode).
-   *  - keepOriginal in (0,1]: DUCK the original under the dub at that gain via amix.
+   *  - opts.background (path): mix the dub OVER the separated M&E/background stem
+   *    (foley/ambient/noise, vocals removed) at opts.bgVolume — preserves the
+   *    soundscape, the recommended mode. (Takes priority over keepOriginal.)
+   *  - keepOriginal in (0,1]: DUCK the FULL original (incl. English voice) under
+   *    the dub — fallback when no separated background is available.
+   *  - default: REPLACE the original audio entirely.
    */
   async function muxReplaceAudio(inputVideo, dubWav, outMp4, opts = {}) {
-    const { keepOriginal = 0, audioBitrate = '192k' } = opts;
-    if (keepOriginal && keepOriginal > 0) {
+    const { keepOriginal = 0, audioBitrate = '192k', background = null, bgVolume = 0.8 } = opts;
+    if (background) {
+      const g = Math.min(Math.max(bgVolume, 0), 2);
+      await ffmpeg([
+        '-y', '-i', inputVideo, '-i', dubWav, '-i', background,
+        '-filter_complex',
+        `[2:a]volume=${g}[bg];[1:a]volume=1.0[dub];[bg][dub]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`,
+        '-map', '0:v:0', '-map', '[aout]',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', audioBitrate,
+        '-shortest', outMp4,
+      ]);
+    } else if (keepOriginal && keepOriginal > 0) {
       const g = Math.min(Math.max(keepOriginal, 0), 1);
       await ffmpeg([
         '-y', '-i', inputVideo, '-i', dubWav,
@@ -268,6 +283,26 @@ export function makeFf(cfg = {}) {
     const I = opts.I ?? -16, TP = opts.TP ?? -1.5, LRA = opts.LRA ?? 11;
     await ffmpeg(['-y', '-i', inPath, '-af', `loudnorm=I=${I}:TP=${TP}:LRA=${LRA}`, '-ar', '44100', '-ac', '2', outPath]);
     return outPath;
+  }
+
+  /**
+   * Separate the original's BACKGROUND (music & effects — foley/ambient/noise)
+   * from the speech, via Demucs (htdemucs two-stems). Returns the path to the
+   * vocals-removed track. Keeping this under the dub preserves the soundscape
+   * (clinks, sprays, room tone) instead of a bare voice over silence.
+   * Demucs runs via uvx (cached after first use, ~20s for a 90s clip).
+   */
+  async function separateBackground(srcVideoOrAudio, workDir, opts = {}) {
+    const uvx = opts.uvx || join(homedir(), '.local/bin/uvx');
+    const full = join(workDir, 'orig_full.wav');
+    await ffmpeg(['-y', '-i', srcVideoOrAudio, '-vn', '-ar', '44100', '-ac', '2', full]);
+    const outDir = join(workDir, 'demucs');
+    // --mp3: demucs' default WAV writer needs torchcodec (often absent); mp3 uses
+    // lameenc and Just Works. Lossy is fine — it gets re-encoded to aac at mux.
+    await run(uvx, ['--from', 'demucs', 'demucs', '--two-stems=vocals', '--mp3', '-o', outDir, full]);
+    const bg = join(outDir, 'htdemucs', 'orig_full', 'no_vocals.mp3');
+    if (!existsSync(bg)) throw new Error(`demucs background stem not found at ${bg}`);
+    return bg;
   }
 
   /**
@@ -345,6 +380,7 @@ export function makeFf(cfg = {}) {
     normalizeLoudness,
     detectSilence,
     gateSilence,
+    separateBackground,
   };
 }
 

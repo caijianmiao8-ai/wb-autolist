@@ -163,6 +163,12 @@ export function loadConfig(opts = {}) {
     GATE_SILENCE: String(env('GATE_SILENCE', 'true')).toLowerCase() !== 'false',
     GATE_THRESH: env('GATE_THRESH', '-30dB'),
     GATE_MIN_SEC: Number(env('GATE_MIN_SEC', '0.5')),
+    // Preserve the original soundscape: Demucs-separate the background (music &
+    // effects — foley/ambient/noise) and mix the dub OVER it, instead of dropping
+    // a bare voice onto silence. Needs uvx+demucs (auto-installed on first run).
+    KEEP_BACKGROUND: String(env('KEEP_BACKGROUND', 'true')).toLowerCase() !== 'false',
+    BG_VOLUME: Number(env('BG_VOLUME', '0.8')), // background gain under the dub
+    DEMUCS_UVX: env('DEMUCS_UVX') || join(homedir(), '.local/bin/uvx'),
 
     // --- Qwen / DashScope TTS voice cloning (qwen3-tts-vc) ---
     QWEN_API_KEY: env('QWEN_API_KEY'),

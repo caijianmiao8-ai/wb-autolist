@@ -370,8 +370,22 @@ export async function runPipeline(cfg, args) {
     });
   }
 
+  // 5c) Separate the original's background (M&E) so the dub keeps the soundscape
+  // (clinks/sprays/ambient) instead of a bare voice over silence.
+  let background = null;
+  if (cfg.KEEP_BACKGROUND && !dryRun) {
+    await stageC('separate-bg', async () => {
+      try {
+        background = await ff.separateBackground(input, workDir, { uvx: cfg.DEMUCS_UVX });
+      } catch (e) {
+        background = null;
+        capture({ stage: 'separate-bg', ok: true, ms: 0, warn: `background separation skipped (${e.message}) — dub over silence` });
+      }
+    });
+  }
+
   await stageC('mux', async () => {
-    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio });
+    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio, background, bgVolume: cfg.BG_VOLUME });
   });
 
   // 6) correctness gate: output duration within ~150ms of source video
