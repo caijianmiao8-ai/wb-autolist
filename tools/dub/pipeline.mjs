@@ -45,6 +45,31 @@ function makeLogger(onEvent) {
   };
 }
 
+/**
+ * Map each detected speaker to a voice id.
+ *  - explicit {speaker_id: voiceId} wins (from --speaker-voices)
+ *  - else the DOMINANT speaker (most speech) uses `primaryVoice` (--voice or the
+ *    provider default), and every other speaker rotates through `pool` so a
+ *    second speaker (e.g. a child) never shares the narrator's voice.
+ * Returns { map, ordered } where map[speaker] may be undefined (-> provider default).
+ */
+function buildSpeakerVoiceMap(segments, { explicit = {}, primaryVoice, pool = [] }) {
+  const dur = {};
+  for (const s of segments) {
+    const k = s.speaker ?? '_';
+    dur[k] = (dur[k] || 0) + Math.max((Number(s.end) || 0) - (Number(s.start) || 0), 0);
+  }
+  const ordered = Object.keys(dur).sort((a, b) => dur[b] - dur[a]);
+  const map = {};
+  let pi = 0;
+  ordered.forEach((spk, idx) => {
+    if (explicit[spk]) map[spk] = explicit[spk];
+    else if (idx === 0) map[spk] = primaryVoice; // dominant -> primary/--voice/default
+    else map[spk] = pool.length ? pool[pi++ % pool.length] : primaryVoice;
+  });
+  return { map, ordered, dur };
+}
+
 /** Generate a silent wav of given duration (used by dry-run fake TTS). */
 async function silentWav(ff, durationSec, outPath) {
   await ff.ffmpeg([
@@ -112,16 +137,16 @@ export async function runPipeline(cfg, args) {
   let asrResult;
   asrResult = await stageC('asr', async () => {
     if (dryRun) {
-      // Fake a couple of evenly-spaced English segments from the duration.
+      // Fake two speakers so the speaker->voice mapping path is exercised free.
       const half = videoDur / 2;
       const segments = [
-        { start: 0, end: Math.max(half - 0.05, 0.3), text: 'This is a dry run sample sentence.' },
-        { start: half, end: Math.max(videoDur - 0.05, half + 0.3), text: 'No paid API calls were made here.' },
+        { start: 0, end: Math.max(half - 0.05, 0.3), text: 'This is a dry run sample sentence.', speaker: 'speaker_0' },
+        { start: half, end: Math.max(videoDur - 0.05, half + 0.3), text: 'No paid API calls were made here.', speaker: 'speaker_1' },
       ];
       return { text: segments.map((s) => s.text).join(' '), language: 'eng', segments, dryRun: true };
     }
     const asr = makeAsr(cfg);
-    const r = await asr.transcribe(wav16k, { language: cfg.SRC_LANG });
+    const r = await asr.transcribe(wav16k, { language: cfg.SRC_LANG, diarize: cfg.DIARIZE });
     // persist raw STT for caching/debug (never re-pay)
     if (r.raw) await writeFile(join(workDir, 'asr_raw.json'), JSON.stringify(r.raw, null, 2));
     return { ...r, provider: asr.provider };
@@ -147,7 +172,15 @@ export async function runPipeline(cfg, args) {
   });
   await writeFile(join(workDir, 'segments_ru.json'), JSON.stringify(ruSegments, null, 2));
 
-  // 4) TTS each RU segment + time-fit to its slot
+  // speaker -> voice mapping (multi-voice dubbing). With diarization off or a
+  // single speaker this collapses to the primary voice for everyone.
+  const speakerVoice = buildSpeakerVoiceMap(ruSegments, {
+    explicit: ttsOpts.speakerVoices || {},
+    primaryVoice: ttsOpts.voiceId,
+    pool: cfg.SECONDARY_VOICE_POOL || [],
+  });
+
+  // 4) TTS each RU segment (per-speaker voice) + time-fit to its slot
   const tts = dryRun ? null : makeTts(cfg);
   const fitClips = await stageC('tts+fit', async () => {
     const clips = [];
@@ -168,7 +201,7 @@ export async function runPipeline(cfg, args) {
         synthDur = slot;
       } else {
         const r = await tts.synthesize(seg.text, {
-          voiceId: ttsOpts.voiceId,
+          voiceId: speakerVoice.map[seg.speaker ?? '_'] ?? ttsOpts.voiceId,
           modelId: ttsOpts.modelId,
           language: cfg.TARGET_LANG,
           format: cfg.OUT_FORMAT,
@@ -227,6 +260,8 @@ export async function runPipeline(cfg, args) {
     mode,
     dryRun,
     segments: ruSegments.length,
+    speakers: speakerVoice.ordered,
+    speakerVoiceMap: speakerVoice.map,
     asrProvider: dryRun ? 'dry-run' : asrResult.provider,
     ttsProvider: dryRun ? 'dry-run' : tts.provider,
     clips: fitClips.map((c) => ({ start: c.start, end: c.end, factor: Number(c.factor?.toFixed(3)), capped: c.capped })),

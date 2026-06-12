@@ -17,6 +17,33 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const DEFAULT_ENV_PATH = join(REPO_ROOT, '.env.local');
 
+// Friendly name -> ElevenLabs premade voice id (the 21 the restricted key sees).
+// Lets users (and --speaker-voices) say `sarah` instead of an opaque id.
+export const VOICE_ALIASES = {
+  // female (RU-capable via multilingual_v2)
+  sarah: 'EXAVITQu4vr4xnSDxMaL', laura: 'FGY2WhTYpPnrIDTdsKH5', jessica: 'cgSgspJ2msm6clMCkdW9',
+  alice: 'Xb7hH8MSUJpSbSDYk0k2', matilda: 'XrExE9yKIg1WjnnlVkGX', bella: 'hpp4J3VqNfWAUOO0d1Us',
+  lily: 'pFZP5JQG7iQjIQuC4Bku',
+  // male
+  george: 'JBFqnCBsd6RMkjVDRZzb', brian: 'nPczCjzI2devNBz1zQrb', eric: 'cjVigY5qzO86Huf0OWal',
+  will: 'bIHbv24MWmeRgasZH58o', roger: 'CwhRBWXzGAHq8TQ4Fs17', charlie: 'IKne3meq5aSn9XLyUdCD',
+  daniel: 'onwK4e9ZLuTAKqWW03F9', liam: 'TX3LPaxmHKxFdv7VOQHJ', chris: 'iP95p4xoKVk53GoZ742B',
+};
+
+/** Resolve a voice name or raw id to an id. Unknown strings pass through (assumed id). */
+export const resolveVoice = (s) => (s == null ? s : VOICE_ALIASES[String(s).trim().toLowerCase()] || String(s).trim());
+
+/** Parse "speaker_0=sarah,speaker_1=jessica" -> { speaker_0: '<id>', speaker_1: '<id>' }. */
+export function parseSpeakerVoices(str) {
+  const map = {};
+  if (!str || str === true) return map;
+  for (const pair of String(str).split(',')) {
+    const [k, v] = pair.split('=').map((x) => (x || '').trim());
+    if (k && v) map[k] = resolveVoice(v);
+  }
+  return map;
+}
+
 /** Minimal .env parser. Supports KEY=VALUE, # comments, quotes, blank lines. */
 export function parseEnvFile(path) {
   let raw;
@@ -93,6 +120,17 @@ export function loadConfig(opts = {}) {
     // George — warm storyteller, RU-capable via multilingual_v2 (verified default)
     EL_VOICE_ID: env('EL_VOICE_ID', 'JBFqnCBsd6RMkjVDRZzb'),
     EL_OUTPUT_FORMAT: env('EL_OUTPUT_FORMAT', 'mp3_44100_128'),
+
+    // --- Speaker-aware dubbing (multi-voice) ---
+    // diarize: ElevenLabs Scribe tags each word with speaker_id so each speaker
+    // gets a distinct voice. Single-speaker videos collapse to one voice anyway.
+    // (Aurixel/Whisper ASR has no diarization — segments fall back to one voice.)
+    DIARIZE: String(env('DIARIZE', 'true')).toLowerCase() !== 'false',
+    // explicit map, e.g. "speaker_0=sarah,speaker_1=jessica" (names or ids).
+    SPEAKER_VOICES: parseSpeakerVoices(env('SPEAKER_VOICES')),
+    // dominant speaker uses EL_VOICE_ID/--voice; extra speakers rotate this pool.
+    SECONDARY_VOICE_POOL: String(env('SECONDARY_VOICE_POOL', 'jessica,brian,laura,eric'))
+      .split(',').map((s) => resolveVoice(s)).filter(Boolean),
 
     // --- Aurixel audio (stubs; 404 today) ---
     AURIXEL_AUDIO_BASE:

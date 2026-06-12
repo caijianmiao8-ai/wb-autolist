@@ -23,7 +23,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, extname, resolve } from 'node:path';
-import { loadConfig, redactedConfig, assertSecrets } from './config.mjs';
+import { loadConfig, redactedConfig, assertSecrets, parseSpeakerVoices, resolveVoice } from './config.mjs';
 import { runPipeline } from './pipeline.mjs';
 
 const HELP = `EN->RU product-video dubbing CLI
@@ -32,7 +32,9 @@ const HELP = `EN->RU product-video dubbing CLI
 
 Options:
   --out <path>                 output mp4 (default <input>.ru.mp4)
-  --voice <id>                 ElevenLabs voice id (default George)
+  --voice <id|name>            voice for the MAIN speaker (default George; names: sarah, jessica, brian…)
+  --speaker-voices "s0=sarah,s1=jessica"  per-speaker voices (needs diarization)
+  --no-diarize                 disable speaker separation (one voice for all)
   --tts-model <id>             TTS model id (default eleven_multilingual_v2)
   --keywords "a,b,c"           RU keywords woven into the translation
   --brand X                    brand kept verbatim
@@ -80,8 +82,10 @@ async function main() {
   const overrides = {};
   if (a['asr-provider']) overrides.ASR_PROVIDER = String(a['asr-provider']).toLowerCase();
   if (a['tts-provider']) overrides.TTS_PROVIDER = String(a['tts-provider']).toLowerCase();
-  if (a.voice) overrides.EL_VOICE_ID = a.voice;
+  if (a.voice && a.voice !== true) overrides.EL_VOICE_ID = resolveVoice(a.voice);
   if (a['tts-model']) overrides.EL_TTS_MODEL = a['tts-model'];
+  if (a['no-diarize']) overrides.DIARIZE = 'false';
+  if (a['speaker-voices'] && a['speaker-voices'] !== true) overrides.SPEAKER_VOICES = a['speaker-voices'];
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];
   if (a['target-lang']) overrides.TARGET_LANG = a['target-lang'];
 
@@ -111,8 +115,9 @@ async function main() {
   // for elevenlabs, AURIXEL_VOICE for aurixel). This keeps the provider swap
   // config-only — an EL voice id must never leak into the Aurixel provider.
   const tts = {
-    voiceId: a.voice && a.voice !== true ? a.voice : undefined,
+    voiceId: a.voice && a.voice !== true ? resolveVoice(a.voice) : undefined,
     modelId: a['tts-model'] && a['tts-model'] !== true ? a['tts-model'] : undefined,
+    speakerVoices: cfg.SPEAKER_VOICES, // {speaker_id: voiceId} from --speaker-voices
   };
 
   console.log('== WB EN->RU dub ==');
@@ -136,6 +141,9 @@ async function main() {
     const res = await runPipeline(cfg, { input, out, workDir, mode, dryRun, translate, tts, keepOriginalAudio, onEvent });
     console.log('-- summary --');
     console.log(`segments     : ${res.segments}`);
+    if (res.speakers && res.speakers.length > 1) {
+      console.log(`speakers     : ${res.speakers.length} -> ${res.speakers.map((s) => `${s}=${res.speakerVoiceMap[s] || 'default'}`).join(', ')}`);
+    }
     console.log(`video dur    : ${res.videoDur.toFixed(3)}s`);
     console.log(`output dur   : ${res.outDur.toFixed(3)}s  (drift ${res.drift.toFixed(3)}s)`);
     console.log(`asr/tts      : ${res.asrProvider} / ${res.ttsProvider}`);

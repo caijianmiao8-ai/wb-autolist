@@ -33,9 +33,13 @@ export function chunkWordsToSegments(words, { gap = GAP, maxWords = MAX_WORDS } 
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     const prev = words[i - 1];
-    if (!cur) cur = { start: w.start, end: w.end, text: '' };
+    const spk = w.speaker_id ?? null;
+    // A speaker change always starts a new segment so each chunk is single-voice.
+    if (cur && cur.speaker != null && spk != null && spk !== cur.speaker) flush();
+    if (!cur) cur = { start: w.start, end: w.end, text: '', speaker: spk };
     cur.text += (cur.text ? ' ' : '') + w.text;
     cur.end = w.end;
+    if (cur.speaker == null) cur.speaker = spk;
     const bigGap = prev && w.start - prev.end > gap;
     const sentenceEnd = SENTENCE_END.test(w.text);
     const tooLong = cur.text.split(' ').length >= maxWords;
@@ -75,7 +79,7 @@ export function makeElevenLabsAsr(cfg) {
   const timeoutMs = cfg.timeoutMs || 180000;
   const retries = cfg.retries ?? 2;
 
-  async function transcribe(audioPath, { language } = {}) {
+  async function transcribe(audioPath, { language, diarize = false } = {}) {
     if (!key) throw new Error('ElevenLabs ASR: ELEVENLABS_API_KEY missing');
     const buf = await readFile(audioPath);
     const form = new FormData();
@@ -83,7 +87,9 @@ export function makeElevenLabsAsr(cfg) {
     form.append('file', new Blob([buf], { type: 'audio/mpeg' }), 'audio');
     form.append('timestamps_granularity', 'word');
     form.append('tag_audio_events', 'true');
-    form.append('diarize', 'false');
+    // diarize=true tags each word with speaker_id so we can dub each speaker in a
+    // distinct voice (e.g. female narrator vs. a child) instead of one fixed voice.
+    form.append('diarize', diarize ? 'true' : 'false');
     if (language) form.append('language_code', language);
 
     const res = await fetchWithRetry(
