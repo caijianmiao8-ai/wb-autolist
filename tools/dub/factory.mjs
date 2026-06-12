@@ -11,7 +11,7 @@
 
 import { makeElevenLabsAsr, makeElevenLabsTts } from './providers/elevenlabs.mjs';
 import { makeAurixelAsr, makeAurixelTts } from './providers/aurixelAudio.mjs';
-import { makeQwenTtsVc } from './providers/qwenTtsVc.mjs';
+import { makeQwenTtsVc, makeQwenTts } from './providers/qwenTtsVc.mjs';
 import { makeAurixelTranslator } from './translate.mjs';
 
 export function pickAsr(cfg) {
@@ -48,9 +48,12 @@ export function pickTts(cfg) {
         apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE,
         model: cfg.QWEN_TTS_VC_MODEL, enrollModel: cfg.QWEN_ENROLL_MODEL, ...net,
       });
+    case 'qwen':
+      // Qwen3-TTS preset voices (Cherry/Katerina/…) — stable, no cloning.
+      return makeQwenTts({ apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE, model: cfg.QWEN_TTS_MODEL, voice: cfg.QWEN_VOICE, ...net });
     // case 'myprovider': return makeMyProviderTts({...});  // <-- extension example
     default:
-      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel|qwen-vc)`);
+      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel|qwen-vc|qwen)`);
   }
 }
 

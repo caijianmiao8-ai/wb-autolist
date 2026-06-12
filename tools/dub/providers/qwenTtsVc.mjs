@@ -102,3 +102,47 @@ export function makeQwenTtsVc(cfg) {
   // supportsCloning flags the pipeline to run per-speaker enrollment first.
   return { kind: 'qwen-tts-vc', supportsCloning: true, enroll, synthesize };
 }
+
+/**
+ * Qwen3-TTS PRESET voices (qwen3-tts-flash) — fixed, locked-in voices (Cherry,
+ * Serena, Chelsie, Katerina, Ethan, Dylan, …) that speak Russian. Unlike qwen-vc
+ * these are stable across calls (no per-call clone drift) but can't reproduce the
+ * original speaker. voiceId = a preset name.
+ */
+export function makeQwenTts(cfg) {
+  const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+  const key = cfg.apiKey;
+  const model = cfg.model || 'qwen3-tts-flash';
+  const defaultVoice = cfg.voice || 'Cherry';
+  const sampleRate = cfg.sampleRate || 24000;
+  const timeoutMs = cfg.timeoutMs || 120000;
+  const retries = cfg.retries ?? 2;
+
+  async function synthesize(text, opts = {}) {
+    if (!key) throw new Error('Qwen TTS: QWEN_API_KEY missing');
+    const outPath = opts.outPath;
+    if (!outPath) throw new Error('Qwen TTS: outPath required');
+    const voice = opts.voiceId || defaultVoice;
+    const res = await fetchWithRetry(
+      `${base}/api/v1/services/aigc/multimodal-generation/generation`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, input: { text }, parameters: { voice, sample_rate: sampleRate, format: 'wav', response_format: 'wav' } }),
+      },
+      { timeoutMs, retries, label: 'Qwen TTS' }
+    );
+    if (!res.ok) throw new Error(await errorText(res, 'Qwen TTS'));
+    const j = await res.json();
+    if (j?.code) throw new Error(`Qwen TTS: ${j.code} ${j.message || ''}`.trim());
+    const url = j?.output?.audio?.url || j?.output?.url;
+    if (!url) throw new Error(`Qwen TTS: no audio (${JSON.stringify(j).slice(0, 160)})`);
+    const a = await fetchWithRetry(url, { method: 'GET' }, { timeoutMs, retries, label: 'Qwen TTS audio' });
+    if (!a.ok) throw new Error(await errorText(a, 'Qwen TTS audio'));
+    const audio = Buffer.from(await a.arrayBuffer());
+    await writeFile(outPath, audio);
+    return { outPath, bytes: audio.length };
+  }
+
+  return { kind: 'qwen-tts', synthesize };
+}

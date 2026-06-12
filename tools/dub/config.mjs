@@ -148,6 +148,9 @@ export function loadConfig(opts = {}) {
     QWEN_TTS_BASE: env('QWEN_TTS_BASE', 'https://dashscope.aliyuncs.com'), // Beijing key
     QWEN_TTS_VC_MODEL: env('QWEN_TTS_VC_MODEL', 'qwen3-tts-vc-2026-01-22'),
     QWEN_ENROLL_MODEL: env('QWEN_ENROLL_MODEL', 'qwen-voice-enrollment'),
+    // preset-voice TTS (TTS_PROVIDER=qwen): stable locked voices, no cloning
+    QWEN_TTS_MODEL: env('QWEN_TTS_MODEL', 'qwen3-tts-flash'),
+    QWEN_VOICE: env('QWEN_VOICE', 'Cherry'),
     // per-speaker cloning: only clone speakers with at least this many seconds of
     // clean source audio; shorter speakers fall back to a premade/static voice.
     MIN_CLONE_SEC: Number(env('MIN_CLONE_SEC', '6')),
@@ -198,8 +201,8 @@ export function assertSecrets(cfg, { needAsr = true, needTts = true, needTransla
     missing.push('ELEVENLABS_API_KEY (TTS_PROVIDER=elevenlabs)');
   if (needTts && cfg.TTS_PROVIDER === 'aurixel' && !cfg.AURIXEL_API_KEY)
     missing.push('AURIXEL_API_KEY (TTS_PROVIDER=aurixel)');
-  if (needTts && cfg.TTS_PROVIDER === 'qwen-vc' && !cfg.QWEN_API_KEY)
-    missing.push('QWEN_API_KEY (TTS_PROVIDER=qwen-vc)');
+  if (needTts && (cfg.TTS_PROVIDER === 'qwen-vc' || cfg.TTS_PROVIDER === 'qwen') && !cfg.QWEN_API_KEY)
+    missing.push(`QWEN_API_KEY (TTS_PROVIDER=${cfg.TTS_PROVIDER})`);
   if (missing.length) {
     throw new Error(
       `Missing required secrets in ${cfg.envPath} (or process.env): ${missing.join(', ')}`

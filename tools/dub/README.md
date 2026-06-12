@@ -89,7 +89,9 @@ dub_track.wav        # assembled Russian track
 | Var | Default | Values |
 |---|---|---|
 | `ASR_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel` |
-| `TTS_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel`, `qwen-vc` |
+| `TTS_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel`, `qwen-vc` (clone), `qwen` (preset voices) |
+
+`qwen` = Qwen3-TTS preset voices (`QWEN_TTS_MODEL`=`qwen3-tts-flash`, `QWEN_VOICE`/`--speaker-voices` with names like `Katerina`, `Cherry`, `Chelsie`, `Serena`, `Ethan`, `Dylan`). Stable across calls (no clone drift), Russian-capable, but generic (can't reproduce the original speaker). Needs `QWEN_API_KEY`.
 
 ### Voice cloning (`TTS_PROVIDER=qwen-vc`, Qwen3-TTS-VC / DashScope)
 Clones EACH diarized speaker from their own source audio, then speaks the Russian

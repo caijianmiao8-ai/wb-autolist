@@ -92,8 +92,8 @@ async function main() {
   if (a['min-clone-sec'] && a['min-clone-sec'] !== true) overrides.MIN_CLONE_SEC = a['min-clone-sec'];
   if (a['merge-gap'] && a['merge-gap'] !== true) overrides.MERGE_GAP = a['merge-gap'];
   if (a['no-normalize']) overrides.NORMALIZE = 'false';
-  // qwen-vc returns wav — name intermediate clips accordingly.
-  if (overrides.TTS_PROVIDER === 'qwen-vc') overrides.OUT_FORMAT = 'wav';
+  // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.
+  if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen') overrides.OUT_FORMAT = 'wav';
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];
   if (a['target-lang']) overrides.TARGET_LANG = a['target-lang'];
 
