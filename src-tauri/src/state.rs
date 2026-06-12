@@ -43,6 +43,7 @@ impl AppState {
         AppState {
             paths,
             http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(15))
                 .build()
                 .expect("failed to build reqwest client"),
             gate_content: SerialGate::new(Duration::from_millis(900)),

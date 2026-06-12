@@ -9,6 +9,7 @@ mod paths;
 mod queue;
 mod state;
 mod store;
+mod templates;
 mod types;
 mod util;
 mod wb;
@@ -38,6 +39,7 @@ pub fn run() {
             commands::open_url,
             commands::get_settings,
             commands::save_settings,
+            commands::default_templates,
             commands::generate,
             commands::publish,
             commands::list_listings,

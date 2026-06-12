@@ -73,6 +73,12 @@ pub fn save_settings(state: State<Arc<AppState>>, patch: Value) -> Value {
     redact_config(&cfg)
 }
 
+/// The built-in image-prompt templates (for the editor's "reset to default").
+#[tauri::command]
+pub fn default_templates() -> crate::templates::ImageTemplates {
+    crate::templates::built_in_defaults()
+}
+
 #[tauri::command]
 pub async fn generate(
     app: AppHandle,

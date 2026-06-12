@@ -2,6 +2,7 @@
 // fetch('/api/*') calls. Tauri maps camelCase JS arg keys to snake_case params.
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ImageTemplates,
   Listing,
   ListingInput,
   ManageView,
@@ -27,6 +28,8 @@ export interface RedactedConfig {
   defaultStock: number;
   /** Whether publish sets stock automatically once the card is created. */
   autoStock: boolean;
+  /** Editable image-prompt templates (active = user override or built-in defaults). */
+  imageTemplates: ImageTemplates;
 }
 
 export interface Job {
@@ -47,7 +50,7 @@ export interface GenerateInput {
   brand?: string;
   /** Free-text styling injected into the image prompt. */
   customPrompt?: string;
-  /** Number of images to generate (1–8). */
+  /** Number of images to generate (1–12). */
   imageCount?: number;
   /** Real product photos (data URLs) → img2img base; empty = text-to-image. */
   basePhotos?: string[];
@@ -57,6 +60,8 @@ export const api = {
   getSettings: () => invoke<RedactedConfig>("get_settings"),
   saveSettings: (patch: Record<string, unknown>) =>
     invoke<RedactedConfig>("save_settings", { patch }),
+  /** The built-in image-prompt templates (for "reset to default"). */
+  defaultTemplates: () => invoke<ImageTemplates>("default_templates"),
   generate: (input: GenerateInput) => invoke<Listing>("generate", { input }),
   publish: (id: string) => invoke<Listing>("publish", { id }),
   listListings: () => invoke<Listing[]>("list_listings"),

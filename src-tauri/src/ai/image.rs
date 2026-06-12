@@ -38,7 +38,7 @@ pub async fn edit_image(
             .post(&url)
             .header("Authorization", format!("Bearer {}", cfg.aurixel_api_key))
             .multipart(form)
-            .timeout(Duration::from_secs(240))
+            .timeout(Duration::from_secs(300))
             .send()
             .await;
         match res {
@@ -137,7 +137,7 @@ async fn openai_compatible_image(
             .post(&url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&json!({ "model": model, "prompt": prompt, "size": size, "n": 1, "quality": "high" }))
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(240))
             .send()
             .await;
         match res {

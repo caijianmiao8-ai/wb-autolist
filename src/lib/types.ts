@@ -77,6 +77,23 @@ export interface ListingInput {
   brand?: string;
 }
 
+// ── Editable image-prompt templates ──
+
+export interface ImageTemplate {
+  kind: string;
+  slot: string; // "main" | "promo" | "gallery"
+  label: string;
+  body: string; // parametric prompt with {PLACEHOLDER} tokens
+  textMode: string; // "model" | "overlay"
+  enabled: boolean;
+}
+
+export interface ImageTemplates {
+  version: number;
+  rotation: string[];
+  templates: ImageTemplate[];
+}
+
 // ── Management panel (live WB state) ──
 
 export interface Warehouse {

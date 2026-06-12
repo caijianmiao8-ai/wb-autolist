@@ -401,15 +401,18 @@ export function Workbench() {
             onChange={(e) => setCustomPrompt(e.target.value)}
           />
 
-          <label className="label">生成图片数量（1–8）</label>
+          <label className="label">生成图片数量（1–12）</label>
           <input
             type="number"
-            className="input mb-5"
+            className="input mb-1.5"
             min={1}
-            max={8}
+            max={12}
             value={imageCount}
-            onChange={(e) => setImageCount(Math.max(1, Math.min(8, Number(e.target.value) || 3)))}
+            onChange={(e) => setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 3)))}
           />
+          <p className="mb-5 text-xs text-slate-500">
+            预计 ~{imageCount} 张 × 约 2.5 分钟 ≈ <b>{Math.ceil(imageCount * 2.5)} 分钟</b>（逐张生成，可在「设置」改模板风格）
+          </p>
 
           <button
             className="btn-primary w-full"

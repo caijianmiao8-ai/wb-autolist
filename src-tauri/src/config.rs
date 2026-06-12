@@ -27,6 +27,16 @@ pub struct AppConfig {
     pub default_stock: i64,
     /// Whether publish should set stock automatically once the card is created.
     pub auto_stock: bool,
+    /// Editable image-prompt templates. None = use the built-in defaults.
+    #[serde(default)]
+    pub image_templates: Option<crate::templates::ImageTemplates>,
+}
+
+/// The templates actually in effect (user override, else built-in defaults).
+pub fn active_templates(cfg: &AppConfig) -> crate::templates::ImageTemplates {
+    cfg.image_templates
+        .clone()
+        .unwrap_or_else(crate::templates::built_in_defaults)
 }
 
 impl Default for AppConfig {
@@ -44,6 +54,7 @@ impl Default for AppConfig {
             default_warehouse_id: 0,
             default_stock: 99,
             auto_stock: true,
+            image_templates: None,
         }
     }
 }
@@ -108,6 +119,14 @@ fn apply_file(cfg: &mut AppConfig, file: &Path) {
     if let Some(b) = obj.get("autoStock").and_then(|x| x.as_bool()) {
         cfg.auto_stock = b;
     }
+    if let Some(v) = obj.get("imageTemplates") {
+        match serde_json::from_value::<crate::templates::ImageTemplates>(v.clone()) {
+            Ok(t) => cfg.image_templates = Some(t),
+            // Don't silently lose the user's edits without a trace — log it; the
+            // app falls back to built-in defaults so generation still works.
+            Err(e) => eprintln!("⚠ imageTemplates 解析失败，已回退内置默认: {}", e),
+        }
+    }
 }
 
 pub fn get_config(paths: &Paths) -> AppConfig {
@@ -167,5 +186,7 @@ pub fn redact_config(cfg: &AppConfig) -> Value {
         "defaultWarehouseId": cfg.default_warehouse_id,
         "defaultStock": cfg.default_stock,
         "autoStock": cfg.auto_stock,
+        // Non-secret → the one sanctioned channel for the editable templates.
+        "imageTemplates": serde_json::to_value(active_templates(cfg)).unwrap_or(Value::Null),
     })
 }
