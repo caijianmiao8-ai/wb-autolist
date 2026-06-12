@@ -332,8 +332,21 @@ export async function runPipeline(cfg, args) {
     });
   }
 
+  // 5b) Gate the dub to the original's speech: mute it wherever the source was
+  // silent, so it never plays over a silent mouth (no dub during pauses).
+  let muxTrack = dubTrack;
+  if (cfg.GATE_SILENCE && !dryRun) {
+    await stageC('gate-silence', async () => {
+      const sil = await ff.detectSilence(wav16k, { threshold: cfg.GATE_THRESH, minDur: cfg.GATE_MIN_SEC });
+      const gated = join(workDir, 'dub_gated.wav');
+      await ff.gateSilence(dubTrack, sil, gated);
+      muxTrack = gated;
+      capture({ stage: 'gate-silence', ok: true, ms: 0, warn: `muted dub in ${sil.length} original-silence gaps` });
+    });
+  }
+
   await stageC('mux', async () => {
-    await ff.muxReplaceAudio(input, dubTrack, out, { keepOriginal: keepOriginalAudio });
+    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio });
   });
 
   // 6) correctness gate: output duration within ~150ms of source video

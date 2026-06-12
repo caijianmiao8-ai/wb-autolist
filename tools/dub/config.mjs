@@ -158,6 +158,11 @@ export function loadConfig(opts = {}) {
     FIT_USE_GAP: String(env('FIT_USE_GAP', 'false')).toLowerCase() === 'true',
     FIT_MAX_SPEEDUP: Number(env('FIT_MAX_SPEEDUP', '1.4')), // compress long lines up to this
     FIT_MIN_SLOWDOWN: Number(env('FIT_MIN_SLOWDOWN', '0.8')), // stretch short lines down to this (fills mouth time)
+    // Gate the dub to the original's speech: mute the dub wherever the source was
+    // silent for >= GATE_MIN_SEC, so it never plays over a silent mouth.
+    GATE_SILENCE: String(env('GATE_SILENCE', 'true')).toLowerCase() !== 'false',
+    GATE_THRESH: env('GATE_THRESH', '-30dB'),
+    GATE_MIN_SEC: Number(env('GATE_MIN_SEC', '0.5')),
 
     // --- Qwen / DashScope TTS voice cloning (qwen3-tts-vc) ---
     QWEN_API_KEY: env('QWEN_API_KEY'),

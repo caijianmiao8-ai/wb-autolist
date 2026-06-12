@@ -270,6 +270,46 @@ export function makeFf(cfg = {}) {
     return outPath;
   }
 
+  /**
+   * Detect silent intervals in an audio file (used to gate the dub to the
+   * original's speech/silence envelope). Returns [[start,end], ...] seconds.
+   */
+  async function detectSilence(audioPath, opts = {}) {
+    const thresh = opts.threshold ?? '-30dB';
+    const minDur = opts.minDur ?? 0.5;
+    const { stderr } = await ffmpeg(['-i', audioPath, '-af', `silencedetect=noise=${thresh}:d=${minDur}`, '-f', 'null', '-']).catch((e) => ({ stderr: String(e.message || '') }));
+    const starts = [...stderr.matchAll(/silence_start:\s*(-?[\d.]+)/g)].map((m) => parseFloat(m[1]));
+    const ends = [...stderr.matchAll(/silence_end:\s*([\d.]+)/g)].map((m) => parseFloat(m[1]));
+    const iv = [];
+    for (let i = 0; i < starts.length; i++) {
+      const s = Math.max(starts[i], 0);
+      const e = i < ends.length ? ends[i] : null;
+      if (e != null && e > s) iv.push([s, e]);
+    }
+    return iv;
+  }
+
+  /**
+   * Mute the dub during the given silence intervals (where the ORIGINAL had no
+   * speech) so the dub never plays over a silent mouth. Each interval is shrunk
+   * inward (guard) so word tails at the edges aren't clipped, and a short fade
+   * avoids clicks.
+   */
+  async function gateSilence(inWav, intervals, outWav, opts = {}) {
+    const guard = opts.guard ?? 0.12; // keep this much speech at each edge
+    const mutes = intervals
+      .map(([s, e]) => [s + guard, e - guard])
+      .filter(([s, e]) => e - s > 0.15);
+    if (!mutes.length) {
+      await ffmpeg(['-y', '-i', inWav, '-c', 'copy', outWav]);
+      return outWav;
+    }
+    const enable = mutes.map(([s, e]) => `between(t,${s.toFixed(3)},${e.toFixed(3)})`).join('+');
+    // volume=0 active only inside the silence windows; bypassed elsewhere.
+    await ffmpeg(['-y', '-i', inWav, '-af', `volume=0:enable='${enable}'`, '-ar', '44100', '-ac', '2', outWav]);
+    return outWav;
+  }
+
   /** Concatenate several audio clips end-to-end into one wav (for --whole mode). */
   async function concatAudio(paths, outWav) {
     if (paths.length === 1) {
@@ -303,6 +343,8 @@ export function makeFf(cfg = {}) {
     concatAudio,
     extractSpeakerSample,
     normalizeLoudness,
+    detectSilence,
+    gateSilence,
   };
 }
 

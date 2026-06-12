@@ -45,6 +45,7 @@ Options:
   --merge-gap <sec>            merge consecutive same-speaker segs (gap<=sec) into one call (default 0.35)
   --rate <chars/sec>           TTS speaking rate for length budgeting (default 12; raise for faster engines)
   --no-normalize               disable per-clip loudness normalization
+  --no-gate                    don't mute the dub during the original's silent gaps
   --mode segment|whole         timing strategy (default segment)
   --keep-original-audio 0..1   duck original under dub (default 0 = full replace)
   --dry-run                    skip all paid calls (free wiring test)
@@ -94,6 +95,7 @@ async function main() {
   if (a['merge-gap'] && a['merge-gap'] !== true) overrides.MERGE_GAP = a['merge-gap'];
   if (a.rate && a.rate !== true) overrides.RU_CHARS_PER_SEC = a.rate;
   if (a['no-normalize']) overrides.NORMALIZE = 'false';
+  if (a['no-gate']) overrides.GATE_SILENCE = 'false';
   // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.
   if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen') overrides.OUT_FORMAT = 'wav';
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];
