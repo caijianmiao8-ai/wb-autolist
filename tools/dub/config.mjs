@@ -132,6 +132,16 @@ export function loadConfig(opts = {}) {
     SECONDARY_VOICE_POOL: String(env('SECONDARY_VOICE_POOL', 'jessica,brian,laura,eric'))
       .split(',').map((s) => resolveVoice(s)).filter(Boolean),
 
+    // --- Qwen / DashScope TTS voice cloning (qwen3-tts-vc) ---
+    QWEN_API_KEY: env('QWEN_API_KEY'),
+    QWEN_TTS_BASE: env('QWEN_TTS_BASE', 'https://dashscope.aliyuncs.com'), // Beijing key
+    QWEN_TTS_VC_MODEL: env('QWEN_TTS_VC_MODEL', 'qwen3-tts-vc-2026-01-22'),
+    QWEN_ENROLL_MODEL: env('QWEN_ENROLL_MODEL', 'qwen-voice-enrollment'),
+    // per-speaker cloning: only clone speakers with at least this many seconds of
+    // clean source audio; shorter speakers fall back to a premade/static voice.
+    MIN_CLONE_SEC: Number(env('MIN_CLONE_SEC', '6')),
+    MAX_CLONE_SEC: Number(env('MAX_CLONE_SEC', '30')),
+
     // --- Aurixel audio (stubs; 404 today) ---
     AURIXEL_AUDIO_BASE:
       env('AURIXEL_AUDIO_BASE') || env('AURIXEL_BASE', 'https://conduit-api.aurixel.ai/v1'),
@@ -177,6 +187,8 @@ export function assertSecrets(cfg, { needAsr = true, needTts = true, needTransla
     missing.push('ELEVENLABS_API_KEY (TTS_PROVIDER=elevenlabs)');
   if (needTts && cfg.TTS_PROVIDER === 'aurixel' && !cfg.AURIXEL_API_KEY)
     missing.push('AURIXEL_API_KEY (TTS_PROVIDER=aurixel)');
+  if (needTts && cfg.TTS_PROVIDER === 'qwen-vc' && !cfg.QWEN_API_KEY)
+    missing.push('QWEN_API_KEY (TTS_PROVIDER=qwen-vc)');
   if (missing.length) {
     throw new Error(
       `Missing required secrets in ${cfg.envPath} (or process.env): ${missing.join(', ')}`

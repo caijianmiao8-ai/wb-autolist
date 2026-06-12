@@ -209,6 +209,42 @@ export function makeFf(cfg = {}) {
     return outMp4;
   }
 
+  /**
+   * Extract a clean single-speaker SAMPLE for voice enrollment: concatenate the
+   * given time ranges from the source media (audio track) into one mp3, capped
+   * at maxDur seconds. Used to clone each diarized speaker's voice.
+   * @param {string} source   source video/audio path
+   * @param {Array<{start:number,end:number}>} ranges (seconds)
+   * @param {string} outMp3
+   * @param {object} [opts] {maxDur=30}
+   * @returns {Promise<number>} the sample duration actually used (seconds)
+   */
+  async function extractSpeakerSample(source, ranges, outMp3, opts = {}) {
+    const maxDur = opts.maxDur || 30;
+    const gapMerge = opts.gapMerge ?? 1.0;
+    // IMPORTANT: use a single CONTIGUOUS slice, not a concatenation of scattered
+    // segments — concat boundary artifacts trip Qwen's audio content inspection
+    // (DataInspectionFailed "inappropriate material"). Merge adjacent same-speaker
+    // segments (small gaps = continuous speech) into runs and take the longest.
+    const segs = ranges
+      .map((r) => ({ s: Number(r.start), e: Number(r.end) }))
+      .filter((r) => Number.isFinite(r.s) && Number.isFinite(r.e) && r.e > r.s)
+      .sort((a, b) => a.s - b.s);
+    if (!segs.length) throw new Error('extractSpeakerSample: no usable ranges');
+    const runs = [];
+    let cur = { s: segs[0].s, e: segs[0].e };
+    for (let i = 1; i < segs.length; i++) {
+      if (segs[i].s - cur.e <= gapMerge) cur.e = Math.max(cur.e, segs[i].e);
+      else { runs.push(cur); cur = { s: segs[i].s, e: segs[i].e }; }
+    }
+    runs.push(cur);
+    runs.sort((a, b) => b.e - b.s - (a.e - a.s));
+    const best = runs[0];
+    const dur = Math.min(best.e - best.s, maxDur);
+    await ffmpeg(['-y', '-ss', best.s.toFixed(3), '-i', source, '-t', dur.toFixed(3), '-vn', '-ac', '1', '-ar', '24000', '-b:a', '128k', outMp3]);
+    return dur;
+  }
+
   /** Concatenate several audio clips end-to-end into one wav (for --whole mode). */
   async function concatAudio(paths, outWav) {
     if (paths.length === 1) {
@@ -240,6 +276,7 @@ export function makeFf(cfg = {}) {
     assembleTimeline,
     muxReplaceAudio,
     concatAudio,
+    extractSpeakerSample,
   };
 }
 

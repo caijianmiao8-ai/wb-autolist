@@ -182,6 +182,36 @@ export async function runPipeline(cfg, args) {
 
   // 4) TTS each RU segment (per-speaker voice) + time-fit to its slot
   const tts = dryRun ? null : makeTts(cfg);
+
+  // 4a) Voice cloning (qwen-vc): clone EACH speaker from their own source audio
+  // so they keep their real voice while speaking Russian. Speakers with too
+  // little clean audio (e.g. a child with a few words) fall back to the dominant
+  // speaker's clone so synthesis always has a valid voice.
+  let cloneMap = null;
+  if (tts && tts.supportsCloning) {
+    cloneMap = {};
+    await stageC('enroll(clone)', async () => {
+      for (const spk of speakerVoice.ordered) {
+        const ranges = ruSegments
+          .filter((s) => (s.speaker ?? '_') === spk)
+          .map((s) => ({ start: s.start, end: s.end }));
+        const samplePath = join(workDir, `sample_${String(spk).replace(/[^a-z0-9_]/gi, '')}.mp3`);
+        try {
+          const used = await ff.extractSpeakerSample(input, ranges, samplePath, { maxDur: cfg.MAX_CLONE_SEC });
+          if (used < cfg.MIN_CLONE_SEC) throw new Error(`only ${used.toFixed(1)}s clean audio (< ${cfg.MIN_CLONE_SEC}s min)`);
+          cloneMap[spk] = await tts.enroll(samplePath, { name: spk });
+        } catch (e) {
+          cloneMap[spk] = null;
+          capture({ stage: 'enroll(clone)', ok: true, ms: 0, warn: `${spk}: clone skipped — ${e.message}` });
+        }
+      }
+      const dominant = speakerVoice.ordered.find((s) => cloneMap[s]);
+      const dominantClone = dominant ? cloneMap[dominant] : null;
+      if (!dominantClone) throw new Error('voice cloning failed for every speaker');
+      for (const spk of Object.keys(cloneMap)) if (!cloneMap[spk]) cloneMap[spk] = dominantClone;
+    });
+  }
+
   const fitClips = await stageC('tts+fit', async () => {
     const clips = [];
     for (let i = 0; i < ruSegments.length; i++) {
@@ -201,7 +231,7 @@ export async function runPipeline(cfg, args) {
         synthDur = slot;
       } else {
         const r = await tts.synthesize(seg.text, {
-          voiceId: speakerVoice.map[seg.speaker ?? '_'] ?? ttsOpts.voiceId,
+          voiceId: (cloneMap && cloneMap[seg.speaker ?? '_']) || speakerVoice.map[seg.speaker ?? '_'] || ttsOpts.voiceId,
           modelId: ttsOpts.modelId,
           language: cfg.TARGET_LANG,
           format: cfg.OUT_FORMAT,
@@ -261,7 +291,8 @@ export async function runPipeline(cfg, args) {
     dryRun,
     segments: ruSegments.length,
     speakers: speakerVoice.ordered,
-    speakerVoiceMap: speakerVoice.map,
+    speakerVoiceMap: cloneMap || speakerVoice.map,
+    cloned: !!cloneMap,
     asrProvider: dryRun ? 'dry-run' : asrResult.provider,
     ttsProvider: dryRun ? 'dry-run' : tts.provider,
     clips: fitClips.map((c) => ({ start: c.start, end: c.end, factor: Number(c.factor?.toFixed(3)), capped: c.capped })),

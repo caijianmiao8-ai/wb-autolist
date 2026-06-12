@@ -11,6 +11,7 @@
 
 import { makeElevenLabsAsr, makeElevenLabsTts } from './providers/elevenlabs.mjs';
 import { makeAurixelAsr, makeAurixelTts } from './providers/aurixelAudio.mjs';
+import { makeQwenTtsVc } from './providers/qwenTtsVc.mjs';
 import { makeAurixelTranslator } from './translate.mjs';
 
 export function pickAsr(cfg) {
@@ -40,9 +41,16 @@ export function pickTts(cfg) {
       });
     case 'aurixel':
       return makeAurixelTts({ apiKey: cfg.AURIXEL_API_KEY, baseUrl: cfg.AURIXEL_AUDIO_BASE, model: cfg.AURIXEL_TTS_MODEL, voice: cfg.AURIXEL_VOICE, ...net });
+    case 'qwen-vc':
+      // Voice-cloning provider: the pipeline enrolls each speaker first, then
+      // synthesizes their segments in the cloned voice (see supportsCloning).
+      return makeQwenTtsVc({
+        apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE,
+        model: cfg.QWEN_TTS_VC_MODEL, enrollModel: cfg.QWEN_ENROLL_MODEL, ...net,
+      });
     // case 'myprovider': return makeMyProviderTts({...});  // <-- extension example
     default:
-      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel)`);
+      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel|qwen-vc)`);
   }
 }
 

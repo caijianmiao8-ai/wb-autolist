@@ -40,7 +40,8 @@ Options:
   --brand X                    brand kept verbatim
   --tone marketing             marketing tone hint
   --asr-provider el|aurixel    ASR provider (default elevenlabs)
-  --tts-provider el|aurixel    TTS provider (default elevenlabs)
+  --tts-provider el|aurixel|qwen-vc  TTS provider (qwen-vc = clone each speaker's real voice)
+  --min-clone-sec <n>          min clean source audio to clone a speaker (default 6)
   --mode segment|whole         timing strategy (default segment)
   --keep-original-audio 0..1   duck original under dub (default 0 = full replace)
   --dry-run                    skip all paid calls (free wiring test)
@@ -86,6 +87,9 @@ async function main() {
   if (a['tts-model']) overrides.EL_TTS_MODEL = a['tts-model'];
   if (a['no-diarize']) overrides.DIARIZE = 'false';
   if (a['speaker-voices'] && a['speaker-voices'] !== true) overrides.SPEAKER_VOICES = a['speaker-voices'];
+  if (a['min-clone-sec'] && a['min-clone-sec'] !== true) overrides.MIN_CLONE_SEC = a['min-clone-sec'];
+  // qwen-vc returns wav — name intermediate clips accordingly.
+  if (overrides.TTS_PROVIDER === 'qwen-vc') overrides.OUT_FORMAT = 'wav';
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];
   if (a['target-lang']) overrides.TARGET_LANG = a['target-lang'];
 
@@ -141,8 +145,9 @@ async function main() {
     const res = await runPipeline(cfg, { input, out, workDir, mode, dryRun, translate, tts, keepOriginalAudio, onEvent });
     console.log('-- summary --');
     console.log(`segments     : ${res.segments}`);
-    if (res.speakers && res.speakers.length > 1) {
-      console.log(`speakers     : ${res.speakers.length} -> ${res.speakers.map((s) => `${s}=${res.speakerVoiceMap[s] || 'default'}`).join(', ')}`);
+    if (res.speakers && res.speakers.length >= 1 && res.speakerVoiceMap) {
+      const tag = res.cloned ? 'cloned' : 'voices';
+      console.log(`speakers(${tag}): ${res.speakers.map((s) => `${s}=${res.speakerVoiceMap[s] || 'default'}`).join(', ')}`);
     }
     console.log(`video dur    : ${res.videoDur.toFixed(3)}s`);
     console.log(`output dur   : ${res.outDur.toFixed(3)}s  (drift ${res.drift.toFixed(3)}s)`);

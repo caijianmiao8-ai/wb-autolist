@@ -89,7 +89,24 @@ dub_track.wav        # assembled Russian track
 | Var | Default | Values |
 |---|---|---|
 | `ASR_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel` |
-| `TTS_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel` |
+| `TTS_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel`, `qwen-vc` |
+
+### Voice cloning (`TTS_PROVIDER=qwen-vc`, Qwen3-TTS-VC / DashScope)
+Clones EACH diarized speaker from their own source audio, then speaks the Russian
+translation in that cloned voice — so the narrator keeps their real voice (cross-lingual).
+Fills the gap left by the restricted ElevenLabs key (which can't clone).
+
+| Var | Default | Notes |
+|---|---|---|
+| `QWEN_API_KEY` | — | DashScope key. **Region-locked** (this key = Beijing `dashscope.aliyuncs.com`; intl host 401s) |
+| `QWEN_TTS_BASE` | `https://dashscope.aliyuncs.com` | Beijing; set to `dashscope-intl…` for a Singapore key |
+| `QWEN_TTS_VC_MODEL` | `qwen3-tts-vc-2026-01-22` | |
+| `MIN_CLONE_SEC` | `6` | min CONTIGUOUS clean source audio to clone a speaker; shorter → reuses the dominant speaker's clone |
+| `MAX_CLONE_SEC` | `30` | cap on the enrollment sample length |
+
+Notes: the sample MUST be a contiguous slice (concatenated clips trip Qwen's content
+inspection → `DataInspectionFailed`). Russian lexical-stress quality should be checked by
+a native listener. Enrollment creates a persistent custom voice per run (clean up if needed).
 
 ### Translation (Aurixel chat — live verified)
 | Var | Default |
