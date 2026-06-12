@@ -132,6 +132,17 @@ export function loadConfig(opts = {}) {
     SECONDARY_VOICE_POOL: String(env('SECONDARY_VOICE_POOL', 'jessica,brian,laura,eric'))
       .split(',').map((s) => resolveVoice(s)).filter(Boolean),
 
+    // --- Consistency post-processing ---
+    // loudness-normalize each clip (flattens per-call level drift, esp. qwen-vc).
+    NORMALIZE: String(env('NORMALIZE', 'true')).toLowerCase() !== 'false',
+    // merge consecutive same-speaker segments with a gap <= this many seconds into
+    // ONE synthesis call (fewer calls -> less clone drift, more natural prosody).
+    // 0 = off (one call per segment). 0.5 is conservative (only re-joins clips the
+    // ASR split mid-utterance); 1.0–1.5 merges more aggressively.
+    MERGE_GAP: Number(env('MERGE_GAP', '0')),
+    // cap a merged unit's span so internal sync drift stays bounded.
+    MAX_UNIT_SEC: Number(env('MAX_UNIT_SEC', '10')),
+
     // --- Qwen / DashScope TTS voice cloning (qwen3-tts-vc) ---
     QWEN_API_KEY: env('QWEN_API_KEY'),
     QWEN_TTS_BASE: env('QWEN_TTS_BASE', 'https://dashscope.aliyuncs.com'), // Beijing key

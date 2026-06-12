@@ -245,6 +245,18 @@ export function makeFf(cfg = {}) {
     return dur;
   }
 
+  /**
+   * Loudness-normalize a clip to a consistent target (EBU R128). Compensates for
+   * TTS engines (esp. zero-shot voice clones like qwen-vc) that render each call
+   * at a different level — the main cue behind a cloned voice "sounding like two
+   * people" across segments. Cheap, provider-agnostic.
+   */
+  async function normalizeLoudness(inPath, outPath, opts = {}) {
+    const I = opts.I ?? -16, TP = opts.TP ?? -1.5, LRA = opts.LRA ?? 11;
+    await ffmpeg(['-y', '-i', inPath, '-af', `loudnorm=I=${I}:TP=${TP}:LRA=${LRA}`, '-ar', '44100', '-ac', '2', outPath]);
+    return outPath;
+  }
+
   /** Concatenate several audio clips end-to-end into one wav (for --whole mode). */
   async function concatAudio(paths, outWav) {
     if (paths.length === 1) {
@@ -277,6 +289,7 @@ export function makeFf(cfg = {}) {
     muxReplaceAudio,
     concatAudio,
     extractSpeakerSample,
+    normalizeLoudness,
   };
 }
 

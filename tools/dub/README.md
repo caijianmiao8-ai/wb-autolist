@@ -108,6 +108,18 @@ Notes: the sample MUST be a contiguous slice (concatenated clips trip Qwen's con
 inspection → `DataInspectionFailed`). Russian lexical-stress quality should be checked by
 a native listener. Enrollment creates a persistent custom voice per run (clean up if needed).
 
+### Consistency (per-call clone drift)
+Zero-shot clones (qwen-vc) render each call at a different level/timbre, so a single
+speaker can sound like several people. Two knobs (apply to all providers):
+
+| Var / flag | Default | Effect |
+|---|---|---|
+| `NORMALIZE` / `--no-normalize` | on | loudness-normalize each clip (EBU R128). Big win, **zero sync cost**. Measured: per-clip level stdev 3.7 dB → ~1.7 dB. |
+| `MERGE_GAP` / `--merge-gap <s>` | `0` (off) | merge consecutive same-speaker segments (gap ≤ s) into one call → fewer calls, less timbre drift, and loudnorm works better (stdev → ~0.9 dB). **Cost:** loosens within-unit sync (median drift 0.24 s → 0.42 s, p90 → 1.1 s at `0.5`). Units never cross a speaker change/large pause and are capped at `MAX_UNIT_SEC`. |
+
+Default (`NORMALIZE` on, `MERGE_GAP` 0) = consistent level, tight sync. Add `--merge-gap 0.5`
+only if a cloned voice still sounds inconsistent and ~0.4 s of voiceover drift is acceptable.
+
 ### Translation (Aurixel chat — live verified)
 | Var | Default |
 |---|---|
