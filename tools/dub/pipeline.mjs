@@ -194,11 +194,12 @@ export async function runPipeline(cfg, args) {
     // so the RU translation is steered to FIT its time and won't overflow into
     // speed-up/truncation. Concision over completeness for tight lines.
     const rate = cfg.RU_CHARS_PER_SEC || 15;
-    const src = asrResult.segments;
-    const budgeted = src.map((s, i) => {
-      const nextStart = i + 1 < src.length ? Number(src[i + 1].start) : videoDur;
-      const avail = Math.max(nextStart - Number(s.start), 0.3);
-      return { ...s, maxChars: Math.max(Math.round(avail * rate), 12) };
+    const budgeted = asrResult.segments.map((s) => {
+      // target ≈ this line's OWN speaking time (mouth movement), so the RU lasts
+      // about as long as the speaker talks — not shorter (dub stops early) nor
+      // longer (rushed). Pauses between lines are handled separately.
+      const span = Math.max(Number(s.end) - Number(s.start), 0.3);
+      return { ...s, targetChars: Math.max(Math.round(span * rate), 10) };
     });
     return translator.translate(budgeted, {
       from: cfg.SRC_LANG,
@@ -262,15 +263,15 @@ export async function runPipeline(cfg, args) {
       // let NaN reach atempo/adelay (which silently corrupts the whole mix).
       const segStart = Number.isFinite(seg.start) ? Math.max(seg.start, 0) : 0;
       const segEnd = Number.isFinite(seg.end) && seg.end > segStart ? seg.end : segStart;
-      // Gap-aware target: a line may use its own span PLUS the silence until the
-      // next line starts. This gives RU room to breathe at natural speed instead
-      // of being sped-up/chopped to the (often shorter) English span.
       const nextU = units[i + 1];
       const nextStart = nextU && Number.isFinite(nextU.start) ? Math.max(Number(nextU.start), segEnd) : videoDur;
       const ext = cfg.OUT_FORMAT === 'wav' ? 'wav' : 'mp3';
       const rawClip = join(segDir, `seg${String(i).padStart(3, '0')}_raw.${ext}`);
       const fitClip = join(segDir, `seg${String(i).padStart(3, '0')}_fit.wav`);
-      const slot = Math.max(nextStart - segStart, 0.3);
+      // span = the speaker's actual speech time (mouth movement) for this line;
+      // gapTarget extends into the following pause.
+      const span = Math.max(segEnd - segStart, 0.3);
+      const gapTarget = Math.max(nextStart - segStart, 0.3);
 
       let srcClip = rawClip;
       let synthDur;
@@ -297,11 +298,18 @@ export async function runPipeline(cfg, args) {
         }
       }
 
-      const fit = await ff.fitAudioToDuration(srcClip, fitClip, slot, {
-        srcDur: synthDur, // skip ffprobe when provider gave us the duration
-        maxSpeedup: 1.5,
-        minSlowdown: 1.0, // never stretch — short lines keep natural speed
-        padShort: false, // don't pad to the slot; let the following pause absorb it
+      // Hybrid target: by default fill the speaker's SPAN (dub lasts ~as long as
+      // the mouth moves). Only if the line is too long to fit even at max speed-up
+      // do we borrow the following pause (up to gapTarget) — gently compress
+      // instead of chopping the sentence end.
+      const rawDur = synthDur != null ? synthDur : await ff.probeDuration(srcClip);
+      let target = span;
+      if (rawDur / span > cfg.FIT_MAX_SPEEDUP) target = Math.min(gapTarget, rawDur / cfg.FIT_MAX_SPEEDUP);
+      const fit = await ff.fitAudioToDuration(srcClip, fitClip, target, {
+        srcDur: rawDur,
+        maxSpeedup: cfg.FIT_MAX_SPEEDUP,
+        minSlowdown: cfg.FIT_MIN_SLOWDOWN, // stretch short lines to fill the mouth time
+        padShort: true,
       });
       clips.push({ path: fitClip, start: segStart, end: segEnd, factor: fit.factor, capped: fit.capped });
     }

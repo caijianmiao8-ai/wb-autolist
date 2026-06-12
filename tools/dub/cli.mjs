@@ -42,7 +42,8 @@ Options:
   --asr-provider el|aurixel    ASR provider (default elevenlabs)
   --tts-provider el|aurixel|qwen-vc  TTS provider (qwen-vc = clone each speaker's real voice)
   --min-clone-sec <n>          min clean source audio to clone a speaker (default 6)
-  --merge-gap <sec>            merge consecutive same-speaker segs (gap<=sec) into one call (0=off)
+  --merge-gap <sec>            merge consecutive same-speaker segs (gap<=sec) into one call (default 0.35)
+  --rate <chars/sec>           TTS speaking rate for length budgeting (default 12; raise for faster engines)
   --no-normalize               disable per-clip loudness normalization
   --mode segment|whole         timing strategy (default segment)
   --keep-original-audio 0..1   duck original under dub (default 0 = full replace)
@@ -91,6 +92,7 @@ async function main() {
   if (a['speaker-voices'] && a['speaker-voices'] !== true) overrides.SPEAKER_VOICES = a['speaker-voices'];
   if (a['min-clone-sec'] && a['min-clone-sec'] !== true) overrides.MIN_CLONE_SEC = a['min-clone-sec'];
   if (a['merge-gap'] && a['merge-gap'] !== true) overrides.MERGE_GAP = a['merge-gap'];
+  if (a.rate && a.rate !== true) overrides.RU_CHARS_PER_SEC = a.rate;
   if (a['no-normalize']) overrides.NORMALIZE = 'false';
   // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.
   if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen') overrides.OUT_FORMAT = 'wav';

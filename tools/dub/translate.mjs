@@ -30,7 +30,7 @@ export function makeAurixelTranslator(cfg) {
     'HARD RULES:',
     '1. Output STRICT JSON only. No markdown, no prose, no code fences.',
     '2. Schema: {"segments":[{"i":<int>,"text":"<translated>"}]}. Preserve order and the EXACT same number of items as input — 1:1, never merge or split.',
-    '3. Each segment has a "max_chars" budget = how many characters can be SPOKEN in its time slot. Keep each translation AT OR UNDER max_chars. If a faithful translation is too long, SHORTEN it: drop filler, use shorter synonyms, compress — fitting the time matters MORE than completeness. Never exceed max_chars by more than ~10%. (Russian runs longer than English, so actively trim.)',
+    '3. Each segment has "target_chars" = how many characters are SPOKEN in the time the speaker is talking. Make each translation LAND CLOSE to target_chars (within ~±15%): NOT much shorter (the dub would finish while the mouth is still moving) and NOT much longer (it would be rushed/cut off). Adjust wording/synonyms to hit the length while keeping the meaning and natural Russian. Match the speaking rhythm.',
     '4. Naturally weave in the target KEYWORDS where they fit; never keyword-stuff or break grammar.',
     '5. Keep the BRAND name verbatim (do not translate or transliterate).',
     '6. Apply the requested marketing TONE. Use correct target grammar, casing and punctuation.',
@@ -63,7 +63,7 @@ export function makeAurixelTranslator(cfg) {
       brand,
       tone,
       keywords,
-      segments: segments.map((s, i) => ({ i, text: s.text ?? s, ...(s.maxChars ? { max_chars: s.maxChars } : {}) })),
+      segments: segments.map((s, i) => ({ i, text: s.text ?? s, ...(s.targetChars ? { target_chars: s.targetChars } : {}) })),
     });
     const payload = {
       model,

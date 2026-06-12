@@ -137,15 +137,27 @@ export function loadConfig(opts = {}) {
     NORMALIZE: String(env('NORMALIZE', 'true')).toLowerCase() !== 'false',
     // merge consecutive same-speaker segments with a gap <= this many seconds into
     // ONE synthesis call (fewer calls -> less clone drift, more natural prosody).
-    // 0 = off (one call per segment). 0.5 is conservative (only re-joins clips the
-    // ASR split mid-utterance); 1.0–1.5 merges more aggressively.
-    MERGE_GAP: Number(env('MERGE_GAP', '0')),
+    // 0 = off (one call per segment). 0.35 (default) re-joins only truly continuous
+    // fragments the ASR split mid-utterance (better prosody, no internal pause →
+    // no early-stop); 0.8+ merges across short pauses (looser timing).
+    MERGE_GAP: Number(env('MERGE_GAP', '0.35')),
     // cap a merged unit's span so internal sync drift stays bounded.
     MAX_UNIT_SEC: Number(env('MAX_UNIT_SEC', '10')),
     // length-budgeted translation: target RU speaking rate (chars incl. spaces per
     // second). The translator is told to keep each line within its slot+gap budget
     // so it doesn't overflow and get sped-up/truncated. Lower = shorter RU.
-    RU_CHARS_PER_SEC: Number(env('RU_CHARS_PER_SEC', '15')),
+    // chars the TTS actually speaks per second — used to size each line so the RU
+    // lasts ~as long as the speaker talks. Tuned to qwen3-tts (~11–12). Raise for
+    // faster engines. Too high → RU too long (rushed); too low → ends early.
+    RU_CHARS_PER_SEC: Number(env('RU_CHARS_PER_SEC', '12')),
+    // Fit strategy:
+    //  FIT_USE_GAP=false (default): fit each line to the speaker's SPEECH SPAN and
+    //    fill it (the dub lasts ~as long as the mouth moves — best for lip timing).
+    //  true: fit to span+following pause, keep short lines at natural speed (can end
+    //    before the mouth stops). Two-way gentle stretch keeps it natural either way.
+    FIT_USE_GAP: String(env('FIT_USE_GAP', 'false')).toLowerCase() === 'true',
+    FIT_MAX_SPEEDUP: Number(env('FIT_MAX_SPEEDUP', '1.4')), // compress long lines up to this
+    FIT_MIN_SLOWDOWN: Number(env('FIT_MIN_SLOWDOWN', '0.8')), // stretch short lines down to this (fills mouth time)
 
     // --- Qwen / DashScope TTS voice cloning (qwen3-tts-vc) ---
     QWEN_API_KEY: env('QWEN_API_KEY'),

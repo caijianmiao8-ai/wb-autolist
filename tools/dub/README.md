@@ -117,7 +117,7 @@ speaker can sound like several people. Two knobs (apply to all providers):
 | Var / flag | Default | Effect |
 |---|---|---|
 | `NORMALIZE` / `--no-normalize` | on | loudness-normalize each clip (EBU R128). Big win, **zero sync cost**. Measured: per-clip level stdev 3.7 dB → ~1.7 dB. |
-| `MERGE_GAP` / `--merge-gap <s>` | `0` (off) | merge consecutive same-speaker segments (gap ≤ s) into one call → fewer calls, less timbre drift, and loudnorm works better (stdev → ~0.9 dB). **Cost:** loosens within-unit sync (median drift 0.24 s → 0.42 s, p90 → 1.1 s at `0.5`). Units never cross a speaker change/large pause and are capped at `MAX_UNIT_SEC`. |
+| `MERGE_GAP` / `--merge-gap <s>` | `0.35` | merge consecutive same-speaker segments (gap ≤ s) into one call → fewer calls, coherent intonation per sentence, less timbre drift. `0.35` only re-joins truly continuous fragments (no internal pause). `0.8+` merges across pauses (looser timing, can over-pad). Units never cross a speaker change and are capped at `MAX_UNIT_SEC`. |
 
 Default (`NORMALIZE` on, `MERGE_GAP` 0) = consistent level, tight sync. Add `--merge-gap 0.5`
 only if a cloned voice still sounds inconsistent and ~0.4 s of voiceover drift is acceptable.
@@ -125,13 +125,15 @@ only if a cloned voice still sounds inconsistent and ~0.4 s of voiceover drift i
 ### Timing & fit (no rushed/chopped speech)
 Russian runs longer than English, so naive per-segment fitting speeds up and hard-trims
 lines (rushed/truncated audio). Two mechanisms keep it natural:
-- **Length-budgeted translation** (`RU_CHARS_PER_SEC`, default 15): each line gets a
-  char budget = (its span + the following pause) × rate; the translator is told to fit
-  it (concision over completeness), so RU rarely overflows. Lower the rate → shorter RU.
-- **Gap-aware fit**: a line may use its own span **plus the silence until the next line**,
-  and short lines keep **natural speed** (no padding, no stretch). Only genuine overflow is
-  sped up (≤1.5×). Net effect (measured): median speed factor < 1.0 (most lines have room),
-  truncation cut ~75%.
+- **Duration-targeted translation** (`RU_CHARS_PER_SEC` / `--rate`, default 12): each line
+  is sized to ≈ the speaker's own speaking time (chars = span × rate), and the translator is
+  told to land CLOSE to that — not shorter (dub ends while the mouth still moves) nor longer
+  (rushed). Tune the rate to the engine's real speed (qwen3-tts ≈ 11–12; faster engines higher).
+- **Hybrid fit**: each line fills the speaker's **span** (so the dub lasts ~as long as the
+  mouth moves), with gentle two-way stretch (`FIT_MIN_SLOWDOWN` 0.8 … `FIT_MAX_SPEEDUP` 1.4).
+  Only a line too long even at max speed-up **borrows the following pause** before compressing,
+  so sentence ends aren't chopped. Measured on the sample: actual speed median 1.05×, early-stop
+  ~0.1 s, real truncation ~1 s/93 s (down from 4.4 s).
 
 ### Translation (Aurixel chat — live verified)
 | Var | Default |
