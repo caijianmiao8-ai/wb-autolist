@@ -6,14 +6,14 @@
 use crate::ai::assets::to_data_url;
 use crate::ai::excel::parse_excel;
 use crate::ai::organize::organize_rows;
-use crate::config::{get_config, prices_token, redact_config, save_config, AppConfig};
+use crate::config::{active_templates, get_config, prices_token, redact_config, save_config, AppConfig};
 use crate::db;
-use crate::generate::generate_listing;
+use crate::generate::{build_ctx, decode_image_input, generate_listing, render_one};
 use crate::paths::Paths;
 use crate::queue::{self, BatchJob};
 use crate::state::AppState;
 use crate::store;
-use crate::types::{Listing, ListingInput, ListingStage};
+use crate::types::{GeneratedImage, Listing, ListingInput, ListingStage};
 use crate::util::original_price;
 use crate::wb::cards::{delete_cards, list_card_errors};
 use crate::wb::client::{wb_fetch, WbCtx, WbReq};
@@ -84,6 +84,7 @@ pub async fn generate(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     input: ListingInput,
+    main_only: bool,
 ) -> Result<Listing, String> {
     let st = state.inner().clone();
     let cfg = get_config(&st.paths);
@@ -92,7 +93,7 @@ pub async fn generate(
     let on = move |stage: &str, ok: bool, msg: &str| {
         let _ = app2.emit("generate:progress", json!({ "stage": stage, "ok": ok, "message": msg }));
     };
-    let listing = generate_listing(&st, &cfg, &input, &on)
+    let listing = generate_listing(&st, &cfg, &input, &on, main_only)
         .await
         .map_err(|e| e.to_string())?;
     store::save_listing(&st.paths, listing.clone());
@@ -715,4 +716,104 @@ pub async fn trash_cards(
         let _ = db::local_delete(&conn, &nm_ids);
     }
     Ok(())
+}
+
+// ── Image regeneration (per-image redo + main-first "generate the rest") ──
+
+/// Re-render a SINGLE image of a draft listing with the same template, so a bad
+/// roll doesn't force regenerating the whole set. `base_photos` come from the UI
+/// (the seller's product photos) so img2img keeps the real product.
+#[tauri::command]
+pub async fn regenerate_image(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    index: usize,
+    base_photos: Vec<String>,
+    custom_prompt: Option<String>,
+) -> Result<Listing, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let l = store::get_listing(&st.paths, &id).ok_or("未找到该商品")?;
+    let copy = l.copy.clone().ok_or("缺少文案")?;
+    let img = l.images.get(index).ok_or("无此图片")?;
+
+    // Resolve the template: stored kind → same WB slot → any enabled → built-in.
+    let templates = active_templates(&cfg);
+    let tmpl = templates
+        .get(&img.template_kind)
+        .or_else(|| templates.templates.iter().find(|t| t.slot == img.kind && t.enabled))
+        .or_else(|| templates.templates.iter().find(|t| t.enabled))
+        .cloned()
+        .unwrap_or_else(|| crate::templates::built_in_defaults().templates[0].clone());
+
+    let ctx = build_ctx(&copy, &l.product_name, &l.keywords, custom_prompt.as_deref().unwrap_or(""));
+    let bases: Vec<Vec<u8>> = base_photos.iter().filter_map(|s| decode_image_input(s)).collect();
+    let base = if bases.is_empty() { None } else { Some(bases[index % bases.len()].as_slice()) };
+    let new_img = render_one(
+        &st, &cfg, &tmpl, &ctx, base, &copy.title, &copy.bullets, &l.product_name, &l.keywords, index,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let updated = store::update_listing(&st.paths, &id, |x| {
+        if let Some(slot) = x.images.get_mut(index) {
+            *slot = new_img.clone();
+        }
+        x.updated_at = crate::util::now_iso();
+    })
+    .unwrap_or(l);
+    Ok(hydrate(&st.paths, updated))
+}
+
+/// Generate the REMAINING images after the main-first preview was approved.
+#[tauri::command]
+pub async fn generate_rest(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    base_photos: Vec<String>,
+    custom_prompt: Option<String>,
+) -> Result<Listing, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let l = store::get_listing(&st.paths, &id).ok_or("未找到该商品")?;
+    if !l.partial {
+        return Ok(hydrate(&st.paths, l));
+    }
+    let copy = l.copy.clone().ok_or("缺少文案")?;
+    let want = l.requested_images.max(1) as usize;
+    let templates = active_templates(&cfg);
+    let mut plan = templates.plan(want);
+    if plan.is_empty() {
+        plan = crate::templates::built_in_defaults().plan(want);
+    }
+    let ctx = build_ctx(&copy, &l.product_name, &l.keywords, custom_prompt.as_deref().unwrap_or(""));
+    let bases: Vec<Vec<u8>> = base_photos.iter().filter_map(|s| decode_image_input(s)).collect();
+    let start = l.images.len();
+
+    let mut new_imgs: Vec<GeneratedImage> = vec![];
+    for i in start..plan.len() {
+        let tmpl = &plan[i];
+        let _ = app.emit(
+            "generate:progress",
+            json!({ "stage": "generate", "ok": true, "message": format!("生成第 {}/{} 张（{}）…", i + 1, plan.len(), tmpl.label) }),
+        );
+        let base = if bases.is_empty() { None } else { Some(bases[i % bases.len()].as_slice()) };
+        let img = render_one(
+            &st, &cfg, tmpl, &ctx, base, &copy.title, &copy.bullets, &l.product_name, &l.keywords, i,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        new_imgs.push(img);
+    }
+
+    let updated = store::update_listing(&st.paths, &id, |x| {
+        x.images.extend(new_imgs.clone());
+        x.partial = false;
+        x.updated_at = crate::util::now_iso();
+    })
+    .unwrap_or(l);
+    let hydrated = hydrate(&st.paths, updated);
+    let _ = app.emit("generate:done", &hydrated);
+    Ok(hydrated)
 }

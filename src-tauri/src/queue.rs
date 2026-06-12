@@ -160,7 +160,7 @@ pub async fn run_worker(state: Arc<AppState>) {
         let cfg = get_config(&state.paths);
         let outcome: anyhow::Result<()> = async {
             let noop = |_s: &str, _o: bool, _m: &str| {};
-            let listing = generate_listing(&state, &cfg, &job.input, &noop).await?;
+            let listing = generate_listing(&state, &cfg, &job.input, &noop, false).await?;
             let lid = listing.id.clone();
             save_listing(&state.paths, listing.clone());
             patch(&state, &job.id, |j| j.listing_id = Some(lid.clone())).await;

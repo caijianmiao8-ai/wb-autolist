@@ -22,11 +22,15 @@ pub struct ProductCopy {
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedImage {
     pub id: String,
-    pub kind: String, // "main" | "promo" | "gallery"
+    pub kind: String, // WB slot: "main" | "promo" | "gallery"
     pub url: String,
     pub prompt: String,
     pub width: u32,
     pub height: u32,
+    /// Template archetype that produced it (e.g. "hero") — lets a single image
+    /// be regenerated with the same template + text mode.
+    #[serde(default)]
+    pub template_kind: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +86,13 @@ pub struct Listing {
     pub sandbox: bool,
     pub logs: Vec<StageLog>,
     pub error: Option<String>,
+    /// true = only the main image was generated so far (main-first flow);
+    /// the rest are produced on approval via generate_rest.
+    #[serde(default)]
+    pub partial: bool,
+    /// total images the user asked for (so generate_rest knows the full plan).
+    #[serde(default)]
+    pub requested_images: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

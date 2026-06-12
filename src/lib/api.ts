@@ -62,7 +62,14 @@ export const api = {
     invoke<RedactedConfig>("save_settings", { patch }),
   /** The built-in image-prompt templates (for "reset to default"). */
   defaultTemplates: () => invoke<ImageTemplates>("default_templates"),
-  generate: (input: GenerateInput) => invoke<Listing>("generate", { input }),
+  generate: (input: GenerateInput, mainOnly = false) =>
+    invoke<Listing>("generate", { input, mainOnly }),
+  /** Re-render one image of a draft with the same template. */
+  regenerateImage: (id: string, index: number, basePhotos: string[], customPrompt?: string) =>
+    invoke<Listing>("regenerate_image", { id, index, basePhotos, customPrompt }),
+  /** Generate the remaining images after the main-first preview is approved. */
+  generateRest: (id: string, basePhotos: string[], customPrompt?: string) =>
+    invoke<Listing>("generate_rest", { id, basePhotos, customPrompt }),
   publish: (id: string) => invoke<Listing>("publish", { id }),
   listListings: () => invoke<Listing[]>("list_listings"),
   getListing: (id: string) => invoke<Listing | null>("get_listing", { id }),

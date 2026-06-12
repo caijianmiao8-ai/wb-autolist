@@ -19,7 +19,7 @@ use std::collections::HashMap;
 const QUALITY_SUFFIX: &str = ", professional studio product photography, clean white seamless background, soft diffused lighting, sharp focus, ultra detailed, high resolution, commercial e-commerce hero shot, centered composition";
 
 /// Strip an optional `data:...;base64,` prefix and decode.
-fn decode_image_input(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_image_input(s: &str) -> Option<Vec<u8>> {
     let b64 = s.rsplit(',').next().unwrap_or(s).trim();
     base64::engine::general_purpose::STANDARD.decode(b64).ok()
 }
@@ -40,7 +40,7 @@ fn accent_for(category: &str, name: &str, keywords: &str) -> &'static str {
 }
 
 /// Build the `{PLACEHOLDER}` substitution context from the AI copy + a few knobs.
-fn build_ctx(copy: &ProductCopy, name: &str, keywords: &[String], custom: &str) -> HashMap<String, String> {
+pub(crate) fn build_ctx(copy: &ProductCopy, name: &str, keywords: &[String], custom: &str) -> HashMap<String, String> {
     let callout_list: Vec<String> = copy
         .bullets
         .iter()
@@ -76,6 +76,60 @@ fn build_ctx(copy: &ProductCopy, name: &str, keywords: &[String], custom: &str) 
     m
 }
 
+/// Render ONE image for a template (shared by generate + regenerate). `base` =
+/// the seller's product photo for img2img (None → text-to-image). On failure it
+/// derives from the real photo rather than shipping a synthetic placeholder.
+pub(crate) async fn render_one(
+    state: &AppState,
+    cfg: &AppConfig,
+    tmpl: &crate::templates::ImageTemplate,
+    ctx: &HashMap<String, String>,
+    base: Option<&[u8]>,
+    title: &str,
+    bullets: &[String],
+    product_name: &str,
+    keywords: &[String],
+    idx: usize,
+) -> Result<GeneratedImage> {
+    let prompt = fill(&tmpl.body, ctx);
+    let raw_bytes: Result<Vec<u8>> = match base {
+        Some(b) => match to_png_square(b, 1024) {
+            Ok(png) => edit_image(&state.http, cfg, &png, &prompt, "1024x1536").await,
+            Err(e) => Err(e),
+        },
+        None => generate_image(&state.http, cfg, &prompt, 1024, 1536, Some(1000 + idx as u64)).await,
+    };
+    let buf = match raw_bytes {
+        Ok(b) => {
+            let norm = normalize_main(&b, 1200, 1600).unwrap_or(b);
+            if tmpl.text_mode == "overlay" {
+                // perfect Cyrillic: composite exact text (resvg) over the clean visual.
+                let feats: Vec<String> = bullets
+                    .iter()
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty())
+                    .take(3)
+                    .collect();
+                compose_infographic(&norm, title, &feats, None, 1200, 1600).unwrap_or(norm)
+            } else {
+                norm
+            }
+        }
+        Err(_) => {
+            let fallback = base
+                .and_then(|b| to_png_square(b, 1200).ok())
+                .and_then(|p| normalize_main(&p, 1200, 1600).ok());
+            match fallback {
+                Some(b) => b,
+                None => make_placeholder(product_name, keywords, 1200, 1600, idx as u32)?,
+            }
+        }
+    };
+    let mut img = save_image(&state.paths, &buf, &tmpl.slot, &prompt, 1200, 1600, "jpg");
+    img.template_kind = tmpl.kind.clone();
+    Ok(img)
+}
+
 /// WB rejects unregistered/non-Latin brands ("Бренд … не найден"). Use the
 /// universally-accepted "no brand" value unless the user supplies one.
 const NO_BRAND: &str = "Нет бренда";
@@ -85,6 +139,7 @@ pub async fn generate_listing(
     cfg: &AppConfig,
     raw: &ListingInput,
     on: &Progress,
+    main_only: bool,
 ) -> Result<Listing> {
     // sanitize — batch/queue calls this directly, so a missing price must still
     // get a sensible default here.
@@ -137,70 +192,48 @@ pub async fn generate_listing(
         // user disabled/emptied every template → never ship zero images.
         plan = crate::templates::built_in_defaults().plan(requested);
     }
-    let count = plan.len().max(1);
+    let full_count = plan.len().max(1);
+    // main-first: render only the lead image now; the rest go through generate_rest.
+    let now_count = if main_only && full_count > 1 { 1 } else { full_count };
 
     on(
         "generate",
         true,
         &format!(
             "文案完成，开始生成 {} 张图（{}，每张约 1-2 分钟）…",
-            count,
+            now_count,
             if is_edit { "用你的产品图 img2img" } else { "AI 文生图" }
         ),
     );
 
     let mut images: Vec<GeneratedImage> = vec![];
-    for (i, tmpl) in plan.iter().enumerate() {
+    for (i, tmpl) in plan.iter().take(now_count).enumerate() {
         on(
             "generate",
             true,
-            &format!("生成第 {}/{} 张（{}）…", i + 1, count, tmpl.label),
+            &format!("生成第 {}/{} 张（{}）…", i + 1, now_count, tmpl.label),
         );
-        let overlay = tmpl.text_mode == "overlay";
-        let prompt = fill(&tmpl.body, &ctx);
-        let raw_bytes: Result<Vec<u8>> = if is_edit {
-            match to_png_square(&bases[i % bases.len()], 1024) {
-                Ok(png) => edit_image(&state.http, cfg, &png, &prompt, "1024x1536").await,
-                Err(e) => Err(e),
-            }
+        let base = if bases.is_empty() {
+            None
         } else {
-            generate_image(&state.http, cfg, &prompt, 1024, 1536, Some(1000 + i as u64)).await
+            Some(bases[i % bases.len()].as_slice())
         };
-        let buf = match raw_bytes {
-            Ok(b) => {
-                let norm = normalize_main(&b, 1200, 1600).unwrap_or(b);
-                if overlay {
-                    // perfect Cyrillic: composite exact text deterministically
-                    // (resvg) over the clean, text-free generated visual.
-                    let feats: Vec<String> = copy
-                        .bullets
-                        .iter()
-                        .map(|x| x.trim().to_string())
-                        .filter(|x| !x.is_empty())
-                        .take(3)
-                        .collect();
-                    compose_infographic(&norm, &copy.title, &feats, None, 1200, 1600).unwrap_or(norm)
-                } else {
-                    norm
-                }
-            }
-            Err(_) => {
-                // Never ship the synthetic placeholder when the seller gave a real
-                // photo — fall back to a clean derivation of their own image.
-                let fallback = bases
-                    .get(i % bases.len().max(1))
-                    .and_then(|b| to_png_square(b, 1200).ok())
-                    .and_then(|p| normalize_main(&p, 1200, 1600).ok());
-                match fallback {
-                    Some(b) => b,
-                    None => make_placeholder(&raw.product_name, &raw.keywords, 1200, 1600, i as u32)?,
-                }
-            }
-        };
-        images.push(save_image(&state.paths, &buf, &tmpl.slot, &prompt, 1200, 1600, "jpg"));
+        let img = render_one(
+            state, cfg, tmpl, &ctx, base, &copy.title, &copy.bullets, &raw.product_name, &raw.keywords, i,
+        )
+        .await?;
+        images.push(img);
     }
 
-    on("generate", true, "全部生成完成");
+    on(
+        "generate",
+        true,
+        if now_count < full_count {
+            "主图已生成，确认后再出其余"
+        } else {
+            "全部生成完成"
+        },
+    );
     let now = now_iso();
     // WB card brand: the user's brand if they typed one, else "Нет бренда".
     // (The AI-written brand stays in the copy for display, but isn't forced
@@ -241,5 +274,7 @@ pub async fn generate_listing(
         sandbox: cfg.wb_sandbox,
         logs: vec![],
         error: None,
+        partial: now_count < full_count,
+        requested_images: full_count as u32,
     })
 }

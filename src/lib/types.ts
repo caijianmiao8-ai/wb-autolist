@@ -22,6 +22,8 @@ export interface GeneratedImage {
   prompt: string;
   width: number;
   height: number;
+  /** template archetype that produced it (for single-image regenerate) */
+  templateKind?: string;
 }
 
 export type ListingStage =
@@ -67,6 +69,10 @@ export interface Listing {
   sandbox: boolean;
   logs: StageLog[];
   error: string | null;
+  /** true = only the main image is generated; rest pending via generateRest */
+  partial?: boolean;
+  /** total images requested (for the "generate the rest" step) */
+  requestedImages?: number;
 }
 
 export interface ListingInput {

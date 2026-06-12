@@ -78,7 +78,7 @@ async fn img2img_generate() {
         base_photos: vec![b64],
     };
     let on = |_s: &str, _o: bool, m: &str| eprintln!("  · {}", m);
-    let listing = generate_listing(&state, &cfg, &input, &on)
+    let listing = generate_listing(&state, &cfg, &input, &on, false)
         .await
         .expect("generate_listing");
     eprintln!("=== 生成 {} 张图 ===", listing.images.len());
@@ -187,7 +187,7 @@ async fn real_generate_and_publish() {
     eprintln!("\n──────── GENERATE (real Aurixel) ────────");
     let t0 = Instant::now();
     let gen_progress = |stage: &str, ok: bool, msg: &str| eprintln!("  · [{}] {} {}", stage, if ok { "✓" } else { "✗" }, msg);
-    let listing = generate_listing(&state, &cfg, &input, &gen_progress)
+    let listing = generate_listing(&state, &cfg, &input, &gen_progress, false)
         .await
         .expect("generate_listing failed");
     let copy = listing.copy.as_ref().expect("copy");

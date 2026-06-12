@@ -29,6 +29,7 @@ pub fn save_image(
         prompt: prompt.to_string(),
         width,
         height,
+        template_kind: String::new(), // set by the caller (render_one)
     }
 }
 

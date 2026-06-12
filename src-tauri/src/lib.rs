@@ -41,6 +41,8 @@ pub fn run() {
             commands::save_settings,
             commands::default_templates,
             commands::generate,
+            commands::regenerate_image,
+            commands::generate_rest,
             commands::publish,
             commands::list_listings,
             commands::get_listing,

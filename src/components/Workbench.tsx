@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Settings,
+  RefreshCw,
 } from "lucide-react";
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
@@ -39,6 +40,9 @@ export function Workbench() {
   const [basePhotos, setBasePhotos] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState("");
   const [imageCount, setImageCount] = useState(3);
+  const [mainOnly, setMainOnly] = useState(false);
+  const [regenLoading, setRegenLoading] = useState<number | null>(null);
+  const [restLoading, setRestLoading] = useState(false);
   const photoRef = useRef<HTMLInputElement>(null);
 
   const [listing, setListing] = useState<Listing | null>(null);
@@ -165,16 +169,19 @@ export function Workbench() {
       /* ignore */
     }
     try {
-      const data = await api.generate({
-        productName,
-        keywords,
-        price,
-        discount,
-        brand,
-        customPrompt,
-        imageCount,
-        basePhotos,
-      });
+      const data = await api.generate(
+        {
+          productName,
+          keywords,
+          price,
+          discount,
+          brand,
+          customPrompt,
+          imageCount,
+          basePhotos,
+        },
+        mainOnly
+      );
       setListing(data);
       setStep("preview");
       setGenMsg("");
@@ -246,6 +253,40 @@ export function Workbench() {
       sessionStorage.removeItem("wb:listingId");
     } catch {
       /* ignore */
+    }
+  }
+
+  async function doRegenerate(index: number) {
+    if (!listing) return;
+    setRegenLoading(index);
+    setError(null);
+    try {
+      const updated = await api.regenerateImage(listing.id, index, basePhotos, customPrompt);
+      setListing(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "重生成失败");
+    } finally {
+      setRegenLoading(null);
+    }
+  }
+
+  async function doGenerateRest() {
+    if (!listing) return;
+    setRestLoading(true);
+    setError(null);
+    setGenMsg("生成其余图片…");
+    const unlisten = await listen<{ message: string }>("generate:progress", (e) =>
+      setGenMsg(e.payload.message)
+    );
+    try {
+      const updated = await api.generateRest(listing.id, basePhotos, customPrompt);
+      setListing(updated);
+      setGenMsg("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "生成其余失败");
+    } finally {
+      unlisten();
+      setRestLoading(false);
     }
   }
 
@@ -410,9 +451,21 @@ export function Workbench() {
             value={imageCount}
             onChange={(e) => setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 3)))}
           />
-          <p className="mb-5 text-xs text-slate-500">
+          <p className="mb-2 text-xs text-slate-500">
             预计 ~{imageCount} 张 × 约 2.5 分钟 ≈ <b>{Math.ceil(imageCount * 2.5)} 分钟</b>（逐张生成，可在「设置」改模板风格）
           </p>
+          <label className="mb-5 flex cursor-pointer items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-wb-purple"
+              checked={mainOnly}
+              onChange={(e) => setMainOnly(e.target.checked)}
+            />
+            <span>
+              先只出主图
+              <span className="mt-0.5 block text-xs text-slate-500">确认满意后再出其余，省出图额度</span>
+            </span>
+          </label>
 
           <button
             className="btn-primary w-full"
@@ -442,11 +495,22 @@ export function Workbench() {
 
           {listing && (
             <>
-              <ImagesPanel listing={listing} />
+              <ImagesPanel listing={listing} onRegenerate={doRegenerate} regenLoading={regenLoading} />
               <CopyPanel listing={listing} />
 
+              {/* main-first: generate the remaining images on approval */}
+              {listing.partial && (
+                <button className="btn-primary w-full" onClick={doGenerateRest} disabled={restLoading}>
+                  {restLoading ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> {genMsg || "生成其余…"}</>
+                  ) : (
+                    <><Sparkles className="h-4 w-4" /> 满意，继续生成其余 {Math.max(0, (listing.requestedImages ?? imageCount) - listing.images.length)} 张</>
+                  )}
+                </button>
+              )}
+
               {/* Publish action */}
-              {step !== "publishing" && step !== "done" && (
+              {!listing.partial && step !== "publishing" && step !== "done" && (
                 <button className="btn-primary w-full" onClick={handlePublish}>
                   <Rocket className="h-4 w-4" />
                   {dryRun ? "演示上架" : "上架到 Wildberries"}
@@ -505,7 +569,15 @@ function GeneratingState({ msg }: { msg?: string }) {
   );
 }
 
-function ImagesPanel({ listing }: { listing: Listing }) {
+function ImagesPanel({
+  listing,
+  onRegenerate,
+  regenLoading,
+}: {
+  listing: Listing;
+  onRegenerate: (i: number) => void;
+  regenLoading: number | null;
+}) {
   const labels: Record<string, string> = {
     main: "主图",
     gallery: "细节图",
@@ -515,30 +587,48 @@ function ImagesPanel({ listing }: { listing: Listing }) {
     <div className="card p-6">
       <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
         <ImageIcon className="h-4 w-4 text-wb-pink" /> 生成的图片
+        <span className="text-xs font-normal text-slate-400">（不满意可单张重生成）</span>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {listing.images.map((img) => (
-          <div key={img.id} className="group relative overflow-hidden rounded-xl border border-slate-900/10 dark:border-white/10">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={img.url}
-              alt={img.kind}
-              className="aspect-[3/4] w-full object-cover"
-            />
-            <div className="absolute left-2 top-2">
-              <span className="chip border-white/20 bg-black/50 text-white backdrop-blur">
-                {labels[img.kind] ?? img.kind}
-              </span>
+        {listing.images.map((img, i) => {
+          const busy = regenLoading === i;
+          return (
+            <div key={img.id} className="group relative overflow-hidden rounded-xl border border-slate-900/10 dark:border-white/10">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img.url} alt={img.kind} className="aspect-[3/4] w-full object-cover" />
+              <div className="absolute left-2 top-2">
+                <span className="chip border-white/20 bg-black/50 text-white backdrop-blur">
+                  {labels[img.kind] ?? img.kind}
+                </span>
+              </div>
+              <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
+                <button
+                  onClick={() => onRegenerate(i)}
+                  disabled={regenLoading !== null}
+                  title="重新生成这一张"
+                  className="grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white backdrop-blur disabled:opacity-50"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
+                <a
+                  href={img.url}
+                  download
+                  className="grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white backdrop-blur"
+                >
+                  <Download className="h-4 w-4" />
+                </a>
+              </div>
+              {busy && (
+                <div className="absolute inset-0 grid place-items-center bg-black/40 backdrop-blur-sm">
+                  <div className="flex flex-col items-center gap-1.5 text-white">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                    <span className="text-[11px]">重生成中…</span>
+                  </div>
+                </div>
+              )}
             </div>
-            <a
-              href={img.url}
-              download
-              className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white opacity-0 backdrop-blur transition group-hover:opacity-100"
-            >
-              <Download className="h-4 w-4" />
-            </a>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
