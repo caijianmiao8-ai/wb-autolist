@@ -122,6 +122,17 @@ speaker can sound like several people. Two knobs (apply to all providers):
 Default (`NORMALIZE` on, `MERGE_GAP` 0) = consistent level, tight sync. Add `--merge-gap 0.5`
 only if a cloned voice still sounds inconsistent and ~0.4 s of voiceover drift is acceptable.
 
+### Timing & fit (no rushed/chopped speech)
+Russian runs longer than English, so naive per-segment fitting speeds up and hard-trims
+lines (rushed/truncated audio). Two mechanisms keep it natural:
+- **Length-budgeted translation** (`RU_CHARS_PER_SEC`, default 15): each line gets a
+  char budget = (its span + the following pause) × rate; the translator is told to fit
+  it (concision over completeness), so RU rarely overflows. Lower the rate → shorter RU.
+- **Gap-aware fit**: a line may use its own span **plus the silence until the next line**,
+  and short lines keep **natural speed** (no padding, no stretch). Only genuine overflow is
+  sped up (≤1.5×). Net effect (measured): median speed factor < 1.0 (most lines have room),
+  truncation cut ~75%.
+
 ### Translation (Aurixel chat — live verified)
 | Var | Default |
 |---|---|

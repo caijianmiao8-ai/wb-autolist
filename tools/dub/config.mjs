@@ -142,6 +142,10 @@ export function loadConfig(opts = {}) {
     MERGE_GAP: Number(env('MERGE_GAP', '0')),
     // cap a merged unit's span so internal sync drift stays bounded.
     MAX_UNIT_SEC: Number(env('MAX_UNIT_SEC', '10')),
+    // length-budgeted translation: target RU speaking rate (chars incl. spaces per
+    // second). The translator is told to keep each line within its slot+gap budget
+    // so it doesn't overflow and get sped-up/truncated. Lower = shorter RU.
+    RU_CHARS_PER_SEC: Number(env('RU_CHARS_PER_SEC', '15')),
 
     // --- Qwen / DashScope TTS voice cloning (qwen3-tts-vc) ---
     QWEN_API_KEY: env('QWEN_API_KEY'),

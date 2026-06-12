@@ -113,7 +113,7 @@ export function makeFf(cfg = {}) {
    * @returns {Promise<{outPath, srcDur, targetDur, factor, capped}>}
    */
   async function fitAudioToDuration(inWav, outWav, targetDur, opts = {}) {
-    const { maxSpeedup = 1.5, minSlowdown = 0.85, srcDur: knownSrc } = opts;
+    const { maxSpeedup = 1.5, minSlowdown = 0.85, srcDur: knownSrc, padShort = true } = opts;
     const srcDur = knownSrc != null ? knownSrc : await probeDuration(inWav);
     if (!(targetDur > 0)) {
       // Degenerate slot — just copy a hard-trimmed/padded clip.
@@ -131,10 +131,23 @@ export function makeFf(cfg = {}) {
     // Don't over-stretch tiny clips into long slots; floor the slow-down.
     if (factor < minSlowdown) factor = minSlowdown;
 
+    // padShort=false (gap-aware mode): if the clip already fits the target window
+    // (incl. the following pause), keep it at NATURAL speed/length — no padding,
+    // no time-stretch. Only compress when it genuinely overflows. This is what
+    // removes the rushed/sped-up feel and the chopped sentence ends.
+    if (!padShort && factor <= 1.0001) {
+      await ffmpeg(['-y', '-i', inWav, '-ar', '44100', '-ac', '2', outWav]);
+      return { outPath: outWav, srcDur, targetDur, factor: 1, capped: false };
+    }
+
     const chain = atempoChain(factor);
-    // After tempo change, apad to fill any remaining gap, then hard-cut at target.
-    const filter = `${chain},apad`;
-    await ffmpeg(['-y', '-i', inWav, '-filter:a', filter, '-t', String(targetDur), '-ar', '44100', '-ac', '2', outWav]);
+    const compressing = factor > 1.0001;
+    // When compressing, hard-cut at target. When padding (legacy), pad then cut.
+    const filter = padShort ? `${chain},apad` : chain;
+    const args = ['-y', '-i', inWav, '-filter:a', filter];
+    if (padShort || compressing) args.push('-t', String(targetDur));
+    args.push('-ar', '44100', '-ac', '2', outWav);
+    await ffmpeg(args);
     return { outPath: outWav, srcDur, targetDur, factor, capped };
   }
 
