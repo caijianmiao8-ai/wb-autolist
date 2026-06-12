@@ -98,6 +98,25 @@ function buildUnits(segments, { mergeGap = 0, maxUnitSec = 10 } = {}) {
   return units;
 }
 
+/** Subtract `spans` (protected ranges) from each [s,e] in `intervals`. */
+function subtractSpans(intervals, spans) {
+  const out = [];
+  for (const [s0, e0] of intervals) {
+    let pieces = [[s0, e0]];
+    for (const [ps, pe] of spans) {
+      const next = [];
+      for (const [a, b] of pieces) {
+        if (pe <= a || ps >= b) { next.push([a, b]); continue; }
+        if (ps > a) next.push([a, Math.min(ps, b)]);
+        if (pe < b) next.push([Math.max(pe, a), b]);
+      }
+      pieces = next;
+    }
+    for (const [a, b] of pieces) if (b - a > 0.05) out.push([a, b]);
+  }
+  return out;
+}
+
 /** Generate a silent wav of given duration (used by dry-run fake TTS). */
 async function silentWav(ff, durationSec, outPath) {
   await ff.ffmpeg([
@@ -338,10 +357,16 @@ export async function runPipeline(cfg, args) {
   if (cfg.GATE_SILENCE && !dryRun) {
     await stageC('gate-silence', async () => {
       const sil = await ff.detectSilence(wav16k, { threshold: cfg.GATE_THRESH, minDur: cfg.GATE_MIN_SEC });
+      // Only mute silence that falls in the GAPS BETWEEN sentences — never inside a
+      // line's span. A speaker's quiet/drawn-out moments mid-sentence read as
+      // "silence" but the continuous dub legitimately covers them; muting there
+      // would chop one sentence into stutters.
+      const spans = units.map((u) => [Number(u.start), Number(u.end)]).filter(([a, b]) => b > a);
+      const gateIv = subtractSpans(sil, spans);
       const gated = join(workDir, 'dub_gated.wav');
-      await ff.gateSilence(dubTrack, sil, gated);
+      await ff.gateSilence(dubTrack, gateIv, gated);
       muxTrack = gated;
-      capture({ stage: 'gate-silence', ok: true, ms: 0, warn: `muted dub in ${sil.length} original-silence gaps` });
+      capture({ stage: 'gate-silence', ok: true, ms: 0, warn: `muted dub in ${gateIv.length} inter-sentence gaps (of ${sil.length} silent spans)` });
     });
   }
 
