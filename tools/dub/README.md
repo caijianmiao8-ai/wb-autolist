@@ -1,15 +1,37 @@
 # WB Dub — EN→RU product-video voiceover CLI
 
-Takes a Wildberries product video with an **English** voiceover and outputs the
-same video with a **Russian** voiceover. Self-assembled, watermark-free pipeline:
+Takes a product video with an **English** voiceover and outputs the same video
+with a **Russian** voiceover. Self-assembled, watermark-free, **universal**
+pipeline — runs on any video, no per-video hardcoding, graceful degradation:
 
 ```
-ffmpeg extract audio
-  → ElevenLabs Scribe STT (word-level timestamps)
-  → Aurixel chat EN→RU translation (gpt-5.5, keyword/brand/tone aware)
-  → ElevenLabs Russian TTS (multilingual_v2)
-  → ffmpeg per-segment time-fit (atempo/apad) + assemble + mux
+ffmpeg extract → Demucs separate (clean vocals + M&E background)
+  → ElevenLabs Scribe STT (word timestamps + speaker diarization)
+  → Aurixel chat EN→RU translation (gpt-5.5, duration-budgeted, keyword/brand/tone)
+  → per-speaker voice (preset OR cloned from the AUTO-selected cleanest reference)
+  → fragment-merge units → time-fit (never hard-truncates) → assemble
+  → gate (mute dub in the original's silent gaps) → mix over M&E background (+duck)
 ```
+
+Everything is generic: speakers come from diarization (any count), each speaker's
+clone reference is auto-picked as their cleanest run (no fixed timestamps), and any
+stage that can't run (no clean audio to clone, Demucs missing, …) degrades safely
+instead of failing.
+
+### Commercial baseline (clone the original speaker, on any video)
+
+```bash
+node tools/dub/cli.mjs input.mp4 --out input.ru.mp4 \
+  --tts-provider qwen-vc \
+  --keywords "термокружка,сталь" --brand AquaNord --tone "дружелюбный маркетинговый"
+```
+
+This clones each speaker's real voice from clean audio, keeps the original
+soundscape (clinks/ambient) under the dub, ducks it while speaking, and never
+produces truncated-word artifacts. A speaker with too little clean audio falls
+back to the dominant speaker's clone (override floor with `--min-clone-sec`).
+For a stable preset voice instead of cloning, use `--tts-provider qwen` (Russian
+preset, e.g. `--speaker-voices "speaker_0=Katerina"`).
 
 Zero npm dependencies. Pure Node ESM, Node 18+ (global `fetch`/`FormData`/`Blob`).
 `ffmpeg`/`ffprobe` resolved from `~/.local/bin` (override via env).

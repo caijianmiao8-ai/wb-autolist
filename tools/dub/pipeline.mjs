@@ -78,15 +78,21 @@ function buildSpeakerVoiceMap(segments, { explicit = {}, primaryVoice, pool = []
  * [start,end] span, and a unit is capped at maxUnitSec to bound internal drift.
  * mergeGap<=0 -> no merging (one unit per segment).
  */
-function buildUnits(segments, { mergeGap = 0, maxUnitSec = 10 } = {}) {
-  if (!(mergeGap > 0)) return segments.map((s) => ({ ...s }));
+function buildUnits(segments, { mergeGap = 0, maxUnitSec = 10, minUnitSec = 0.8 } = {}) {
   const units = [];
   let cur = null;
   for (const s of segments) {
     const spk = s.speaker ?? '_';
     const gap = cur ? Number(s.start) - cur.end : Infinity;
+    const curDur = cur ? cur.end - cur.start : 0;
     const wouldExceed = cur ? Number(s.end) - cur.start > maxUnitSec : false;
-    if (cur && (cur.speaker ?? '_') === spk && gap >= 0 && gap <= mergeGap && !wouldExceed) {
+    // Grow the unit when same speaker AND (small gap OR the unit is still a tiny
+    // fragment that must not be synthesized alone). minUnitSec is the fragment
+    // guard: a half-word like "It's"/"Go" keeps absorbing the next bit until the
+    // unit is a complete, speakable phrase — kills truncated-fragment artifacts.
+    const sameSpk = cur && (cur.speaker ?? '_') === spk;
+    const grow = sameSpk && !wouldExceed && gap >= 0 && (gap <= mergeGap || curDur < minUnitSec);
+    if (grow) {
       cur.text += ' ' + s.text;
       cur.end = Number(s.end);
     } else {
@@ -96,6 +102,38 @@ function buildUnits(segments, { mergeGap = 0, maxUnitSec = 10 } = {}) {
   }
   if (cur) units.push(cur);
   return units;
+}
+
+/**
+ * Auto-pick a CLEAN, single-condition clone reference for one speaker: among the
+ * speaker's contiguous runs, prefer the cleanest (lowest background = least
+ * reverb/foley contamination) run that's long enough, else the longest. Works on
+ * any video — no hardcoded timestamps. Returns [{start,end}] to extract from the
+ * VOCALS stem. bgPath optional (when absent, just picks the longest run).
+ */
+async function selectCleanReference(segs, { bgPath, ff, minSec = 4, maxSec = 20, gapMerge = 1.0 }) {
+  const s = segs.map((r) => ({ s: Number(r.start), e: Number(r.end) }))
+    .filter((r) => Number.isFinite(r.s) && Number.isFinite(r.e) && r.e > r.s)
+    .sort((a, b) => a.s - b.s);
+  if (!s.length) return [];
+  const runs = [];
+  let cur = { s: s[0].s, e: s[0].e };
+  for (let i = 1; i < s.length; i++) {
+    if (s[i].s - cur.e <= gapMerge) cur.e = Math.max(cur.e, s[i].e);
+    else { runs.push(cur); cur = { s: s[i].s, e: s[i].e }; }
+  }
+  runs.push(cur);
+  let best = runs.slice().sort((a, b) => b.e - b.s - (a.e - a.s))[0]; // default longest
+  if (bgPath && ff) {
+    const longEnough = runs.filter((r) => r.e - r.s >= minSec);
+    const pool = longEnough.length ? longEnough : runs;
+    let bestBg = Infinity;
+    for (const r of pool) {
+      const bg = await ff.meanRms(bgPath, r.s, Math.min(r.e, r.s + maxSec));
+      if (bg < bestBg) { bestBg = bg; best = r; } // lower background dB = cleaner
+    }
+  }
+  return [{ start: best.s, end: Math.min(best.e, best.s + maxSec) }];
 }
 
 /** Subtract `spans` (protected ranges) from each [s,e] in `intervals`. */
@@ -180,6 +218,23 @@ export async function runPipeline(cfg, args) {
     return { videoDur };
   });
 
+  // 1b) Separate stems ONCE (Demucs): vocals (clean speech, for clone references)
+  // + background (M&E, for the final mix). Run early so cloning uses clean vocals.
+  // Graceful: on any failure, fall back to no-background + cloning from raw audio.
+  let bgPath = null, vocalsPath = null;
+  const needStems = !dryRun && (cfg.KEEP_BACKGROUND || (makeTts(cfg).supportsCloning));
+  if (needStems) {
+    await stageC('separate', async () => {
+      try {
+        const stems = await ff.separateBackground(input, workDir, { uvx: cfg.DEMUCS_UVX });
+        bgPath = cfg.KEEP_BACKGROUND ? stems.background : null;
+        vocalsPath = stems.vocals;
+      } catch (e) {
+        capture({ stage: 'separate', ok: true, ms: 0, warn: `stem separation skipped (${e.message}) — raw audio + no background` });
+      }
+    });
+  }
+
   // 2) ASR -> segments
   let asrResult;
   asrResult = await stageC('asr', async () => {
@@ -249,13 +304,17 @@ export async function runPipeline(cfg, args) {
   if (tts && tts.supportsCloning) {
     cloneMap = {};
     await stageC('enroll(clone)', async () => {
+      // clone from the CLEAN vocals stem when available (no background/foley
+      // contamination), else fall back to the raw audio.
+      const cloneSrc = vocalsPath || input;
       for (const spk of speakerVoice.ordered) {
-        const ranges = ruSegments
-          .filter((s) => (s.speaker ?? '_') === spk)
-          .map((s) => ({ start: s.start, end: s.end }));
+        const segs = ruSegments.filter((s) => (s.speaker ?? '_') === spk);
         const samplePath = join(workDir, `sample_${String(spk).replace(/[^a-z0-9_]/gi, '')}.mp3`);
         try {
-          const used = await ff.extractSpeakerSample(input, ranges, samplePath, { maxDur: cfg.MAX_CLONE_SEC });
+          // auto-pick the cleanest single-condition reference for THIS speaker
+          // (works on any video — no hardcoded timestamps).
+          const ranges = await selectCleanReference(segs, { bgPath, ff, minSec: cfg.MIN_CLONE_SEC, maxSec: cfg.MAX_CLONE_SEC });
+          const used = await ff.extractSpeakerSample(cloneSrc, ranges, samplePath, { maxDur: cfg.MAX_CLONE_SEC });
           if (used < cfg.MIN_CLONE_SEC) throw new Error(`only ${used.toFixed(1)}s clean audio (< ${cfg.MIN_CLONE_SEC}s min)`);
           cloneMap[spk] = await tts.enroll(samplePath, { name: spk });
         } catch (e) {
@@ -272,7 +331,7 @@ export async function runPipeline(cfg, args) {
 
   // Merge consecutive same-speaker segments into fewer synthesis units (reduces
   // clone drift; sync preserved — see buildUnits). One unit per segment if off.
-  const units = buildUnits(ruSegments, { mergeGap: cfg.MERGE_GAP, maxUnitSec: cfg.MAX_UNIT_SEC });
+  const units = buildUnits(ruSegments, { mergeGap: cfg.MERGE_GAP, maxUnitSec: cfg.MAX_UNIT_SEC, minUnitSec: cfg.MIN_UNIT_SEC });
 
   const fitClips = await stageC('tts+fit', async () => {
     const clips = [];
@@ -295,9 +354,9 @@ export async function runPipeline(cfg, args) {
       let srcClip = rawClip;
       let synthDur;
       if (dryRun) {
-        // free fake TTS: silent clip ~ same length as the slot so fit is a no-op
-        await silentWav(ff, slot, rawClip);
-        synthDur = slot;
+        // free fake TTS: silent clip ~ same length as the span so fit is a no-op
+        await silentWav(ff, span, rawClip);
+        synthDur = span;
       } else {
         const r = await tts.synthesize(seg.text, {
           voiceId: (cloneMap && cloneMap[seg.speaker ?? '_']) || speakerVoice.map[seg.speaker ?? '_'] || ttsOpts.voiceId,
@@ -370,22 +429,10 @@ export async function runPipeline(cfg, args) {
     });
   }
 
-  // 5c) Separate the original's background (M&E) so the dub keeps the soundscape
-  // (clinks/sprays/ambient) instead of a bare voice over silence.
-  let background = null;
-  if (cfg.KEEP_BACKGROUND && !dryRun) {
-    await stageC('separate-bg', async () => {
-      try {
-        background = await ff.separateBackground(input, workDir, { uvx: cfg.DEMUCS_UVX });
-      } catch (e) {
-        background = null;
-        capture({ stage: 'separate-bg', ok: true, ms: 0, warn: `background separation skipped (${e.message}) — dub over silence` });
-      }
-    });
-  }
-
+  // 5c) Mix the dub over the M&E background separated up front (bgPath) — keeps
+  // the soundscape (clinks/sprays/ambient) instead of a bare voice over silence.
   await stageC('mux', async () => {
-    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio, background, bgVolume: cfg.BG_VOLUME, duck: cfg.BG_DUCK });
+    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio, background: bgPath, bgVolume: cfg.BG_VOLUME, duck: cfg.BG_DUCK });
   });
 
   // 6) correctness gate: output duration within ~150ms of source video

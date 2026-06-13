@@ -143,10 +143,17 @@ export function makeFf(cfg = {}) {
 
     const chain = atempoChain(factor);
     const compressing = factor > 1.0001;
-    // When compressing, hard-cut at target. When padding (legacy), pad then cut.
-    const filter = padShort ? `${chain},apad` : chain;
+    // CAPPED = too long even at max speed-up: play the COMPLETE (max-compressed)
+    // word with NO apad and NO -t, so it finishes (overflowing slightly into the
+    // following pause) instead of being hard-cut into a fragment/artifact.
+    // CRITICAL: never apply apad without -t — apad pads silence forever (runaway).
+    let filter, trim;
+    if (capped) { filter = chain; trim = false; }
+    else if (padShort) { filter = `${chain},apad`; trim = true; } // fill short clip to target
+    else if (compressing) { filter = chain; trim = true; }        // compress, exact cut
+    else { filter = chain; trim = false; }                        // ~natural, leave as-is
     const args = ['-y', '-i', inWav, '-filter:a', filter];
-    if (padShort || compressing) args.push('-t', String(targetDur));
+    if (trim) args.push('-t', String(targetDur));
     args.push('-ar', '44100', '-ac', '2', outWav);
     await ffmpeg(args);
     return { outPath: outWav, srcDur, targetDur, factor, capped };
@@ -306,8 +313,19 @@ export function makeFf(cfg = {}) {
     // lameenc and Just Works. Lossy is fine — it gets re-encoded to aac at mux.
     await run(uvx, ['--from', 'demucs', 'demucs', '--two-stems=vocals', '--mp3', '-o', outDir, full]);
     const bg = join(outDir, 'htdemucs', 'orig_full', 'no_vocals.mp3');
+    const vocals = join(outDir, 'htdemucs', 'orig_full', 'vocals.mp3');
     if (!existsSync(bg)) throw new Error(`demucs background stem not found at ${bg}`);
-    return bg;
+    // background = M&E (for the mix); vocals = clean speech (for clean clone refs)
+    return { background: bg, vocals: existsSync(vocals) ? vocals : null };
+  }
+
+  /** Mean RMS level (dB) of a file over [start,end] — used to score reference cleanliness. */
+  async function meanRms(file, start, end) {
+    try {
+      const { stderr } = await ffmpeg(['-ss', String(Math.max(start, 0)), '-to', String(end), '-i', file, '-af', 'astats=metadata=1:reset=0', '-f', 'null', '-']);
+      const vals = [...stderr.matchAll(/RMS level dB:\s*(-?[\d.]+)/g)].map((m) => parseFloat(m[1])).filter((x) => Number.isFinite(x));
+      return vals.length ? vals[vals.length - 1] : 0;
+    } catch { return 0; }
   }
 
   /**
@@ -386,6 +404,7 @@ export function makeFf(cfg = {}) {
     detectSilence,
     gateSilence,
     separateBackground,
+    meanRms,
   };
 }
 

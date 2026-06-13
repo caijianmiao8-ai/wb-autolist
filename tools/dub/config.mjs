@@ -143,6 +143,9 @@ export function loadConfig(opts = {}) {
     MERGE_GAP: Number(env('MERGE_GAP', '0.35')),
     // cap a merged unit's span so internal sync drift stays bounded.
     MAX_UNIT_SEC: Number(env('MAX_UNIT_SEC', '10')),
+    // fragment guard: a unit shorter than this keeps absorbing the next same-speaker
+    // segment until it's a complete, speakable phrase (no half-word artifacts).
+    MIN_UNIT_SEC: Number(env('MIN_UNIT_SEC', '0.8')),
     // length-budgeted translation: target RU speaking rate (chars incl. spaces per
     // second). The translator is told to keep each line within its slot+gap budget
     // so it doesn't overflow and get sped-up/truncated. Lower = shorter RU.
