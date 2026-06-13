@@ -205,13 +205,18 @@ export function makeFf(cfg = {}) {
    *  - default: REPLACE the original audio entirely.
    */
   async function muxReplaceAudio(inputVideo, dubWav, outMp4, opts = {}) {
-    const { keepOriginal = 0, audioBitrate = '192k', background = null, bgVolume = 0.8 } = opts;
+    const { keepOriginal = 0, audioBitrate = '192k', background = null, bgVolume = 0.8, duck = true } = opts;
     if (background) {
       const g = Math.min(Math.max(bgVolume, 0), 2);
+      // duck=true: sidechain-compress the background by the dub voice so the M&E
+      // drops ~6 dB while someone speaks (voice stays clear) and returns in pauses.
+      // alimiter at the end is a cheap true-peak safety against mix clipping.
+      const fc = duck
+        ? `[1:a]asplit=2[dk][dv];[2:a]volume=${g}[bgv];[bgv][dk]sidechaincompress=threshold=0.05:ratio=6:attack=20:release=350[bg];[bg][dv]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[aout]`
+        : `[2:a]volume=${g}[bg];[1:a]volume=1.0[dub];[bg][dub]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[aout]`;
       await ffmpeg([
         '-y', '-i', inputVideo, '-i', dubWav, '-i', background,
-        '-filter_complex',
-        `[2:a]volume=${g}[bg];[1:a]volume=1.0[dub];[bg][dub]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`,
+        '-filter_complex', fc,
         '-map', '0:v:0', '-map', '[aout]',
         '-c:v', 'copy', '-c:a', 'aac', '-b:a', audioBitrate,
         '-shortest', outMp4,

@@ -385,7 +385,7 @@ export async function runPipeline(cfg, args) {
   }
 
   await stageC('mux', async () => {
-    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio, background, bgVolume: cfg.BG_VOLUME });
+    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio, background, bgVolume: cfg.BG_VOLUME, duck: cfg.BG_DUCK });
   });
 
   // 6) correctness gate: output duration within ~150ms of source video

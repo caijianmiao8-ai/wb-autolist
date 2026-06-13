@@ -98,6 +98,7 @@ async function main() {
   if (a['no-normalize']) overrides.NORMALIZE = 'false';
   if (a['no-gate']) overrides.GATE_SILENCE = 'false';
   if (a['no-background']) overrides.KEEP_BACKGROUND = 'false';
+  if (a['no-duck']) overrides.BG_DUCK = 'false';
   // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.
   if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen') overrides.OUT_FORMAT = 'wav';
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];

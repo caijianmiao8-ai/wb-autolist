@@ -168,6 +168,9 @@ export function loadConfig(opts = {}) {
     // a bare voice onto silence. Needs uvx+demucs (auto-installed on first run).
     KEEP_BACKGROUND: String(env('KEEP_BACKGROUND', 'true')).toLowerCase() !== 'false',
     BG_VOLUME: Number(env('BG_VOLUME', '0.8')), // background gain under the dub
+    // duck the background ~6 dB while the dub speaks (sidechain) — measured to
+    // raise voice clarity; returns in pauses. --no-duck to disable.
+    BG_DUCK: String(env('BG_DUCK', 'true')).toLowerCase() !== 'false',
     DEMUCS_UVX: env('DEMUCS_UVX') || join(homedir(), '.local/bin/uvx'),
 
     // --- Qwen / DashScope TTS voice cloning (qwen3-tts-vc) ---
