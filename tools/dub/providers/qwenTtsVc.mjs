@@ -30,6 +30,7 @@ export function makeQwenTtsVc(cfg) {
   const key = cfg.apiKey;
   const model = cfg.model || 'qwen3-tts-vc-2026-01-22';
   const enrollModel = cfg.enrollModel || 'qwen-voice-enrollment';
+  const presetModel = cfg.presetModel || 'qwen3-tts-flash'; // for distinct-preset fallback voices
   const sampleRate = cfg.sampleRate || 24000;
   const timeoutMs = cfg.timeoutMs || 120000;
   const retries = cfg.retries ?? 2;
@@ -78,9 +79,13 @@ export function makeQwenTtsVc(cfg) {
     if (!voice) throw new Error('Qwen TTS-VC: voiceId required (enroll a speaker first)');
     if (!outPath) throw new Error('Qwen TTS-VC: outPath required');
 
+    // Route by voice id: an enrolled CLONE id ("qwen-tts-vc-…") uses the VC model;
+    // a plain PRESET name (e.g. "Chelsie") uses the preset model — this lets a
+    // speaker that can't be cloned fall back to a DISTINCT preset voice.
+    const useModel = String(voice).startsWith('qwen-tts-vc') ? model : presetModel;
     const j = await post(
       '/api/v1/services/aigc/multimodal-generation/generation',
-      { model, input: { text }, parameters: { voice, sample_rate: sampleRate, format: 'wav', response_format: 'wav' } },
+      { model: useModel, input: { text }, parameters: { voice, sample_rate: sampleRate, format: 'wav', response_format: 'wav' } },
       'Qwen TTS-VC'
     );
     const url = j?.output?.audio?.url || j?.output?.url;

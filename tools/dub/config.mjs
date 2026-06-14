@@ -184,6 +184,10 @@ export function loadConfig(opts = {}) {
     // preset-voice TTS (TTS_PROVIDER=qwen): stable locked voices, no cloning
     QWEN_TTS_MODEL: env('QWEN_TTS_MODEL', 'qwen3-tts-flash'),
     QWEN_VOICE: env('QWEN_VOICE', 'Cherry'),
+    // distinct preset voices for speakers that can't be cloned (keeps dialogue
+    // speakers apart instead of collapsing them into the dominant clone).
+    QWEN_FALLBACK_VOICES: String(env('QWEN_FALLBACK_VOICES', 'Chelsie,Serena,Ethan,Dylan,Katerina'))
+      .split(',').map((s) => s.trim()).filter(Boolean),
     // per-speaker cloning: only clone speakers with at least this many seconds of
     // clean source audio; shorter speakers fall back to a premade/static voice.
     MIN_CLONE_SEC: Number(env('MIN_CLONE_SEC', '6')),

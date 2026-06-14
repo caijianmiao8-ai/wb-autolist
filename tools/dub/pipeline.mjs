@@ -123,14 +123,19 @@ async function selectCleanReference(segs, { bgPath, ff, minSec = 4, maxSec = 20,
     else { runs.push(cur); cur = { s: s[i].s, e: s[i].e }; }
   }
   runs.push(cur);
-  let best = runs.slice().sort((a, b) => b.e - b.s - (a.e - a.s))[0]; // default longest
+  let best = runs.slice().sort((a, b) => b.e - b.s - (a.e - a.s))[0]; // default: longest
+  // Only bg-score among runs that are already LONG ENOUGH to clone — picking the
+  // "cleanest" run when all are short just trades clone material for a marginally
+  // cleaner 1 s clip (which then fails the min-length check). Short speakers keep
+  // the longest run so they get the most audio possible.
   if (bgPath && ff) {
     const longEnough = runs.filter((r) => r.e - r.s >= minSec);
-    const pool = longEnough.length ? longEnough : runs;
-    let bestBg = Infinity;
-    for (const r of pool) {
-      const bg = await ff.meanRms(bgPath, r.s, Math.min(r.e, r.s + maxSec));
-      if (bg < bestBg) { bestBg = bg; best = r; } // lower background dB = cleaner
+    if (longEnough.length) {
+      let bestBg = Infinity;
+      for (const r of longEnough) {
+        const bg = await ff.meanRms(bgPath, r.s, Math.min(r.e, r.s + maxSec));
+        if (bg < bestBg) { bestBg = bg; best = r; } // lower background dB = cleaner
+      }
     }
   }
   return [{ start: best.s, end: Math.min(best.e, best.s + maxSec) }];
@@ -322,10 +327,20 @@ export async function runPipeline(cfg, args) {
           capture({ stage: 'enroll(clone)', ok: true, ms: 0, warn: `${spk}: clone skipped — ${e.message}` });
         }
       }
-      const dominant = speakerVoice.ordered.find((s) => cloneMap[s]);
-      const dominantClone = dominant ? cloneMap[dominant] : null;
-      if (!dominantClone) throw new Error('voice cloning failed for every speaker');
-      for (const spk of Object.keys(cloneMap)) if (!cloneMap[spk]) cloneMap[spk] = dominantClone;
+      // Speakers we couldn't clone get a DISTINCT preset voice (not the dominant
+      // speaker's clone) so two speakers in a dialogue never collapse into one
+      // voice. The qwen-vc synth routes a preset NAME to the preset model.
+      // Qwen3-tts preset voices (valid names for the preset model) — distinct
+      // fallbacks for speakers without enough clean audio to clone.
+      const presetPool = cfg.QWEN_FALLBACK_VOICES;
+      let pi = 0;
+      for (const spk of speakerVoice.ordered) {
+        if (!cloneMap[spk]) {
+          cloneMap[spk] = presetPool[pi % presetPool.length];
+          pi++;
+          capture({ stage: 'enroll(clone)', ok: true, ms: 0, warn: `${spk}: using distinct preset voice "${cloneMap[spk]}" (couldn't clone)` });
+        }
+      }
     });
   }
 
@@ -389,24 +404,38 @@ export async function runPipeline(cfg, args) {
         minSlowdown: cfg.FIT_MIN_SLOWDOWN, // stretch short lines to fill the mouth time
         padShort: true,
       });
-      clips.push({ path: fitClip, start: segStart, end: segEnd, factor: fit.factor, capped: fit.capped });
+      // capped clips overflow (no hard-cut) to rawDur/maxSpeedup; others = target.
+      const dur = fit.capped ? rawDur / cfg.FIT_MAX_SPEEDUP : target;
+      clips.push({ path: fitClip, start: segStart, end: segEnd, dur, capped: fit.capped, speaker: seg.speaker ?? '_' });
     }
     return clips;
   });
+
+  // 4c) Elastic placement: place clips at their intended start, but if one would
+  // overlap the previous (a long line overflowing into the next, esp. in rapid
+  // dialogue), push it just past the previous so two speakers never talk over each
+  // other. The slack is absorbed by the next pause (placement resets when there's
+  // real silence). Without this, "no hard-truncate" can collide adjacent speakers.
+  let prevEnd = 0;
+  for (const c of fitClips) {
+    c.placed = Math.max(Number(c.start) || 0, prevEnd);
+    prevEnd = c.placed + (Number(c.dur) || 0);
+  }
+  const placedClips = fitClips.map((c) => ({ path: c.path, start: c.placed }));
 
   // 5) assemble + mux
   const dubTrack = join(workDir, 'dub_track.wav');
   if (mode === 'whole') {
     await stageC('assemble(whole)', async () => {
       const concat = join(workDir, 'dub_concat.wav');
-      await ff.concatAudio(fitClips.map((c) => c.path), concat);
+      await ff.concatAudio(placedClips.map((c) => c.path), concat);
       const concatDur = await ff.probeDuration(concat);
       // single atempo chain to the whole video duration, pad/trim to exact.
       await ff.fitAudioToDuration(concat, dubTrack, videoDur, { srcDur: concatDur, maxSpeedup: 100, minSlowdown: 0.5 });
     });
   } else {
     await stageC('assemble(segment)', async () => {
-      await ff.assembleTimeline(fitClips, videoDur, dubTrack);
+      await ff.assembleTimeline(placedClips, videoDur, dubTrack);
     });
   }
 
@@ -416,11 +445,10 @@ export async function runPipeline(cfg, args) {
   if (cfg.GATE_SILENCE && !dryRun) {
     await stageC('gate-silence', async () => {
       const sil = await ff.detectSilence(wav16k, { threshold: cfg.GATE_THRESH, minDur: cfg.GATE_MIN_SEC });
-      // Only mute silence that falls in the GAPS BETWEEN sentences — never inside a
-      // line's span. A speaker's quiet/drawn-out moments mid-sentence read as
-      // "silence" but the continuous dub legitimately covers them; muting there
-      // would chop one sentence into stutters.
-      const spans = units.map((u) => [Number(u.start), Number(u.end)]).filter(([a, b]) => b > a);
+      // Protect the dub's ACTUAL (elastically-placed) extents — never mute a region
+      // where a clip is really playing, even if it was nudged into what was an
+      // original silent gap. Muting inside a line would chop it into stutters.
+      const spans = fitClips.map((c) => [c.placed, c.placed + (Number(c.dur) || 0)]).filter(([a, b]) => b > a);
       const gateIv = subtractSpans(sil, spans);
       const gated = join(workDir, 'dub_gated.wav');
       await ff.gateSilence(dubTrack, gateIv, gated);

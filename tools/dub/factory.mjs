@@ -46,7 +46,8 @@ export function pickTts(cfg) {
       // synthesizes their segments in the cloned voice (see supportsCloning).
       return makeQwenTtsVc({
         apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE,
-        model: cfg.QWEN_TTS_VC_MODEL, enrollModel: cfg.QWEN_ENROLL_MODEL, ...net,
+        model: cfg.QWEN_TTS_VC_MODEL, enrollModel: cfg.QWEN_ENROLL_MODEL,
+        presetModel: cfg.QWEN_TTS_MODEL, ...net,
       });
     case 'qwen':
       // Qwen3-TTS preset voices (Cherry/Katerina/…) — stable, no cloning.
