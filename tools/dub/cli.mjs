@@ -97,6 +97,7 @@ async function main() {
   if (a.rate && a.rate !== true) overrides.RU_CHARS_PER_SEC = a.rate;
   if (a['no-normalize']) overrides.NORMALIZE = 'false';
   if (a['no-gate']) overrides.GATE_SILENCE = 'false';
+  if (a.elastic) overrides.ELASTIC_PLACEMENT = 'true';
   if (a['no-background']) overrides.KEEP_BACKGROUND = 'false';
   if (a['no-duck']) overrides.BG_DUCK = 'false';
   // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.

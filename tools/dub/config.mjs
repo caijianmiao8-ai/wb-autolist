@@ -163,6 +163,11 @@ export function loadConfig(opts = {}) {
     FIT_MIN_SLOWDOWN: Number(env('FIT_MIN_SLOWDOWN', '0.8')), // stretch short lines down to this (fills mouth time)
     // Gate the dub to the original's speech: mute the dub wherever the source was
     // silent for >= GATE_MIN_SEC, so it never plays over a silent mouth.
+    // elastic placement nudges a clip later so it never overlaps the previous one
+    // (slack absorbed by the next pause). OFF by default: with distinct per-speaker
+    // voices a brief overlap reads as natural dialogue, while nudging can delay a
+    // reply unnaturally. Turn on (--elastic) only if collisions are audible.
+    ELASTIC_PLACEMENT: String(env('ELASTIC_PLACEMENT', 'false')).toLowerCase() === 'true',
     GATE_SILENCE: String(env('GATE_SILENCE', 'true')).toLowerCase() !== 'false',
     GATE_THRESH: env('GATE_THRESH', '-30dB'),
     GATE_MIN_SEC: Number(env('GATE_MIN_SEC', '0.5')),
@@ -190,7 +195,10 @@ export function loadConfig(opts = {}) {
       .split(',').map((s) => s.trim()).filter(Boolean),
     // per-speaker cloning: only clone speakers with at least this many seconds of
     // clean source audio; shorter speakers fall back to a premade/static voice.
-    MIN_CLONE_SEC: Number(env('MIN_CLONE_SEC', '6')),
+    // clone a speaker from as little as this many seconds of clean audio — keeping
+    // a minor speaker (e.g. a child with ~2 s) in THEIR OWN voice beats a generic
+    // preset. Below this they fall back to a distinct preset voice.
+    MIN_CLONE_SEC: Number(env('MIN_CLONE_SEC', '2')),
     MAX_CLONE_SEC: Number(env('MAX_CLONE_SEC', '30')),
 
     // --- Aurixel audio (stubs; 404 today) ---

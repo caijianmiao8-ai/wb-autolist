@@ -418,7 +418,10 @@ export async function runPipeline(cfg, args) {
   // real silence). Without this, "no hard-truncate" can collide adjacent speakers.
   let prevEnd = 0;
   for (const c of fitClips) {
-    c.placed = Math.max(Number(c.start) || 0, prevEnd);
+    const s = Number(c.start) || 0;
+    // elastic ON: push past the previous clip (no overlap). OFF (default): keep the
+    // intended start — distinct voices make a brief dialogue overlap sound natural.
+    c.placed = cfg.ELASTIC_PLACEMENT ? Math.max(s, prevEnd) : s;
     prevEnd = c.placed + (Number(c.dur) || 0);
   }
   const placedClips = fitClips.map((c) => ({ path: c.path, start: c.placed }));
