@@ -1,270 +1,161 @@
 # WB Dub — EN→RU product-video voiceover CLI
 
 Takes a product video with an **English** voiceover and outputs the same video
-with a **Russian** voiceover. Self-assembled, watermark-free, **universal**
-pipeline — runs on any video, no per-video hardcoding, graceful degradation:
+with a **Russian** voiceover — self-assembled, watermark-free, **universal** (runs
+on any video, no per-video hardcoding, graceful degradation at every stage).
 
 ```
 ffmpeg extract → Demucs separate (clean vocals + M&E background)
-  → ElevenLabs Scribe STT (word timestamps + speaker diarization)
+  → ASR (Speechmatics default): word timestamps + speaker diarization
+  → diarize-refine (gpt-5.5): fix overlapping-voice mislabels by ROLE + pitch + context
   → Aurixel chat EN→RU translation (gpt-5.5, duration-budgeted, keyword/brand/tone)
-  → per-speaker voice (preset OR cloned from the AUTO-selected cleanest reference)
-  → fragment-merge units → time-fit (never hard-truncates) → assemble
-  → gate (mute dub in the original's silent gaps) → mix over M&E background (+duck)
+  → per-speaker CLONE from the auto-selected single-condition cleanest reference
+  → voice-select: K candidates per line, keep the one most like the reference (resemblyzer)
+  → pitch-normalize (anchor to reference f0) + RMS level
+  → bidirectional isochrony (condense long / expand short to the slot) → end-aligned fit
+  → gate (mute dub in original silence) → mix over M&E background (+duck)
 ```
 
 Everything is generic: speakers come from diarization (any count), each speaker's
-clone reference is auto-picked as their cleanest run (no fixed timestamps), and any
-stage that can't run (no clean audio to clone, Demucs missing, …) degrades safely
-instead of failing.
+clone reference is auto-picked as their cleanest single-condition window (no fixed
+timestamps), and any stage that can't run degrades safely.
 
-### Commercial baseline (clone the original speaker, on any video)
-
-```bash
-node tools/dub/cli.mjs input.mp4 --out input.ru.mp4 \
-  --tts-provider qwen-vc \
-  --keywords "термокружка,сталь" --brand AquaNord --tone "дружелюбный маркетинговый"
-```
-
-This clones each speaker's real voice from clean audio, keeps the original
-soundscape (clinks/ambient) under the dub, ducks it while speaking, and never
-produces truncated-word artifacts. A speaker with too little clean audio falls
-back to the dominant speaker's clone (override floor with `--min-clone-sec`).
-For a stable preset voice instead of cloning, use `--tts-provider qwen` (Russian
-preset, e.g. `--speaker-voices "speaker_0=Katerina"`).
-
-Zero npm dependencies. Pure Node ESM, Node 18+ (global `fetch`/`FormData`/`Blob`).
-`ffmpeg`/`ffprobe` resolved from `~/.local/bin` (override via env).
+Zero npm dependencies (pure Node ESM, global `fetch`/`FormData`/`WebSocket`, Node 18+).
+`ffmpeg`/`ffprobe`/`uvx` resolved from `~/.local/bin`. Demucs, local Whisper and the
+voice-select embedder run on-demand via `uvx` (cached after first use).
 
 ## Quick start
 
 ```bash
-# node + ffmpeg are not on PATH by default on this machine:
 export PATH="$HOME/.local/node/bin:$HOME/.local/bin:$PATH"
 
-# free wiring test — no paid API calls, proves extract/fit/assemble/mux:
+# free wiring test — no paid calls:
 node tools/dub/cli.mjs sample.mp4 --dry-run
 
-# real dub:
-node tools/dub/cli.mjs sample.mp4 \
-  --out sample.ru.mp4 \
-  --keywords "термокружка,нержавеющая сталь" \
-  --brand AquaNord \
-  --tone "energetic marketing" \
-  --voice JBFqnCBsd6RMkjVDRZzb
+# real dub (settled default = Speechmatics ASR + Qwen-VC clone + voice-select):
+node tools/dub/cli.mjs sample.mp4 --out sample.ru.mp4 \
+  --keywords "вафельница,завтрак,подарок" --tone "дружелюбный маркетинговый"
 ```
 
-Secrets are read from `/Users/ruo/claude-test/WILDBERRIES/.env.local` (gitignored).
-They are **never** printed (`DUB_DEBUG=1` prints a redacted config only).
+Secrets are read from `.env.local` (gitignored), never printed (`DUB_DEBUG=1`
+prints a redacted config only).
 
-## CLI options
+## Why it stays consistent (the hard-won core)
 
-| Option | Default | Notes |
+Qwen `qwen3-tts-vc` is the cloning engine. Its **synthesis is randomly different
+every call** (same voiceId+text → f0 swings ~40Hz, timbre/length drift; no
+seed/stability param). The cloning is fine — the *synthesis* is a lottery. The
+pipeline turns that lottery into reliable, single-run output:
+
+1. **Single-condition clone reference** — `selectCleanReference` slides a window
+   over the speaker's speech and picks the cleanest-background stretch, independent
+   of ASR segmentation. A product video often mixes clean POST narration with LIVE
+   on-location speech; a reference spanning both makes the clone wander between two
+   timbres. (`CLONE_REF_GAP=0.6` keeps the reference inside one utterance.)
+2. **Voice-select** — synth `RENDER_CANDIDATES` takes per line, keep the one whose
+   speaker-embedding is closest to the reference (`voiceselect.py`, resemblyzer via
+   uvx) + a pitch penalty. Picks the good render instead of hoping for one.
+3. **Pitch-normalize to the reference f0** + RMS level — locks two speakers from
+   drifting into each other and equalizes loudness without flattening dynamics.
+4. **Diarize-refine** — acoustic diarization can't separate overlapping
+   parent/child voices (pitch AND embeddings overlap). gpt-5.5 reassigns lines by
+   ROLE (the dominant speaker is the adult presenter; the minority only asks/reacts)
+   + asymmetric pitch (a <245Hz line is never the child; high pitch ≠ child) + content.
+5. **Bidirectional isochrony** — measures each voice's real chars/sec, then condenses
+   long lines and expands short ones so the dub fills the original slot at natural
+   pace; end-aligned fit + gentle fill so it never rushes, overruns, or leaves a
+   moving mouth silent.
+
+## Providers (the extension point)
+
+`factory.mjs` is the only place providers are named; `pipeline.mjs` never changes.
+Each provider's **base URL and key are config-driven** — see *Routing everything
+through Aurixel* below.
+
+### ASR (`--asr-provider` / `ASR_PROVIDER`, default `speechmatics`)
+| Provider | Diarization | Timestamps | Notes |
+|---|---|---|---|
+| `speechmatics` *(default)* | ✅ strong | word | cloud; `SPEECHMATICS_SPEAKER_SENSITIVITY=0.3` (higher over-splits one speaker into two) |
+| `whisper` | ❌ | word | **local/offline** (mlx via uvx), zero cost/quota; best for monologue. `WHISPER_MODEL` |
+| `deepgram` | ⚠️ weak on minority | word | cloud, cheap/fast; misses a minority child speaker |
+| `dashscope` (`qwen3-asr-flash`) | ❌ | VAD-approx | great text, no native timestamps |
+| `elevenlabs` | ✅ | word | strongest diarization on hard cases, but key has a quota |
+
+ASR results are **cached** per video (`~/.cache/wb-dub/asr`, keyed on size+mtime+provider+settings) — re-runs never re-pay or re-hit a quota.
+
+### TTS (`--tts-provider` / `TTS_PROVIDER`, default `qwen-vc`)
+| Provider | Voice | Consistency | Notes |
+|---|---|---|---|
+| `qwen-vc` *(default)* | clones each speaker | per-call random → stabilized by voice-select + pitch-norm | DashScope; cross-lingual EN→RU |
+| `cosyvoice-vc` | clones | **deterministic** (no drift) | DashScope same key; but RU ~2× slow (`COSYVOICE_RATE`), needs ≥10s ref + OSS-url enroll + WebSocket synth |
+| `qwen` | preset (Cherry/Katerina/…) | stable, generic | no cloning; `--speaker-voices "speaker_0=Katerina"` |
+| `elevenlabs` | preset/IVC | IVC is the cleanest (natural+stable) | key here has no IVC |
+
+A speaker with too little clean audio to clone (e.g. a child with ~2s) falls back to
+a distinct preset voice (`QWEN_FALLBACK_VOICES`); CosyVoice rejects <~10s and routes
+the preset through `qwen3-tts-flash`.
+
+## Routing everything through Aurixel (one key — the planned consolidation)
+
+Goal: one `AURIXEL_API_KEY` calls every model. The architecture is already ready —
+every API provider takes a `*_BASE` + key from config, so when Aurixel proxies a
+model you point that provider's base at Aurixel and reuse the Aurixel key. Aurixel
+must preserve each upstream's protocol shape.
+
+| Stage | Env to repoint at Aurixel | Aurixel must proxy |
 |---|---|---|
-| `<input.mp4>` | — | source video (required) |
-| `--out <path>` | `<input>.ru.mp4` | output file |
-| `--voice <id>` | George `JBFqnCBsd6RMkjVDRZzb` | ElevenLabs voice id |
-| `--tts-model <id>` | `eleven_multilingual_v2` | best RU quality |
-| `--keywords "a,b"` | — | RU keywords woven into translation |
-| `--brand X` | — | kept verbatim (not transliterated) |
-| `--tone marketing` | — | tone hint for the localizer |
-| `--asr-provider` | `elevenlabs` | `elevenlabs` \| `aurixel` |
-| `--tts-provider` | `elevenlabs` | `elevenlabs` \| `aurixel` |
-| `--mode segment\|whole` | `segment` | timing strategy (see below) |
-| `--keep-original-audio 0..1` | `0` | duck original under dub at this gain (0 = full replace) |
-| `--dry-run` | off | skip all paid calls; free wiring test |
-| `--work <dir>` | `~/.cache/wb-dub/<ts>` (tmp) | scratch/artifact dir (resumable/debuggable) |
-| `--src-lang / --target-lang` | `en` / `ru` | |
+| Translate + diarize-refine | already on Aurixel (`AURIXEL_BASE`, `AURIXEL_API_KEY`) | gpt-5.5 chat (done) |
+| Qwen-VC / CosyVoice / Qwen-ASR TTS+ASR | `QWEN_TTS_BASE` → Aurixel, `QWEN_API_KEY` → Aurixel key | DashScope `/services/...` (+ WebSocket for CosyVoice) |
+| Speechmatics ASR | `SPEECHMATICS_BASE` → Aurixel | Speechmatics async jobs API |
+| Deepgram ASR | `DEEPGRAM_BASE` → Aurixel | Deepgram `/v1/listen` |
+| ElevenLabs | `EL_BASE` → Aurixel | `xi-api-key` passthrough |
 
-**Modes.** `segment` (default) time-fits each Russian clip to its `[start,end]`
-slot and places it at its start time — preserves lip/scene sync, tolerates
-gaps and overlaps. `whole` concatenates all RU clips and does a single atempo
-stretch to the whole video duration — a robust fallback when per-segment timing
-is unreliable.
+**Local stages stay local** regardless of Aurixel: Demucs (M&E separation),
+mlx-whisper (offline ASR), resemblyzer (voice-select embedding) — all via `uvx`.
+These need no key. Until a model is on Aurixel, keep its own key in `.env.local`.
 
-## Work-dir artifacts (debug / resume)
-
-Each run writes intermediates so a partial run is inspectable and you never
-re-pay for STT:
-
-```
-audio_16k.wav        # extracted 16kHz mono audio fed to STT
-asr_raw.json         # raw Scribe response (cache; re-use to avoid re-paying)
-segments_src.json    # English segments [{start,end,text}]
-segments_ru.json     # Russian segments (post-translation)
-segments/segNNN_raw.mp3   # per-segment TTS output
-segments/segNNN_fit.wav   # per-segment time-fitted clip
-dub_track.wav        # assembled Russian track
-```
-
-## Environment variables
-
-`process.env` overrides `.env.local`. Secrets have no defaults.
-
-### Secrets (required)
-| Var | Use |
-|---|---|
-| `AURIXEL_API_KEY` | Bearer — translation now, audio later. Always required. |
-| `ELEVENLABS_API_KEY` | `xi-api-key` header — STT+TTS. Required while `*_PROVIDER=elevenlabs`. |
-
-### Provider selection
-| Var | Default | Values |
-|---|---|---|
-| `ASR_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel` |
-| `TTS_PROVIDER` | `elevenlabs` | `elevenlabs`, `aurixel`, `qwen-vc` (clone), `qwen` (preset voices) |
-
-`qwen` = Qwen3-TTS preset voices (`QWEN_TTS_MODEL`=`qwen3-tts-flash`, `QWEN_VOICE`/`--speaker-voices` with names like `Katerina`, `Cherry`, `Chelsie`, `Serena`, `Ethan`, `Dylan`). Stable across calls (no clone drift), Russian-capable, but generic (can't reproduce the original speaker). Needs `QWEN_API_KEY`.
-
-### Voice cloning (`TTS_PROVIDER=qwen-vc`, Qwen3-TTS-VC / DashScope)
-Clones EACH diarized speaker from their own source audio, then speaks the Russian
-translation in that cloned voice — so the narrator keeps their real voice (cross-lingual).
-Fills the gap left by the restricted ElevenLabs key (which can't clone).
-
-| Var | Default | Notes |
-|---|---|---|
-| `QWEN_API_KEY` | — | DashScope key. **Region-locked** (this key = Beijing `dashscope.aliyuncs.com`; intl host 401s) |
-| `QWEN_TTS_BASE` | `https://dashscope.aliyuncs.com` | Beijing; set to `dashscope-intl…` for a Singapore key |
-| `QWEN_TTS_VC_MODEL` | `qwen3-tts-vc-2026-01-22` | |
-| `MIN_CLONE_SEC` | `6` | min CONTIGUOUS clean source audio to clone a speaker; shorter → reuses the dominant speaker's clone |
-| `MAX_CLONE_SEC` | `30` | cap on the enrollment sample length |
-
-Notes: the sample MUST be a contiguous slice (concatenated clips trip Qwen's content
-inspection → `DataInspectionFailed`). Russian lexical-stress quality should be checked by
-a native listener. Enrollment creates a persistent custom voice per run (clean up if needed).
-
-### Consistency (per-call clone drift)
-Zero-shot clones (qwen-vc) render each call at a different level/timbre, so a single
-speaker can sound like several people. Two knobs (apply to all providers):
+## Key config (env or flag; `process.env` > `.env.local` > default)
 
 | Var / flag | Default | Effect |
 |---|---|---|
-| `NORMALIZE` / `--no-normalize` | on | loudness-normalize each clip (EBU R128). Big win, **zero sync cost**. Measured: per-clip level stdev 3.7 dB → ~1.7 dB. |
-| `MERGE_GAP` / `--merge-gap <s>` | `0.35` | merge consecutive same-speaker segments (gap ≤ s) into one call → fewer calls, coherent intonation per sentence, less timbre drift. `0.35` only re-joins truly continuous fragments (no internal pause). `0.8+` merges across pauses (looser timing, can over-pad). Units never cross a speaker change and are capped at `MAX_UNIT_SEC`. |
+| `ASR_PROVIDER` / `--asr-provider` | `speechmatics` | see table |
+| `TTS_PROVIDER` / `--tts-provider` | `qwen-vc` | see table |
+| `DIARIZE_REFINE` | on | gpt-5.5 role+pitch+context speaker correction (multi-speaker only) |
+| `VOICE_SELECT` | on | best-of-K render selection by voice similarity |
+| `RENDER_CANDIDATES` | `4` | candidates per cloned line (more = steadier, slower) |
+| `PITCH_NORMALIZE` / `PITCH_MAX_SHIFT` | on / `0.10` | shift each clip toward the reference f0 |
+| `CLONE_REF_GAP` / `CLONE_NOISE_TOL` | `0.6` / `12` | single-condition reference window selection |
+| `MIN_CLONE_SEC` / `MAX_CLONE_SEC` | `2` / `12` | clone-able window bounds (short → preset fallback) |
+| `ISO_TOL` / `ISO_LOW` / `ISO_FILL` | `1.10` / `0.90` / `0.95` | condense >tol×span, expand <low×span, toward fill×span |
+| `FIT_MAX_SPEEDUP` / `FIT_MIN_SLOWDOWN` | `1.12` / `0.9` | gentle, uniform time-fit caps (uniform = one consistent voice) |
+| `OVERLAP_TOL` / `OVERLAP_TOL_CROSS` | `0.12` / `1.5` | same-speaker nudge vs cross-speaker parallel overlap |
+| `NORMALIZE` / `NORM_TARGET_DB` | on / `-20` | RMS leveling between clips |
+| `SPEECHMATICS_SPEAKER_SENSITIVITY` | `0.3` | lower = fewer speakers (avoid over-split) |
+| `COSYVOICE_RATE` | `1.9` | speed up CosyVoice's slow RU toward natural |
+| `ASR_CACHE` | on | cache transcript per video |
+| `RU_CHARS_PER_SEC` / `--rate` | `12` | initial translation length budget (iso re-fits to measured rate) |
 
-Default (`NORMALIZE` on, `MERGE_GAP` 0) = consistent level, tight sync. Add `--merge-gap 0.5`
-only if a cloned voice still sounds inconsistent and ~0.4 s of voiceover drift is acceptable.
+Secrets (no defaults): `AURIXEL_API_KEY` (translate, always), plus the chosen
+providers' keys — `QWEN_API_KEY`, `SPEECHMATICS_API_KEY`, `DEEPGRAM_API_KEY`,
+`ELEVENLABS_API_KEY`, `HF_TOKEN` (only if you swap voice-select to gated pyannote).
 
-### Timing & fit (no rushed/chopped speech)
-Russian runs longer than English, so naive per-segment fitting speeds up and hard-trims
-lines (rushed/truncated audio). Two mechanisms keep it natural:
-- **Duration-targeted translation** (`RU_CHARS_PER_SEC` / `--rate`, default 12): each line
-  is sized to ≈ the speaker's own speaking time (chars = span × rate), and the translator is
-  told to land CLOSE to that — not shorter (dub ends while the mouth still moves) nor longer
-  (rushed). Tune the rate to the engine's real speed (qwen3-tts ≈ 11–12; faster engines higher).
-- **Hybrid fit**: each line fills the speaker's **span** (so the dub lasts ~as long as the
-  mouth moves), with gentle two-way stretch (`FIT_MIN_SLOWDOWN` 0.8 … `FIT_MAX_SPEEDUP` 1.4).
-  Only a line too long even at max speed-up **borrows the following pause** before compressing,
-  so sentence ends aren't chopped. Measured on the sample: actual speed median 1.05×, early-stop
-  ~0.1 s, real truncation ~1 s/93 s (down from 4.4 s).
+## Work-dir artifacts (debug / resume)
+`asr_raw.json`, `segments_src.json` (post-refine labels), `segments_ru.json`,
+`segments/segNNN_{raw,c0..cK,pitch,norm,fit}.wav`, `voiceselect.json`.
 
-### Translation (Aurixel chat — live verified)
-| Var | Default |
-|---|---|
-| `TRANSLATE_MODEL` | falls back to `AURIXEL_CHAT_MODEL` then `gpt-5.5` |
-| `AURIXEL_BASE` | `https://conduit-api.aurixel.ai/v1` |
+## Adding a provider
+1. `providers/foo.mjs` exporting `makeFooAsr(cfg)` / `makeFooTts(cfg)` returning the
+   duck-typed interface (`transcribe` / `enroll`+`synthesize`).
+2. A `case 'foo':` in `pickAsr`/`pickTts` in `factory.mjs`.
+3. `--asr-provider foo` / `--tts-provider foo`. No pipeline edits.
 
-### ElevenLabs tuning
-| Var | Default |
-|---|---|
-| `EL_BASE` | `https://api.elevenlabs.io` |
-| `EL_ASR_BASE` / `EL_TTS_BASE` | = `EL_BASE` (independent per-side override) |
-| `EL_ASR_MODEL` | `scribe_v1` |
-| `EL_TTS_MODEL` | `eleven_multilingual_v2` |
-| `EL_VOICE_ID` | `JBFqnCBsd6RMkjVDRZzb` (George) |
-| `EL_OUTPUT_FORMAT` | `mp3_44100_128` (ceiling on the restricted key) |
-
-### Aurixel audio (stubs; 404 today)
-| Var | Default |
-|---|---|
-| `AURIXEL_AUDIO_BASE` | = `AURIXEL_BASE` |
-| `AURIXEL_ASR_MODEL` | `whisper-1` |
-| `AURIXEL_TTS_MODEL` | `tts-1` |
-| `AURIXEL_VOICE` | `alloy` |
-
-### ffmpeg / pipeline / network
-| Var | Default |
-|---|---|
-| `FFMPEG_PATH` / `FFPROBE_PATH` | `~/.local/bin/ffmpeg` / `ffprobe` |
-| `OUT_FORMAT` | `mp3` (intermediate TTS format) |
-| `SRC_LANG` / `TARGET_LANG` | `en` / `ru` |
-| `HTTP_TIMEOUT_MS` | `120000` |
-| `HTTP_RETRIES` | `2` (on 429/5xx/network) |
-| `WORK_ROOT` | `~/.cache/wb-dub` |
-
-## KEY CONSTRAINTS (restricted ElevenLabs key)
-
-This pipeline is deliberately built to work within a restricted key:
-
-- **No voice cloning** — `/v1/voices/add` is disabled. We use shared library
-  voices; `eleven_multilingual_v2` speaks fluent Russian on any of them.
-- **No Dubbing endpoint** — ElevenLabs Dubbing only works `watermark=true` on
-  this key, so we do **not** use it. We self-assemble STT+translate+TTS+ffmpeg
-  instead, which is watermark-free.
-- **No quota read** — `user_read` scope is missing, so `/v1/user` and quota
-  endpoints are unavailable. Budget characters client-side (TTS is billed per
-  input character; Russian text expands ~10–20% vs English).
-- Auth header is `xi-api-key`, **not** `Authorization: Bearer`. `output_format`
-  is a query param. `mp3_44100_192` is Creator-tier (403); stay on
-  `mp3_44100_128`.
-
-## Extensibility — adding or swapping a provider
-
-> **This is the reserved extension point.** Adding or swapping a provider is a
-> **new file + one `switch` case** in `factory.mjs`. `pipeline.mjs` never changes.
-
-Architecture:
-
-```
-cli.mjs → pipeline.mjs → asr.mjs / tts.mjs / translate.mjs  (facades)
-                              ↓
-                         factory.mjs  ← the ONLY place providers are named
-                              ↓
-                providers/elevenlabs.mjs, providers/aurixelAudio.mjs, ...
-```
-
-The pipeline talks only to duck-typed interfaces:
-
-```js
-AsrProvider.transcribe(audioPath, { language }) -> { text, segments:[{start,end,text}] }
-TtsProvider.synthesize(text, { voiceId, modelId, language, format, outPath }) -> { outPath, bytes, durationSec? }
-Translator.translate(segments, { from, to, keywords, brand, tone }) -> segments  // 1:1
-```
-
-**To add a provider `foo`:**
-1. Create `providers/foo.mjs` exporting `makeFooAsr(cfg)` / `makeFooTts(cfg)`
-   that return objects with the interface above.
-2. Add a `case 'foo':` to `pickAsr` / `pickTts` in `factory.mjs`.
-3. Select it: `--asr-provider foo` or `ASR_PROVIDER=foo`. Done — no pipeline edits.
-
-### How to switch ASR/TTS to Aurixel later
-
-Aurixel's audio endpoints (`/v1/audio/transcriptions`, `/v1/audio/speech`) are
-**404 today**. `providers/aurixelAudio.mjs` already forms correct
-OpenAI-compatible requests; until the endpoints return 200 they throw a clear
-`Aurixel ASR/TTS not enabled yet … set *_PROVIDER=elevenlabs` error.
-
-Once the user **syncs ElevenLabs into Aurixel**, there are three config-only
-paths (zero code change):
-
-- **(A) Aurixel exposes OpenAI-style audio:**
-  `ASR_PROVIDER=aurixel TTS_PROVIDER=aurixel`
-  (optionally `AURIXEL_AUDIO_BASE`, `AURIXEL_ASR_MODEL`, `AURIXEL_TTS_MODEL`,
-  `AURIXEL_VOICE`). The stubs start returning 200 → done.
-- **(B) Aurixel fronts ElevenLabs verbatim (`xi-api-key` passthrough):**
-  keep `*_PROVIDER=elevenlabs`, set `EL_BASE` (or `EL_ASR_BASE`/`EL_TTS_BASE`) to
-  the Aurixel passthrough origin. Same request shapes, new host.
-- **(C) Mixed:** e.g. `ASR_PROVIDER=aurixel` but TTS still ElevenLabs —
-  independent switches + per-side base overrides.
-
-**Verification hook:** re-probe `POST /audio/transcriptions` + `/audio/speech`.
-When both return 200 instead of 404, flip the providers and run a sample
-end-to-end.
-
-**Notes after the swap:**
-- `--voice` / `--tts-model` are **ElevenLabs-oriented** overrides. When
-  `TTS_PROVIDER=aurixel`, set the voice/model via `AURIXEL_VOICE` /
-  `AURIXEL_TTS_MODEL` env instead — an *unset* `--voice` correctly leaves each
-  provider on its own default (no EL voice id leaks into Aurixel).
-- `ASR_PROVIDER=aurixel` yields **Whisper segment-level** chunks (coarser) vs
-  ElevenLabs **word-level** chunking. Timing granularity therefore differs after
-  the swap; the pipeline handles both, but per-segment fit is slightly looser.
+## Gotchas
+- Qwen clone drift is **synthesis-layer** (per-call random), not cloning — mitigate
+  with voice-select, don't expect a seed.
+- CosyVoice is deterministic but its RU is slow; speeding it up sounds rushed —
+  prefer condensing the translation if you use it.
+- Cloning a calm reference can't reproduce an excited delivery (Qwen expressiveness
+  ceiling). ElevenLabs IVC is the clean fix if that matters.
+- A child with only ~2s of speech is below a reliable clone; expect a fallback
+  preset or a marginal clone.
+- Cross-lingual clone (EN speaker → RU) carries a slight accent.
