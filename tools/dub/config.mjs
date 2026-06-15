@@ -91,6 +91,10 @@ export function loadConfig(opts = {}) {
     return d;
   };
 
+  // these providers return WAV from synthesis → intermediate clips must be .wav
+  const ttsProvider = String(env('TTS_PROVIDER', 'qwen-vc')).toLowerCase();
+  const wavTts = ttsProvider === 'qwen-vc' || ttsProvider === 'qwen' || ttsProvider === 'cosyvoice-vc';
+
   const cfg = {
     envPath,
 
@@ -99,8 +103,8 @@ export function loadConfig(opts = {}) {
     ELEVENLABS_API_KEY: env('ELEVENLABS_API_KEY'),
 
     // --- Provider selection ---
-    ASR_PROVIDER: String(env('ASR_PROVIDER', 'elevenlabs')).toLowerCase(),
-    TTS_PROVIDER: String(env('TTS_PROVIDER', 'elevenlabs')).toLowerCase(),
+    ASR_PROVIDER: String(env('ASR_PROVIDER', 'speechmatics')).toLowerCase(),
+    TTS_PROVIDER: ttsProvider,
 
     // --- Languages ---
     SRC_LANG: env('SRC_LANG', 'en'),
@@ -126,6 +130,14 @@ export function loadConfig(opts = {}) {
     // gets a distinct voice. Single-speaker videos collapse to one voice anyway.
     // (Aurixel/Whisper ASR has no diarization — segments fall back to one voice.)
     DIARIZE: String(env('DIARIZE', 'true')).toLowerCase() !== 'false',
+    // Cache the ASR transcript per input video (size+mtime keyed) under
+    // ~/.cache/wb-dub/asr — re-runs never re-pay Scribe or hit its quota.
+    ASR_CACHE: String(env('ASR_CACHE', 'true')).toLowerCase() !== 'false',
+    // After acoustic diarization, let gpt-5.5 CORRECT per-line speaker labels using
+    // conversational context (turn-taking, who-addresses-whom). Fixes the cases
+    // where overlapping voices (parent/child) are acoustically inseparable. No-op
+    // for single-speaker. See translate.refineSpeakers.
+    DIARIZE_REFINE: String(env('DIARIZE_REFINE', 'true')).toLowerCase() !== 'false',
     // explicit map, e.g. "speaker_0=sarah,speaker_1=jessica" (names or ids).
     SPEAKER_VOICES: parseSpeakerVoices(env('SPEAKER_VOICES')),
     // dominant speaker uses EL_VOICE_ID/--voice; extra speakers rotate this pool.
@@ -135,6 +147,31 @@ export function loadConfig(opts = {}) {
     // --- Consistency post-processing ---
     // loudness-normalize each clip (flattens per-call level drift, esp. qwen-vc).
     NORMALIZE: String(env('NORMALIZE', 'true')).toLowerCase() !== 'false',
+    // 'rms' = level each clip with a single gain to a target RMS (fixes clone
+    // level-drift but PRESERVES each clip's natural dynamics — sounds natural).
+    // 'loudnorm' = EBU R128 (also compresses within a clip → flatter/robotic).
+    NORMALIZE_MODE: env('NORMALIZE_MODE', 'rms'),
+    NORM_TARGET_DB: Number(env('NORM_TARGET_DB', '-20')),
+    // PITCH normalize each speaker's clips to their own median f0 — fixes clone
+    // PITCH drift (qwen-vc renders the same voice 5-10% higher/lower across calls,
+    // heard as "two different people"). Each clip is shifted (duration preserved)
+    // toward the speaker's median, clamped to ±PITCH_MAX_SHIFT to avoid artifacts.
+    // Voice-select: Qwen TTS-VC renders the same voice randomly differently each
+    // call. Generate K candidates per cloned line and KEEP the one whose voice is
+    // closest to the speaker's reference (speaker-embedding similarity + pitch),
+    // turning that per-call randomness into reliable, consistent output in a SINGLE
+    // run (the tool normally runs once). Needs resemblyzer via uvx.
+    VOICE_SELECT: String(env('VOICE_SELECT', 'true')).toLowerCase() !== 'false',
+    RENDER_CANDIDATES: Number(env('RENDER_CANDIDATES', '4')),
+    PITCH_NORMALIZE: String(env('PITCH_NORMALIZE', 'true')).toLowerCase() !== 'false',
+    PITCH_MAX_SHIFT: Number(env('PITCH_MAX_SHIFT', '0.10')), // a bit wider so a drifted clone can be pulled back to its TRUE reference pitch (keeps speakers distinct)
+    // Re-roll: a clip whose pitch lands > PITCH_REROLL_THRESH off the speaker's
+    // median is RE-SYNTHESIZED (up to N times, keep the closest). DSP can only
+    // shift ±PITCH_MAX_SHIFT cleanly; a wild outlier (e.g. drifted +30%) needs a
+    // fresh render, not a chipmunk stretch. Re-roll first, DSP fine-tunes the rest.
+    PITCH_REROLL: String(env('PITCH_REROLL', 'true')).toLowerCase() !== 'false',
+    PITCH_REROLL_THRESH: Number(env('PITCH_REROLL_THRESH', '0.08')),
+    PITCH_REROLL_MAX: Number(env('PITCH_REROLL_MAX', '3')),
     // merge consecutive same-speaker segments with a gap <= this many seconds into
     // ONE synthesis call (fewer calls -> less clone drift, more natural prosody).
     // 0 = off (one call per segment). 0.35 (default) re-joins only truly continuous
@@ -152,22 +189,61 @@ export function loadConfig(opts = {}) {
     // chars the TTS actually speaks per second — used to size each line so the RU
     // lasts ~as long as the speaker talks. Tuned to qwen3-tts (~11–12). Raise for
     // faster engines. Too high → RU too long (rushed); too low → ends early.
-    RU_CHARS_PER_SEC: Number(env('RU_CHARS_PER_SEC', '12')),
+    RU_CHARS_PER_SEC: Number(env('RU_CHARS_PER_SEC', '12')), // initial budget only; the iso loop re-fits to each voice's MEASURED rate
     // Fit strategy:
     //  FIT_USE_GAP=false (default): fit each line to the speaker's SPEECH SPAN and
     //    fill it (the dub lasts ~as long as the mouth moves — best for lip timing).
     //  true: fit to span+following pause, keep short lines at natural speed (can end
     //    before the mouth stops). Two-way gentle stretch keeps it natural either way.
     FIT_USE_GAP: String(env('FIT_USE_GAP', 'false')).toLowerCase() === 'true',
-    FIT_MAX_SPEEDUP: Number(env('FIT_MAX_SPEEDUP', '1.4')), // compress long lines up to this
-    FIT_MIN_SLOWDOWN: Number(env('FIT_MIN_SLOWDOWN', '0.8')), // stretch short lines down to this (fills mouth time)
+    // UNIFORM, low compression is the key to ONE consistent voice: variable speed-up
+    // (some lines natural, some 1.7×) makes a cloned speaker sound like two people
+    // even at identical pitch. Cap everything at a gentle, inaudible 1.12× — the
+    // isochrony loop keeps RU short enough that long lines land here naturally, and
+    // interjections that don't fit overflow into a cross-speaker overlap (below)
+    // rather than being sped up out of character.
+    FIT_MAX_SPEEDUP: Number(env('FIT_MAX_SPEEDUP', '1.12')),
+    FIT_MIN_SLOWDOWN: Number(env('FIT_MIN_SLOWDOWN', '0.9')), // stretch short lines down to this (subtle; rest is a natural pause)
+    // Interjections use the SAME gentle cap (no special fast delivery) — voice
+    // consistency beats fitting a tiny slot exactly. Kept as a knob, defaulted equal.
+    FIT_SHORT_SPAN: Number(env('FIT_SHORT_SPAN', '1.6')),
+    FIT_MAX_SPEEDUP_SHORT: Number(env('FIT_MAX_SPEEDUP_SHORT', '1.12')),
+    // --- Isochrony loop: make each RU line's SPOKEN duration ≈ the original
+    // speaker's on-screen time, so end-aligned fit needs only an inaudible nudge
+    // (not a rushed speed-up). After the first synth we measure the speaker's REAL
+    // chars/sec, then CONDENSE (re-translate shorter) any line that would still run
+    // > ISO_TOL × its span, and re-synthesize. Adapts to any voice/video.
+    ISO_LOOP: String(env('ISO_LOOP', 'true')).toLowerCase() !== 'false',
+    ISO_TOL: Number(env('ISO_TOL', '1.10')), // allowed overrun before condensing (10% ≈ inaudible tempo nudge; matches the fit cap so long lines compress uniformly)
+    // Bidirectional: a line whose speech finishes well before the speaker stops
+    // (< ISO_LOW × span) gets EXPANDED (re-translated longer) so the dub fills the
+    // on-screen time at a normal pace instead of ending early. The real speaking
+    // rate is voice-dependent, so this — driven by the MEASURED rate — is what makes
+    // length-matching work across any video, not a fixed chars/sec guess.
+    ISO_LOW: Number(env('ISO_LOW', '0.90')), // expand any line that fills < 90% of its span — the dub must cover the mouth (no "mouth moves, no voice")
+    ISO_FILL: Number(env('ISO_FILL', '0.95')), // expand target = this fraction of the span (fill most of it, end a touch early — never overflow)
+    ISO_MIN_SPAN: Number(env('ISO_MIN_SPAN', '1.0')), // condense even short interjections to fit their OWN slot — keeps each line on the original timeline (no push/overlap into the next turn)
+    ISO_MAX_RETRY: Number(env('ISO_MAX_RETRY', '2')),
     // Gate the dub to the original's speech: mute the dub wherever the source was
     // silent for >= GATE_MIN_SEC, so it never plays over a silent mouth.
-    // elastic placement nudges a clip later so it never overlaps the previous one
-    // (slack absorbed by the next pause). OFF by default: with distinct per-speaker
-    // voices a brief overlap reads as natural dialogue, while nudging can delay a
-    // reply unnaturally. Turn on (--elastic) only if collisions are audible.
-    ELASTIC_PLACEMENT: String(env('ELASTIC_PLACEMENT', 'false')).toLowerCase() === 'true',
+    // Elastic placement nudges a clip later so it never overlaps the previous one
+    // (slack absorbed by the next pause). ON by default as the no-garble backstop:
+    // after end-aligned fit + adaptive interjection compression, only a degenerate
+    // zero-span ASR fragment can still overflow, and a >OVERLAP_TOL collision of two
+    // dub voices is worse than a sub-300ms nudge. OVERLAP_TOL still allows a brief,
+    // natural-sounding dialogue overlap before nudging.
+    ELASTIC_PLACEMENT: String(env('ELASTIC_PLACEMENT', 'true')).toLowerCase() !== 'false',
+    // Overlap tolerance before nudging. SAME speaker overlapping = one voice over
+    // itself = garble → nudge early (small tol). DIFFERENT speakers overlapping =
+    // two distinct voices = natural dialogue interruption → allow generously, so a
+    // long interjection rides over the neighbour instead of being sped up or
+    // delayed (preserves both voice consistency AND timing).
+    OVERLAP_TOL: Number(env('OVERLAP_TOL', '0.12')), // same-speaker
+    // Different-speaker: a SMALL overlap reads as a natural interruption, but a big
+    // one (a whole long interjection riding over the next turn) is two voices
+    // shouting at once. Keep it brief; the overflow nudges the next turn later
+    // (absorbed by the following pause) instead of garbling.
+    OVERLAP_TOL_CROSS: Number(env('OVERLAP_TOL_CROSS', '1.5')),
     GATE_SILENCE: String(env('GATE_SILENCE', 'true')).toLowerCase() !== 'false',
     GATE_THRESH: env('GATE_THRESH', '-30dB'),
     GATE_MIN_SEC: Number(env('GATE_MIN_SEC', '0.5')),
@@ -185,7 +261,30 @@ export function loadConfig(opts = {}) {
     QWEN_API_KEY: env('QWEN_API_KEY'),
     QWEN_TTS_BASE: env('QWEN_TTS_BASE', 'https://dashscope.aliyuncs.com'), // Beijing key
     QWEN_TTS_VC_MODEL: env('QWEN_TTS_VC_MODEL', 'qwen3-tts-vc-2026-01-22'),
+    // CosyVoice v3.5 cloning (TTS_PROVIDER=cosyvoice-vc) — deterministic, no drift.
+    COSYVOICE_MODEL: env('COSYVOICE_MODEL', 'cosyvoice-v3.5-plus'),
+    COSYVOICE_SAMPLE_RATE: Number(env('COSYVOICE_SAMPLE_RATE', '24000')),
+    COSYVOICE_RATE: Number(env('COSYVOICE_RATE', '1.9')), // speed up CosyVoice's slow RU to ~natural so it fits the slot
     QWEN_ENROLL_MODEL: env('QWEN_ENROLL_MODEL', 'qwen-voice-enrollment'),
+    // Qwen3-ASR (ASR_PROVIDER=dashscope): VAD timestamps + qwen3-asr-flash text,
+    // no ElevenLabs quota. Single-speaker (no diarization).
+    QWEN_ASR_MODEL: env('QWEN_ASR_MODEL', 'qwen3-asr-flash'),
+    // Local Whisper (ASR_PROVIDER=whisper): mlx model id, accurate offline
+    // text+timestamps. -turbo is the best speed/accuracy on Apple Silicon; use
+    // whisper-small-mlx for a faster, smaller download.
+    WHISPER_MODEL: env('WHISPER_MODEL', 'mlx-community/whisper-large-v3-turbo'),
+    // Deepgram (ASR_PROVIDER=deepgram): cloud ASR with timestamps + diarization.
+    DEEPGRAM_API_KEY: env('DEEPGRAM_API_KEY'),
+    DEEPGRAM_BASE: env('DEEPGRAM_BASE', 'https://api.deepgram.com'),
+    DEEPGRAM_MODEL: env('DEEPGRAM_MODEL', 'nova-3'),
+    // Speechmatics (ASR_PROVIDER=speechmatics, the DEFAULT): cloud ASR with strong
+    // speaker diarization + word timestamps; one provider for mono- and multi-speaker.
+    SPEECHMATICS_API_KEY: env('SPEECHMATICS_API_KEY'),
+    SPEECHMATICS_BASE: env('SPEECHMATICS_BASE', 'https://asr.api.speechmatics.com/v2'),
+    SPEECHMATICS_OPERATING_POINT: env('SPEECHMATICS_OPERATING_POINT', 'enhanced'),
+    // Lower = fewer speakers. 0.3 folds spurious same-speaker splits back (so one
+    // person isn't cloned as two voices) while still isolating a real 2nd speaker.
+    SPEECHMATICS_SPEAKER_SENSITIVITY: Number(env('SPEECHMATICS_SPEAKER_SENSITIVITY', '0.3')),
     // preset-voice TTS (TTS_PROVIDER=qwen): stable locked voices, no cloning
     QWEN_TTS_MODEL: env('QWEN_TTS_MODEL', 'qwen3-tts-flash'),
     QWEN_VOICE: env('QWEN_VOICE', 'Cherry'),
@@ -199,7 +298,19 @@ export function loadConfig(opts = {}) {
     // a minor speaker (e.g. a child with ~2 s) in THEIR OWN voice beats a generic
     // preset. Below this they fall back to a distinct preset voice.
     MIN_CLONE_SEC: Number(env('MIN_CLONE_SEC', '2')),
-    MAX_CLONE_SEC: Number(env('MAX_CLONE_SEC', '30')),
+    // Cap the clone reference SHORT: a long window almost always spans more than one
+    // recording condition (post + live), which makes the clone sound like two people.
+    // 6-12s of clean, single-condition audio is the sweet spot for qwen-vc.
+    MAX_CLONE_SEC: Number(env('MAX_CLONE_SEC', '12')),
+    // A segment whose background is within this many dB of the cleanest one counts
+    // as the SAME recording condition when growing the homogeneous clone window.
+    CLONE_NOISE_TOL: Number(env('CLONE_NOISE_TOL', '12')),
+    // Tight gap when building the clone reference: don't bridge across a real pause
+    // into a DIFFERENT speaker's word (e.g. a child's question + the mother's answer
+    // that diarization lumped together) — that contaminates the reference and the
+    // clone comes out as the wrong person. 0.6s keeps the reference within one
+    // continuous utterance.
+    CLONE_REF_GAP: Number(env('CLONE_REF_GAP', '0.6')),
 
     // --- Aurixel audio (stubs; 404 today) ---
     AURIXEL_AUDIO_BASE:
@@ -211,7 +322,7 @@ export function loadConfig(opts = {}) {
     // --- ffmpeg / pipeline ---
     FFMPEG_PATH: env('FFMPEG_PATH') || join(homedir(), '.local/bin/ffmpeg'),
     FFPROBE_PATH: env('FFPROBE_PATH') || join(homedir(), '.local/bin/ffprobe'),
-    OUT_FORMAT: env('OUT_FORMAT', 'mp3'), // intermediate TTS audio format
+    OUT_FORMAT: env('OUT_FORMAT', wavTts ? 'wav' : 'mp3'), // intermediate TTS audio format (wav for qwen-vc/qwen/cosyvoice-vc)
 
     // --- Network ---
     HTTP_TIMEOUT_MS: Number(env('HTTP_TIMEOUT_MS', '120000')),
@@ -242,11 +353,17 @@ export function assertSecrets(cfg, { needAsr = true, needTts = true, needTransla
     missing.push('ELEVENLABS_API_KEY (ASR_PROVIDER=elevenlabs)');
   if (needAsr && cfg.ASR_PROVIDER === 'aurixel' && !cfg.AURIXEL_API_KEY)
     missing.push('AURIXEL_API_KEY (ASR_PROVIDER=aurixel)');
+  if (needAsr && (cfg.ASR_PROVIDER === 'dashscope' || cfg.ASR_PROVIDER === 'qwen') && !cfg.QWEN_API_KEY)
+    missing.push(`QWEN_API_KEY (ASR_PROVIDER=${cfg.ASR_PROVIDER})`);
+  if (needAsr && cfg.ASR_PROVIDER === 'deepgram' && !cfg.DEEPGRAM_API_KEY)
+    missing.push('DEEPGRAM_API_KEY (ASR_PROVIDER=deepgram)');
+  if (needAsr && cfg.ASR_PROVIDER === 'speechmatics' && !cfg.SPEECHMATICS_API_KEY)
+    missing.push('SPEECHMATICS_API_KEY (ASR_PROVIDER=speechmatics)');
   if (needTts && cfg.TTS_PROVIDER === 'elevenlabs' && !cfg.ELEVENLABS_API_KEY)
     missing.push('ELEVENLABS_API_KEY (TTS_PROVIDER=elevenlabs)');
   if (needTts && cfg.TTS_PROVIDER === 'aurixel' && !cfg.AURIXEL_API_KEY)
     missing.push('AURIXEL_API_KEY (TTS_PROVIDER=aurixel)');
-  if (needTts && (cfg.TTS_PROVIDER === 'qwen-vc' || cfg.TTS_PROVIDER === 'qwen') && !cfg.QWEN_API_KEY)
+  if (needTts && (cfg.TTS_PROVIDER === 'qwen-vc' || cfg.TTS_PROVIDER === 'qwen' || cfg.TTS_PROVIDER === 'cosyvoice-vc') && !cfg.QWEN_API_KEY)
     missing.push(`QWEN_API_KEY (TTS_PROVIDER=${cfg.TTS_PROVIDER})`);
   if (missing.length) {
     throw new Error(

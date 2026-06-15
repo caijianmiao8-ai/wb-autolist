@@ -12,7 +12,7 @@
 //  - adelay takes one value PER CHANNEL separated by '|', in MILLISECONDS.
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -114,7 +114,7 @@ export function makeFf(cfg = {}) {
    * @returns {Promise<{outPath, srcDur, targetDur, factor, capped}>}
    */
   async function fitAudioToDuration(inWav, outWav, targetDur, opts = {}) {
-    const { maxSpeedup = 1.5, minSlowdown = 0.85, srcDur: knownSrc, padShort = true } = opts;
+    const { maxSpeedup = 1.5, minSlowdown = 0.85, srcDur: knownSrc, padShort = true, fillShort = false } = opts;
     const srcDur = knownSrc != null ? knownSrc : await probeDuration(inWav);
     if (!(targetDur > 0)) {
       // Degenerate slot — just copy a hard-trimmed/padded clip.
@@ -133,10 +133,12 @@ export function makeFf(cfg = {}) {
     if (factor < minSlowdown) factor = minSlowdown;
 
     // padShort=false (gap-aware mode): if the clip already fits the target window
-    // (incl. the following pause), keep it at NATURAL speed/length — no padding,
-    // no time-stretch. Only compress when it genuinely overflows. This is what
-    // removes the rushed/sped-up feel and the chopped sentence ends.
-    if (!padShort && factor <= 1.0001) {
+    // keep it at NATURAL speed/length — no padding, no time-stretch. EXCEPTION:
+    // fillShort gently SLOWS a short clip (down to minSlowdown) so it COVERS the
+    // speaker's on-screen time instead of ending early and leaving the mouth moving
+    // over silence. The stretch is capped (≤ minSlowdown), so a much-too-short clip
+    // still ends a little early rather than dragging.
+    if (!padShort && !fillShort && factor <= 1.0001) {
       await ffmpeg(['-y', '-i', inWav, '-ar', '44100', '-ac', '2', outWav]);
       return { outPath: outWav, srcDur, targetDur, factor: 1, capped: false };
     }
@@ -292,6 +294,17 @@ export function makeFf(cfg = {}) {
    * people" across segments. Cheap, provider-agnostic.
    */
   async function normalizeLoudness(inPath, outPath, opts = {}) {
+    const mode = opts.mode || 'rms';
+    if (mode === 'rms') {
+      // Level each clip to a target RMS with a SINGLE gain (no compression) — fixes
+      // clone level-drift between clips while preserving each clip's natural
+      // dynamics (loud emphasis / soft asides), which loudnorm would flatten.
+      const cur = await meanRms(inPath, 0, 1e6);
+      const gain = (opts.targetDb ?? -20) - cur;
+      const g = Math.max(-30, Math.min(30, gain)); // clamp to avoid extreme boosts
+      await ffmpeg(['-y', '-i', inPath, '-af', `volume=${g.toFixed(2)}dB`, '-ar', '44100', '-ac', '2', outPath]);
+      return outPath;
+    }
     const I = opts.I ?? -16, TP = opts.TP ?? -1.5, LRA = opts.LRA ?? 11;
     await ffmpeg(['-y', '-i', inPath, '-af', `loudnorm=I=${I}:TP=${TP}:LRA=${LRA}`, '-ar', '44100', '-ac', '2', outPath]);
     return outPath;
@@ -317,6 +330,67 @@ export function makeFf(cfg = {}) {
     if (!existsSync(bg)) throw new Error(`demucs background stem not found at ${bg}`);
     // background = M&E (for the mix); vocals = clean speech (for clean clone refs)
     return { background: bg, vocals: existsSync(vocals) ? vocals : null };
+  }
+
+  /**
+   * Estimate the median fundamental frequency (pitch, Hz) of voiced speech in a
+   * clip, via short-frame autocorrelation. Used to detect & correct the per-call
+   * PITCH DRIFT of clone TTS (the same cloned voice rendering 5-10% higher/lower
+   * across calls — which the ear hears as "two different people"). Returns null
+   * if too little voiced audio. 8kHz mono is plenty for an 80-400Hz search.
+   */
+  async function estimateF0(path, opts = {}) {
+    const sr = opts.sr || 8000;
+    const tmp = `${path}.f0.pcm`;
+    await ffmpeg(['-y', '-i', path, '-ac', '1', '-ar', String(sr), '-f', 's16le', tmp]);
+    let buf;
+    try { buf = readFileSync(tmp); } finally { try { unlinkSync(tmp); } catch { /* best effort */ } }
+    const n = buf.length >> 1;
+    if (n < sr * 0.2) return null;
+    const x = new Float64Array(n);
+    for (let i = 0; i < n; i++) x[i] = buf.readInt16LE(i * 2);
+    const W = Math.round(sr * 0.04); // 40ms frame
+    const H = Math.round(sr * 0.02); // 20ms hop
+    const lo = Math.floor(sr / 400); // highest pitch we look for
+    const hi = Math.floor(sr / 80); // lowest
+    const f0s = [];
+    for (let s = 0; s + W <= n; s += H) {
+      let mean = 0;
+      for (let i = 0; i < W; i++) mean += x[s + i];
+      mean /= W;
+      let e = 0;
+      for (let i = 0; i < W; i++) { const v = x[s + i] - mean; e += v * v; }
+      if (e < W * 200) continue; // unvoiced / too quiet
+      let best = 0, bl = 0;
+      for (let lag = lo; lag < hi; lag++) {
+        let acc = 0;
+        for (let i = 0; i + lag < W; i += 2) acc += (x[s + i] - mean) * (x[s + i + lag] - mean);
+        if (acc > best) { best = acc; bl = lag; }
+      }
+      if (bl && best > 0.3 * e) { const f = sr / bl; if (f > 80 && f < 400) f0s.push(f); }
+    }
+    if (f0s.length < 3) return null;
+    f0s.sort((a, b) => a - b);
+    return f0s[f0s.length >> 1]; // median
+  }
+
+  /**
+   * Shift pitch by `factor` (target/current) WITHOUT changing duration, via the
+   * asetrate→atempo trick (asetrate resamples = pitch & speed up together; atempo
+   * restores the speed, leaving only the pitch change). For small corrections
+   * (±10%) the coupled formant shift is inaudible. factor>1 raises, <1 lowers.
+   */
+  async function pitchShift(inPath, outPath, factor, opts = {}) {
+    const R = opts.sampleRate || 44100;
+    const k = Math.max(0.5, Math.min(2, Number(factor) || 1));
+    if (Math.abs(k - 1) < 0.005) { // negligible — just normalize format
+      await ffmpeg(['-y', '-i', inPath, '-ar', String(R), '-ac', '2', outPath]);
+      return outPath;
+    }
+    const tempo = atempoChain(1 / k); // undo the speed change asetrate introduced
+    const af = `aresample=${R},asetrate=${Math.round(R * k)},${tempo},aresample=${R}`;
+    await ffmpeg(['-y', '-i', inPath, '-af', af, '-ar', String(R), '-ac', '2', outPath]);
+    return outPath;
   }
 
   /** Mean RMS level (dB) of a file over [start,end] — used to score reference cleanliness. */
@@ -405,6 +479,8 @@ export function makeFf(cfg = {}) {
     gateSilence,
     separateBackground,
     meanRms,
+    estimateF0,
+    pitchShift,
   };
 }
 

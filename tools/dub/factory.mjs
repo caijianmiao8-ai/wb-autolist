@@ -12,6 +12,11 @@
 import { makeElevenLabsAsr, makeElevenLabsTts } from './providers/elevenlabs.mjs';
 import { makeAurixelAsr, makeAurixelTts } from './providers/aurixelAudio.mjs';
 import { makeQwenTtsVc, makeQwenTts } from './providers/qwenTtsVc.mjs';
+import { makeCosyVoiceTtsVc } from './providers/cosyvoiceTtsVc.mjs';
+import { makeDashscopeAsr } from './providers/dashscopeAsr.mjs';
+import { makeLocalWhisper } from './providers/localWhisper.mjs';
+import { makeDeepgramAsr } from './providers/deepgramAsr.mjs';
+import { makeSpeechmaticsAsr } from './providers/speechmaticsAsr.mjs';
 import { makeAurixelTranslator } from './translate.mjs';
 
 export function pickAsr(cfg) {
@@ -21,9 +26,27 @@ export function pickAsr(cfg) {
       return makeElevenLabsAsr({ apiKey: cfg.ELEVENLABS_API_KEY, baseUrl: cfg.EL_ASR_BASE, model: cfg.EL_ASR_MODEL, ...net });
     case 'aurixel':
       return makeAurixelAsr({ apiKey: cfg.AURIXEL_API_KEY, baseUrl: cfg.AURIXEL_AUDIO_BASE, model: cfg.AURIXEL_ASR_MODEL, ...net });
+    case 'dashscope':
+    case 'qwen':
+      // Qwen3-ASR (DashScope) — no ElevenLabs quota. qwen3-asr-flash text + VAD
+      // timestamps. Single-speaker; timestamps are approximate (VAD-based).
+      return makeDashscopeAsr({ apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE, model: cfg.QWEN_ASR_MODEL });
+    case 'whisper':
+    case 'local-whisper':
+      // Local Whisper (mlx via uvx) — accurate text + native word/segment
+      // timestamps, fully offline. The most stable timestamp source. Single-speaker.
+      return makeLocalWhisper({ model: cfg.WHISPER_MODEL });
+    case 'deepgram':
+      // Deepgram (nova-3) — cloud ASR with word/utterance timestamps AND speaker
+      // diarization. Cheap/fast; weaker diarization on hard minority-speaker cases.
+      return makeDeepgramAsr({ apiKey: cfg.DEEPGRAM_API_KEY, baseUrl: cfg.DEEPGRAM_BASE, model: cfg.DEEPGRAM_MODEL, ...net });
+    case 'speechmatics':
+      // Speechmatics — cloud ASR with strong speaker diarization + word timestamps.
+      // Default: handles both monologue and multi-speaker dialogue from one provider.
+      return makeSpeechmaticsAsr({ apiKey: cfg.SPEECHMATICS_API_KEY, baseUrl: cfg.SPEECHMATICS_BASE, operatingPoint: cfg.SPEECHMATICS_OPERATING_POINT, speakerSensitivity: cfg.SPEECHMATICS_SPEAKER_SENSITIVITY });
     // case 'myprovider': return makeMyProviderAsr({...});  // <-- extension example
     default:
-      throw new Error(`unknown ASR_PROVIDER='${cfg.ASR_PROVIDER}' (expected elevenlabs|aurixel)`);
+      throw new Error(`unknown ASR_PROVIDER='${cfg.ASR_PROVIDER}' (expected speechmatics|elevenlabs|deepgram|whisper|dashscope|aurixel)`);
   }
 }
 
@@ -52,9 +75,13 @@ export function pickTts(cfg) {
     case 'qwen':
       // Qwen3-TTS preset voices (Cherry/Katerina/…) — stable, no cloning.
       return makeQwenTts({ apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE, model: cfg.QWEN_TTS_MODEL, voice: cfg.QWEN_VOICE, ...net });
+    case 'cosyvoice-vc':
+      // CosyVoice v3.5 cloning — DETERMINISTIC synthesis (no per-call drift, unlike
+      // qwen-vc). Same DashScope key. Enroll via OSS-url, synthesize via WebSocket.
+      return makeCosyVoiceTtsVc({ apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE, model: cfg.COSYVOICE_MODEL, presetModel: cfg.QWEN_TTS_MODEL, sampleRate: cfg.COSYVOICE_SAMPLE_RATE, rate: cfg.COSYVOICE_RATE, ...net });
     // case 'myprovider': return makeMyProviderTts({...});  // <-- extension example
     default:
-      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel|qwen-vc|qwen)`);
+      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel|qwen-vc|qwen|cosyvoice-vc)`);
   }
 }
 

@@ -39,12 +39,17 @@ Options:
   --keywords "a,b,c"           RU keywords woven into the translation
   --brand X                    brand kept verbatim
   --tone marketing             marketing tone hint
-  --asr-provider el|aurixel    ASR provider (default elevenlabs)
+  --asr-provider speechmatics|el|deepgram|whisper  ASR (default speechmatics=cloud+diarizes; whisper=offline local)
+  --whisper-model <mlx-id>     local whisper model (default whisper-large-v3-turbo)
   --tts-provider el|aurixel|qwen-vc  TTS provider (qwen-vc = clone each speaker's real voice)
   --min-clone-sec <n>          min clean source audio to clone a speaker (default 6)
   --merge-gap <sec>            merge consecutive same-speaker segs (gap<=sec) into one call (default 0.35)
   --rate <chars/sec>           TTS speaking rate for length budgeting (default 12; raise for faster engines)
   --no-normalize               disable per-clip loudness normalization
+  --no-iso                     disable isochrony (don't condense over-long lines)
+  --iso-tol <ratio>            max RU overrun before condensing (default 1.12)
+  --no-pitch-normalize         disable per-speaker pitch alignment (clone drift fix)
+  --pitch-max-shift <0..1>     max pitch correction per clip (default 0.10 = ±10%)
   --no-gate                    don't mute the dub during the original's silent gaps
   --no-background              don't keep the original M&E/background (dub over silence)
   --mode segment|whole         timing strategy (default segment)
@@ -96,12 +101,18 @@ async function main() {
   if (a['merge-gap'] && a['merge-gap'] !== true) overrides.MERGE_GAP = a['merge-gap'];
   if (a.rate && a.rate !== true) overrides.RU_CHARS_PER_SEC = a.rate;
   if (a['no-normalize']) overrides.NORMALIZE = 'false';
+  if (a['no-asr-cache']) overrides.ASR_CACHE = 'false';
+  if (a['whisper-model'] && a['whisper-model'] !== true) overrides.WHISPER_MODEL = a['whisper-model'];
+  if (a['no-iso']) overrides.ISO_LOOP = 'false';
+  if (a['iso-tol'] && a['iso-tol'] !== true) overrides.ISO_TOL = a['iso-tol'];
+  if (a['no-pitch-normalize']) overrides.PITCH_NORMALIZE = 'false';
+  if (a['pitch-max-shift'] && a['pitch-max-shift'] !== true) overrides.PITCH_MAX_SHIFT = a['pitch-max-shift'];
   if (a['no-gate']) overrides.GATE_SILENCE = 'false';
   if (a.elastic) overrides.ELASTIC_PLACEMENT = 'true';
   if (a['no-background']) overrides.KEEP_BACKGROUND = 'false';
   if (a['no-duck']) overrides.BG_DUCK = 'false';
   // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.
-  if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen') overrides.OUT_FORMAT = 'wav';
+  if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen' || overrides.TTS_PROVIDER === 'cosyvoice-vc') overrides.OUT_FORMAT = 'wav';
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];
   if (a['target-lang']) overrides.TARGET_LANG = a['target-lang'];
 
