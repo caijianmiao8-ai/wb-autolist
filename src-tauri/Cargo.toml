@@ -32,6 +32,17 @@ calamine = "0.26"
 urlencoding = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# OS-native secret store for tokens/keys (replaces plaintext in config.json).
+# Per-target backend so each platform uses its own keychain.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
+
 # release: smaller binary
 [profile.release]
 opt-level = "s"

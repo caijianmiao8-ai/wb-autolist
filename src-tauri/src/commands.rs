@@ -215,6 +215,33 @@ pub async fn publish(
     Ok(hydrate(&st.paths, updated))
 }
 
+/// Edit the AI-generated copy of a draft before publishing. Lets the seller fix
+/// the title/description/bullets instead of shipping whatever the model wrote
+/// (WB caps title at 60 and description at 2000 chars — enforced here).
+#[tauri::command]
+pub async fn update_copy(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    title: String,
+    description: String,
+    bullets: Vec<String>,
+) -> Result<Listing, String> {
+    let st = state.inner().clone();
+    let updated = store::update_listing(&st.paths, &id, |l| {
+        if let Some(c) = l.copy.as_mut() {
+            c.title = title.trim().chars().take(60).collect();
+            c.description = description.trim().chars().take(2000).collect();
+            c.bullets = bullets
+                .into_iter()
+                .map(|b| b.trim().to_string())
+                .filter(|b| !b.is_empty())
+                .collect();
+        }
+    })
+    .ok_or("未找到该商品")?;
+    Ok(hydrate(&st.paths, updated))
+}
+
 #[tauri::command]
 pub fn list_listings(state: State<Arc<AppState>>) -> Vec<Listing> {
     store::list_listings(&state.paths)

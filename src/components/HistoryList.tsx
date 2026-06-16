@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Trash2, Package, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { Trash2, Package, ExternalLink, Loader2, RefreshCw, UploadCloud } from "lucide-react";
 import { StageBadge } from "./StageBadge";
 import { api } from "@/lib/api";
 import type { Listing } from "@/lib/types";
@@ -10,6 +10,7 @@ import type { Listing } from "@/lib/types";
 export function HistoryList() {
   const [listings, setListings] = useState<Listing[] | null>(null);
   const [pricingId, setPricingId] = useState<string | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
 
   async function load() {
     setListings(await api.listListings());
@@ -33,6 +34,22 @@ export function HistoryList() {
       }
     } finally {
       setPricingId(null);
+    }
+  }
+
+  // Retry a card that was created but didn't fully finish (e.g. a photo upload
+  // flaked mid-publish). Routes to the pipeline's resume path: re-upload images
+  // to the existing nmID + re-submit price — never creates a duplicate card.
+  async function retryPublish(id: string) {
+    setPublishingId(id);
+    try {
+      const r = await api.publish(id);
+      alert(r.error ? "仍有问题：" + r.error : "已重试补图 + 提交价格。");
+      await load();
+    } catch (e) {
+      alert("重试失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setPublishingId(null);
     }
   }
 
@@ -118,6 +135,20 @@ export function HistoryList() {
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  {l.nmID && !l.dryRun && l.error && (
+                    <button
+                      onClick={() => retryPublish(l.id)}
+                      disabled={publishingId === l.id}
+                      title="重试上架（补图 + 定价，不会重复建卡）"
+                      className="grid h-9 w-9 place-items-center rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 disabled:opacity-50"
+                    >
+                      {publishingId === l.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <UploadCloud className="h-4 w-4" />
+                      )}
+                    </button>
+                  )}
                   {l.nmID && !l.dryRun && (
                     <button
                       onClick={() => retryPrice(l.id)}

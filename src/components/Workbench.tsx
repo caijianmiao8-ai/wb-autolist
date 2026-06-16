@@ -28,6 +28,7 @@ interface SettingsState {
   dryRun: boolean;
   imageProvider: string;
   wbSandbox: boolean;
+  wbTokenExpiresInDays: number | null;
   defaultLength: number;
   defaultWidth: number;
   defaultHeight: number;
@@ -367,6 +368,34 @@ export function Workbench() {
         </div>
       )}
 
+      {!dryRun &&
+        settings?.wbTokenExpiresInDays != null &&
+        settings.wbTokenExpiresInDays <= 14 && (
+          <div
+            className={clsx(
+              "mb-6 flex items-start gap-3 rounded-2xl border px-4 py-3.5 text-sm",
+              settings.wbTokenExpiresInDays < 0
+                ? "border-rose-400/30 bg-rose-500/[0.08] text-rose-700 dark:text-rose-200"
+                : "border-amber-400/20 bg-amber-500/[0.07] text-amber-700 dark:text-amber-200/90"
+            )}
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="leading-relaxed">
+              WB Token{" "}
+              {settings.wbTokenExpiresInDays < 0
+                ? "已过期"
+                : settings.wbTokenExpiresInDays === 0
+                ? "今天内到期"
+                : `还有 ${settings.wbTokenExpiresInDays} 天过期`}
+              —— 到期后无法上架/同步。请到 WB 卖家后台「设置 → 访问 API」重新生成，并在
+              <Link href="/settings" className="ml-1 font-medium underline underline-offset-2">
+                设置
+              </Link>
+              更新。
+            </div>
+          </div>
+        )}
+
       <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
         {/* ── Input ── */}
         <div className="card h-fit p-6">
@@ -576,7 +605,7 @@ export function Workbench() {
           {listing && (
             <>
               <ImagesPanel listing={listing} onRegenerate={doRegenerate} regenLoading={regenLoading} />
-              <CopyPanel listing={listing} />
+              <CopyPanel listing={listing} onUpdate={setListing} />
 
               {/* main-first: generate the remaining images on approval */}
               {listing.partial && (
@@ -714,14 +743,108 @@ function ImagesPanel({
   );
 }
 
-function CopyPanel({ listing }: { listing: Listing }) {
+function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Listing) => void }) {
   const copy = listing.copy;
+  const [editing, setEditing] = useState(false);
+  const [eTitle, setETitle] = useState("");
+  const [eDesc, setEDesc] = useState("");
+  const [eBullets, setEBullets] = useState("");
+  const [savingCopy, setSavingCopy] = useState(false);
+  const [copyErr, setCopyErr] = useState<string | null>(null);
   if (!copy) return null;
+
+  function startEdit() {
+    if (!copy) return;
+    setETitle(copy.title);
+    setEDesc(copy.description);
+    setEBullets(copy.bullets.join("\n"));
+    setCopyErr(null);
+    setEditing(true);
+  }
+  async function saveCopy() {
+    setSavingCopy(true);
+    setCopyErr(null);
+    try {
+      const bullets = eBullets.split("\n").map((s) => s.trim()).filter(Boolean);
+      const updated = await api.updateCopy(listing.id, eTitle, eDesc, bullets);
+      onUpdate?.(updated);
+      setEditing(false);
+    } catch (e) {
+      setCopyErr(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSavingCopy(false);
+    }
+  }
+
   return (
     <div className="card p-6">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-        <Sparkles className="h-4 w-4 text-wb-pink" /> 文案（俄文 listing）
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+          <Sparkles className="h-4 w-4 text-wb-pink" /> 文案（俄文 listing）
+        </div>
+        {!editing ? (
+          // editing only makes sense for an unpublished draft — once a card is
+          // live, local copy edits would NOT reach WB and would mislead.
+          !listing.nmID ? (
+            <button
+              className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+              onClick={startEdit}
+            >
+              编辑
+            </button>
+          ) : null
+        ) : (
+          <div className="flex items-center gap-3 text-xs">
+            <button
+              className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+              onClick={() => setEditing(false)}
+              disabled={savingCopy}
+            >
+              取消
+            </button>
+            <button
+              className="flex items-center gap-1 font-medium text-wb-pink disabled:opacity-50"
+              onClick={saveCopy}
+              disabled={savingCopy || !eTitle.trim()}
+            >
+              {savingCopy && <Loader2 className="h-3 w-3 animate-spin" />} 保存
+            </button>
+          </div>
+        )}
       </div>
+      {editing ? (
+        <div className="space-y-3 text-sm">
+          <div>
+            <span className="label">标题（{eTitle.length}/60）</span>
+            <input
+              className="input"
+              maxLength={60}
+              value={eTitle}
+              onChange={(e) => setETitle(e.target.value)}
+            />
+          </div>
+          <div>
+            <span className="label">描述（{eDesc.length}/2000）</span>
+            <textarea
+              className="input"
+              rows={5}
+              maxLength={2000}
+              value={eDesc}
+              onChange={(e) => setEDesc(e.target.value)}
+            />
+          </div>
+          <div>
+            <span className="label">卖点（每行一条）</span>
+            <textarea
+              className="input"
+              rows={4}
+              value={eBullets}
+              onChange={(e) => setEBullets(e.target.value)}
+            />
+          </div>
+          {copyErr && <p className="text-xs text-rose-600 dark:text-rose-400">{copyErr}</p>}
+        </div>
+      ) : (
       <div className="space-y-3 text-sm">
         <div>
           <span className="label">标题（{copy.title.length}/60）</span>
@@ -769,6 +892,7 @@ function CopyPanel({ listing }: { listing: Listing }) {
           </details>
         )}
       </div>
+      )}
     </div>
   );
 }

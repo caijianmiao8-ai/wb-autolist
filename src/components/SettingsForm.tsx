@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes, Ruler } from "lucide-react";
+import clsx from "clsx";
 import { api } from "@/lib/api";
 import type { Warehouse } from "@/lib/types";
 
@@ -9,6 +10,7 @@ interface Redacted {
   authEnabled: boolean;
   wbContentTokenSet: boolean;
   wbPricesTokenSet: boolean;
+  wbTokenExpiresInDays: number | null;
   wbSandbox: boolean;
   imageProvider: string;
   openaiKeySet: boolean;
@@ -118,6 +120,24 @@ export function SettingsForm() {
           <label className="label">
             内容(Контент) Token {redacted?.wbContentTokenSet && (
               <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>
+            )}
+            {redacted?.wbContentTokenSet && redacted.wbTokenExpiresInDays != null && (
+              <span
+                className={clsx(
+                  "ml-1",
+                  redacted.wbTokenExpiresInDays < 0
+                    ? "text-rose-600 dark:text-rose-400"
+                    : redacted.wbTokenExpiresInDays <= 14
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-slate-400"
+                )}
+              >
+                {redacted.wbTokenExpiresInDays < 0
+                  ? "· 已过期，请到 WB 后台重新生成"
+                  : redacted.wbTokenExpiresInDays === 0
+                  ? "· 今天内到期"
+                  : `· 有效期剩 ${redacted.wbTokenExpiresInDays} 天`}
+              </span>
             )}
           </label>
           <input

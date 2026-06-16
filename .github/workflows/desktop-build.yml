@@ -43,13 +43,27 @@ jobs:
 
       # tauri-action runs the tauri.conf beforeBuildCommand (npm run fe:build),
       # compiles the Rust binary, and bundles the platform installer.
+      # On a tag push it also creates/updates a GitHub Release and attaches the
+      # installers — a real download page (no GitHub login / artifact expiry,
+      # unlike upload-artifact). On manual runs (no tag) it just builds.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: WB AutoList ${{ github.ref_name }}
+          releaseBody: |
+            未签名安装包 — 首次打开会被系统拦截，请按安装指引放行：
+            https://github.com/${{ github.repository }}/blob/main/docs/INSTALL.md
 
+            - Windows: SmartScreen 弹窗 → 更多信息 → 仍要运行
+            - macOS: 右键 → 打开（或 系统设置 → 隐私与安全性 → 仍要打开）
+          releaseDraft: false
+          prerelease: false
+
+      # Always keep artifacts too (handy for manual/dev builds that aren't tagged).
       - uses: actions/upload-artifact@v4
         with:
           name: wb-autolist-${{ matrix.name }}

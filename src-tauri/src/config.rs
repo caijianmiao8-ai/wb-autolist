@@ -159,10 +159,121 @@ fn apply_file(cfg: &mut AppConfig, file: &Path) {
     }
 }
 
+// ── Secret storage: OS keychain instead of plaintext config.json ──
+// macOS Keychain / Windows Credential Manager / Linux secret-service. Secrets
+// never sit on disk in cleartext (mitigates shared-PC / backup / malware reads).
+// All ops degrade gracefully: if the keychain is unavailable we fall back to the
+// old plaintext-in-json behavior rather than losing the user's tokens.
+const KEYCHAIN_SERVICE: &str = "com.wbautolist.app";
+
+/// (camelCase json key) of the fields kept in the keychain, not in config.json.
+const SECRET_KEYS: [&str; 5] = [
+    "wbContentToken",
+    "wbPricesToken",
+    "aurixelApiKey",
+    "openaiApiKey",
+    "pollinationsToken",
+];
+
+/// Tri-state read: a genuine absence must be told apart from a keychain ERROR
+/// (locked / access denied / backend hiccup). Conflating them risks (a) wiping a
+/// not-yet-migrated plaintext, or (b) treating a transient error as "logged out".
+enum KcRead {
+    Found(String),
+    Absent,
+    Error,
+}
+
+fn kc_read(account: &str) -> KcRead {
+    let entry = match keyring::Entry::new(KEYCHAIN_SERVICE, account) {
+        Ok(e) => e,
+        Err(_) => return KcRead::Error,
+    };
+    match entry.get_password() {
+        Ok(s) if !s.is_empty() => KcRead::Found(s),
+        Ok(_) => KcRead::Absent, // empty stored value = effectively no secret
+        Err(keyring::Error::NoEntry) => KcRead::Absent,
+        Err(_) => KcRead::Error,
+    }
+}
+
+fn kc_set(account: &str, val: &str) -> bool {
+    match keyring::Entry::new(KEYCHAIN_SERVICE, account) {
+        Ok(e) => e.set_password(val).is_ok(),
+        Err(_) => false,
+    }
+}
+
+fn kc_del(account: &str) {
+    if let Ok(e) = keyring::Entry::new(KEYCHAIN_SERVICE, account) {
+        let _ = e.delete_credential();
+    }
+}
+
+/// Overlay one secret from the keychain. Keychain value wins. If it's genuinely
+/// ABSENT but legacy plaintext (json/env) is present, migrate it in and record
+/// the account so ONLY that key is stripped from json. On a keychain ERROR, do
+/// nothing — keep whatever plaintext we have and never strip (no data loss, no
+/// false logout via a partial-migration wipe).
+fn resolve_secret(field: &mut String, account: &'static str, migrated: &mut Vec<&'static str>) {
+    match kc_read(account) {
+        KcRead::Found(v) => *field = v,
+        KcRead::Absent => {
+            let plain = field.trim().to_string();
+            if !plain.is_empty() && kc_set(account, &plain) {
+                // verify the write is actually readable before allowing the
+                // plaintext to be stripped — otherwise we'd risk losing it.
+                if matches!(kc_read(account), KcRead::Found(_)) {
+                    migrated.push(account);
+                }
+            }
+        }
+        KcRead::Error => {
+            eprintln!("⚠ 钥匙串读取失败({})，本次回退使用本地值", account);
+        }
+    }
+}
+
+/// Remove ONLY the given (successfully-migrated) secret keys from config.json, so
+/// no cleartext copy lingers — never touches keys that failed to migrate.
+fn strip_secrets_from_file(file: &Path, accounts: &[&str]) {
+    let txt = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let mut v: Value = match serde_json::from_str(&txt) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    if let Some(obj) = v.as_object_mut() {
+        let mut changed = false;
+        for k in accounts {
+            if obj.remove(*k).is_some() {
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = atomic_write(file, &serde_json::to_vec_pretty(&v).unwrap_or_default());
+        }
+    }
+}
+
 pub fn get_config(paths: &Paths) -> AppConfig {
     let mut cfg = AppConfig::default();
     apply_env(&mut cfg);
     apply_file(&mut cfg, &paths.config());
+    // Secrets live in the OS keychain — overlay them, migrating any legacy
+    // plaintext from config.json/env on first run, then strip ONLY the cleartext
+    // we successfully moved (per-field, so a partial migration loses nothing).
+    let mut migrated: Vec<&'static str> = vec![];
+    resolve_secret(&mut cfg.wb_content_token, "wbContentToken", &mut migrated);
+    resolve_secret(&mut cfg.wb_prices_token, "wbPricesToken", &mut migrated);
+    resolve_secret(&mut cfg.aurixel_api_key, "aurixelApiKey", &mut migrated);
+    resolve_secret(&mut cfg.openai_api_key, "openaiApiKey", &mut migrated);
+    resolve_secret(&mut cfg.pollinations_token, "pollinationsToken", &mut migrated);
+    if !migrated.is_empty() {
+        strip_secrets_from_file(&paths.config(), &migrated);
+    }
     // Defensive: tokens often arrive with trailing whitespace/newline from a
     // paste, which corrupts the Authorization header. Strip it.
     cfg.wb_content_token = cfg.wb_content_token.trim().to_string();
@@ -181,7 +292,27 @@ pub fn save_config(paths: &Paths, patch: &Value) -> AppConfig {
         .unwrap_or_default();
     if let Some(p) = patch.as_object() {
         for (k, v) in p {
-            obj.insert(k.clone(), v.clone());
+            if SECRET_KEYS.contains(&k.as_str()) {
+                // Secrets → OS keychain, never plaintext json. Only drop the
+                // cleartext from json once it's safely in the keychain; if the
+                // keychain is unavailable, keep plaintext so we never lose it.
+                match v.as_str().map(|s| s.trim()) {
+                    Some(s) if !s.is_empty() => {
+                        if kc_set(k, s) {
+                            obj.remove(k);
+                        } else {
+                            obj.insert(k.clone(), Value::String(s.to_string()));
+                        }
+                    }
+                    // explicit empty value = clear the secret everywhere
+                    _ => {
+                        kc_del(k);
+                        obj.remove(k);
+                    }
+                }
+            } else {
+                obj.insert(k.clone(), v.clone());
+            }
         }
     }
     let bytes = serde_json::to_vec_pretty(&Value::Object(obj)).unwrap_or_default();
@@ -197,6 +328,23 @@ pub fn prices_token(cfg: &AppConfig) -> String {
     }
 }
 
+/// Days until the WB content token (a JWT) expires; None if absent/unparseable.
+/// WB tokens are ~180-day JWTs — surfacing this prevents a silent mid-publish 401
+/// that reads as "the app suddenly stopped working".
+pub fn wb_token_expiry_days(token: &str) -> Option<i64> {
+    use base64::Engine;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let v: Value = serde_json::from_slice(&bytes).ok()?;
+    let exp = v.get("exp").and_then(|x| x.as_i64())?;
+    let secs = exp - chrono::Utc::now().timestamp();
+    // floor → only a genuinely expired token is negative; <24h left reads as 0
+    // ("expires today"), not as "expired".
+    Some((secs as f64 / 86_400.0).floor() as i64)
+}
+
 /// Never leak secrets to the client — booleans + non-secret fields only.
 pub fn redact_config(cfg: &AppConfig) -> Value {
     let dry =
@@ -206,6 +354,7 @@ pub fn redact_config(cfg: &AppConfig) -> Value {
         "dryRun": dry,
         "wbContentTokenSet": !cfg.wb_content_token.is_empty(),
         "wbPricesTokenSet": !cfg.wb_prices_token.is_empty(),
+        "wbTokenExpiresInDays": wb_token_expiry_days(&cfg.wb_content_token),
         "wbSandbox": cfg.wb_sandbox,
         "imageProvider": cfg.image_provider,
         "openaiKeySet": !cfg.openai_api_key.is_empty(),

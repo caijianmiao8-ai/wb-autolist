@@ -43,6 +43,7 @@ pub fn run() {
             commands::generate,
             commands::regenerate_image,
             commands::generate_rest,
+            commands::update_copy,
             commands::publish,
             commands::list_listings,
             commands::get_listing,

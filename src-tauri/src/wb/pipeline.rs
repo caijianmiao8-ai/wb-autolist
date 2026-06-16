@@ -419,11 +419,35 @@ async fn resume_existing(
     };
     log(
         logs,
-        "pricing",
+        "creating",
         true,
-        &format!("商品已存在（nmID={}），仅重新提交价格/折扣，不重复建卡。", nm),
+        &format!("商品已存在（nmID={}），重试补图 + 重提价格，不重复建卡。", nm),
         on,
     );
+
+    // Re-upload images to the existing card — this retries a card whose media
+    // failed mid-publish (overwriting a slot with the same bytes is harmless).
+    let ctx = WbCtx {
+        token: cfg.wb_content_token.clone(),
+        sandbox: cfg.wb_sandbox,
+    };
+    let ordered = order_images(listing);
+    if !ordered.is_empty() {
+        let mut slot = 1i64;
+        for img in ordered {
+            let file = img.url.rsplit('/').next().unwrap_or(&img.url).to_string();
+            match std::fs::read(state.paths.images().join(&file)) {
+                Ok(bytes) => match upload_media_bytes(state, &ctx, nm, slot, bytes, &file).await {
+                    Ok(_) => {
+                        log(logs, "media", true, &format!("已上传第 {} 张图（{}）", slot, img.kind), on);
+                        slot += 1;
+                    }
+                    Err(e) => log(logs, "media", false, &format!("第 {} 张图上传失败：{}", slot, e), on),
+                },
+                Err(e) => log(logs, "media", false, &format!("读取图片失败 {}: {}", file, e), on),
+            }
+        }
+    }
     match upload_price_task(
         state,
         &price_ctx,

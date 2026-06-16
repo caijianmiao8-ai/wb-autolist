@@ -15,6 +15,8 @@ export interface RedactedConfig {
   dryRun: boolean;
   wbContentTokenSet: boolean;
   wbPricesTokenSet: boolean;
+  /** Days until the WB content token (JWT) expires; null if none/unparseable. */
+  wbTokenExpiresInDays: number | null;
   wbSandbox: boolean;
   imageProvider: string;
   openaiKeySet: boolean;
@@ -80,6 +82,9 @@ export const api = {
   /** Generate the remaining images after the main-first preview is approved. */
   generateRest: (id: string, basePhotos: string[], customPrompt?: string) =>
     invoke<Listing>("generate_rest", { id, basePhotos, customPrompt }),
+  /** Edit the draft's title/description/bullets before publishing. */
+  updateCopy: (id: string, title: string, description: string, bullets: string[]) =>
+    invoke<Listing>("update_copy", { id, title, description, bullets }),
   publish: (id: string) => invoke<Listing>("publish", { id }),
   listListings: () => invoke<Listing[]>("list_listings"),
   getListing: (id: string) => invoke<Listing | null>("get_listing", { id }),

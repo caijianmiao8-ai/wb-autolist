@@ -42,8 +42,16 @@ export function BatchPanel() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [enqueuing, setEnqueuing] = useState(false);
+  const [env, setEnv] = useState<{ dryRun: boolean; wbSandbox: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    api
+      .getSettings()
+      .then((s) => setEnv({ dryRun: s.dryRun, wbSandbox: s.wbSandbox }))
+      .catch(() => {});
+  }, []);
 
   // poll queue status while anything is in flight
   useEffect(() => {
@@ -89,6 +97,22 @@ export function BatchPanel() {
       setError("请先导入或填写至少一个商品");
       return;
     }
+    // Spend/scope guard: batch fans out paid AI image generation (and, with
+    // auto-publish on, real listings). Confirm count + rough cost + destination.
+    const estImages = valid.length * 3;
+    const mins = Math.ceil(estImages * 2.5);
+    const dest = env?.dryRun ? "演示模式（不真实上架）" : env?.wbSandbox ? "沙盒环境" : "线上真实店铺";
+    const pubLine = autoPublish
+      ? `\n⚠️ 生成后将【自动上架到 ${dest}】。`
+      : "\n仅生成草稿，不自动上架。";
+    if (
+      !window.confirm(
+        `即将批量处理 ${valid.length} 个商品：\n` +
+          `约 ${estImages} 张图（每张约 2.5 分钟，合计 ~${mins} 分钟），会消耗 Aurixel 出图额度。` +
+          `${pubLine}\n\n确认开始？`
+      )
+    )
+      return;
     setEnqueuing(true);
     setError(null);
     try {
