@@ -28,6 +28,10 @@ interface SettingsState {
   dryRun: boolean;
   imageProvider: string;
   wbSandbox: boolean;
+  defaultLength: number;
+  defaultWidth: number;
+  defaultHeight: number;
+  defaultWeight: number;
 }
 
 export function Workbench() {
@@ -38,6 +42,12 @@ export function Workbench() {
   const [price, setPrice] = useState(1990);
   const [discount, setDiscount] = useState(30);
   const [brand, setBrand] = useState("");
+  // package dims (cm) + gross weight (kg) — pre-filled from the seller's
+  // configured defaults once settings load.
+  const [length, setLength] = useState(20);
+  const [width, setWidth] = useState(15);
+  const [height, setHeight] = useState(5);
+  const [weight, setWeight] = useState(0.3);
   const [basePhotos, setBasePhotos] = useState<string[]>([]);
   const [customPrompt, setCustomPrompt] = useState("");
   const [imageCount, setImageCount] = useState(3);
@@ -62,7 +72,17 @@ export function Workbench() {
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.getSettings().then(setSettings).catch(() => {});
+    api
+      .getSettings()
+      .then((s) => {
+        setSettings(s);
+        // pre-fill package dims from the seller's configured defaults
+        if (s.defaultLength) setLength(s.defaultLength);
+        if (s.defaultWidth) setWidth(s.defaultWidth);
+        if (s.defaultHeight) setHeight(s.defaultHeight);
+        if (s.defaultWeight) setWeight(s.defaultWeight);
+      })
+      .catch(() => {});
   }, []);
 
   // Restore the in-progress product when returning to this tab (navigation
@@ -182,6 +202,10 @@ export function Workbench() {
           customPrompt,
           imageCount,
           basePhotos,
+          length,
+          width,
+          height,
+          weight,
         },
         mainOnly
       );
@@ -436,6 +460,33 @@ export function Workbench() {
             value={brand}
             onChange={(e) => setBrand(e.target.value)}
           />
+
+          <label className="label">包裹尺寸 / 重量（按真实填写）</label>
+          <div className="mb-1 grid grid-cols-4 gap-2">
+            {([
+              ["长", length, setLength, 1, "cm"],
+              ["宽", width, setWidth, 1, "cm"],
+              ["高", height, setHeight, 1, "cm"],
+              ["重", weight, setWeight, 0.1, "kg"],
+            ] as const).map(([lab, val, setter, step, unit]) => (
+              <div key={lab}>
+                <input
+                  type="number"
+                  min={step}
+                  step={step}
+                  className="input text-center"
+                  value={val}
+                  onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+                />
+                <span className="mt-0.5 block text-center text-[10px] text-slate-400">
+                  {lab} {unit}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mb-4 text-xs text-slate-500">
+            WB 按包裹体积/重量计物流与仓储费，并在入库时复测——填错会被多收费甚至罚款。可在「设置」改默认值。
+          </p>
 
           <label className="label">产品图（可选，上传则保留真实产品）</label>
           <div className="mb-4 flex flex-wrap gap-2">

@@ -76,6 +76,10 @@ async fn img2img_generate() {
         custom_prompt: Some("минималистичный дизайн, бирюзовые акценты".into()),
         image_count: Some(3),
         base_photos: vec![b64],
+        length: 25,
+        width: 25,
+        height: 25,
+        weight: 0.6,
     };
     let on = |_s: &str, _o: bool, m: &str| eprintln!("  · {}", m);
     let listing = generate_listing(&state, &cfg, &input, &on, false)
@@ -181,6 +185,10 @@ async fn real_generate_and_publish() {
         custom_prompt: None,
         image_count: None,
         base_photos: vec![],
+        length: 22,
+        width: 8,
+        height: 8,
+        weight: 0.45,
     };
 
     // ── generate ──

@@ -208,5 +208,11 @@ fn clean_parts(
         custom_prompt: None,
         image_count: None,
         base_photos: vec![],
+        // batch/Excel rows carry no per-item dims → 0 makes generate_listing fall
+        // back to the seller's configured default package.
+        length: 0,
+        width: 0,
+        height: 0,
+        weight: 0.0,
     }
 }

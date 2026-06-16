@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes } from "lucide-react";
+import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes, Ruler } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Warehouse } from "@/lib/types";
 
@@ -19,6 +19,10 @@ interface Redacted {
   defaultWarehouseId: number;
   defaultStock: number;
   autoStock: boolean;
+  defaultLength: number;
+  defaultWidth: number;
+  defaultHeight: number;
+  defaultWeight: number;
 }
 
 export function SettingsForm() {
@@ -35,9 +39,13 @@ export function SettingsForm() {
   const [aurixelApiKey, setAurixelApiKey] = useState("");
   const [aurixelChatModel, setAurixelChatModel] = useState("gpt-5.5");
   const [pollinationsToken, setPollinationsToken] = useState("");
-  const [autoStock, setAutoStock] = useState(true);
+  const [autoStock, setAutoStock] = useState(false);
   const [defaultStock, setDefaultStock] = useState(99);
   const [defaultWarehouseId, setDefaultWarehouseId] = useState(0);
+  const [defaultLength, setDefaultLength] = useState(20);
+  const [defaultWidth, setDefaultWidth] = useState(15);
+  const [defaultHeight, setDefaultHeight] = useState(5);
+  const [defaultWeight, setDefaultWeight] = useState(0.3);
   const [warehouses, setWarehouses] = useState<Warehouse[] | null>(null);
 
   useEffect(() => {
@@ -46,9 +54,13 @@ export function SettingsForm() {
       setImageProvider(d.imageProvider || "pollinations");
       setWbSandbox(!!d.wbSandbox);
       setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
-      setAutoStock(d.autoStock ?? true);
+      setAutoStock(d.autoStock ?? false);
       setDefaultStock(d.defaultStock ?? 99);
       setDefaultWarehouseId(d.defaultWarehouseId ?? 0);
+      setDefaultLength(d.defaultLength ?? 20);
+      setDefaultWidth(d.defaultWidth ?? 15);
+      setDefaultHeight(d.defaultHeight ?? 5);
+      setDefaultWeight(d.defaultWeight ?? 0.3);
     });
     // FBS warehouses need the Маркетплейс scope — failure just leaves the picker empty.
     api.listWarehouses().then(setWarehouses).catch(() => setWarehouses([]));
@@ -63,6 +75,10 @@ export function SettingsForm() {
       autoStock,
       defaultStock,
       defaultWarehouseId,
+      defaultLength,
+      defaultWidth,
+      defaultHeight,
+      defaultWeight,
     };
     // trim — pasted tokens often carry a trailing space/newline that would
     // corrupt the Authorization header.
@@ -268,6 +284,38 @@ export function SettingsForm() {
               ? "未读取到仓库（Token 需含「Маркетплейс」范围）。可在「商品管理」里逐个设库存。"
               : "也可在「商品管理」里对单个商品补货 / 下架。"}
           </p>
+        </section>
+
+        {/* Default package dimensions / weight */}
+        <section className="card p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+            <Ruler className="h-4 w-4 text-wb-pink" /> 默认包裹尺寸 / 重量
+          </div>
+          <p className="mb-3 text-xs text-slate-500">
+            生成新商品时预填这组数值（可在工作台逐个改）。WB 按包裹体积/重量计物流与仓储费、入库时复测，请按真实填写。
+          </p>
+          <div className="grid grid-cols-4 gap-3">
+            {(
+              [
+                ["长 (cm)", defaultLength, setDefaultLength, 1],
+                ["宽 (cm)", defaultWidth, setDefaultWidth, 1],
+                ["高 (cm)", defaultHeight, setDefaultHeight, 1],
+                ["重 (kg)", defaultWeight, setDefaultWeight, 0.1],
+              ] as const
+            ).map(([lab, val, setter, step]) => (
+              <div key={lab}>
+                <label className="label">{lab}</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={step}
+                  className="input"
+                  value={val}
+                  onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+                />
+              </div>
+            ))}
+          </div>
         </section>
 
         <button className="btn-primary w-full" onClick={save} disabled={saving}>

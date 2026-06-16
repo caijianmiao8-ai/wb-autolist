@@ -28,6 +28,11 @@ export interface RedactedConfig {
   defaultStock: number;
   /** Whether publish sets stock automatically once the card is created. */
   autoStock: boolean;
+  /** Seller's typical package (cm / kg) — batch default + generate pre-fill. */
+  defaultLength: number;
+  defaultWidth: number;
+  defaultHeight: number;
+  defaultWeight: number;
   /** Editable image-prompt templates (active = user override or built-in defaults). */
   imageTemplates: ImageTemplates;
 }
@@ -54,6 +59,11 @@ export interface GenerateInput {
   imageCount?: number;
   /** Real product photos (data URLs) → img2img base; empty = text-to-image. */
   basePhotos?: string[];
+  /** Package dimensions (cm) + gross weight (kg). 0/unset → seller defaults. */
+  length?: number;
+  width?: number;
+  height?: number;
+  weight?: number;
 }
 
 export const api = {

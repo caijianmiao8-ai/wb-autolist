@@ -68,6 +68,17 @@ pub struct Listing {
     pub price: f64,
     pub discount: f64,
     pub brand: String,
+    /// Package dimensions in cm + gross weight in kg. WB bills logistics &
+    /// storage on these and re-measures on intake, so they must be REAL, not a
+    /// placeholder. Defaulted on old records → the pipeline falls back if ≤ 0.
+    #[serde(default)]
+    pub length: i64,
+    #[serde(default)]
+    pub width: i64,
+    #[serde(default)]
+    pub height: i64,
+    #[serde(default)]
+    pub weight: f64,
     // generated
     pub copy: Option<ProductCopy>,
     pub images: Vec<GeneratedImage>,
@@ -117,4 +128,14 @@ pub struct ListingInput {
     /// Empty → text-to-image.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub base_photos: Vec<String>,
+    /// Package dimensions (cm) + gross weight (kg). 0/unset → fall back to the
+    /// seller's configured defaults (see config.rs) in generate_listing.
+    #[serde(default)]
+    pub length: i64,
+    #[serde(default)]
+    pub width: i64,
+    #[serde(default)]
+    pub height: i64,
+    #[serde(default)]
+    pub weight: f64,
 }

@@ -53,6 +53,11 @@ export interface Listing {
   price: number; // RUB
   discount: number; // %
   brand: string;
+  // package dims (cm) + gross weight (kg) — WB bills logistics/storage on these
+  length?: number;
+  width?: number;
+  height?: number;
+  weight?: number;
   // generated
   copy: ProductCopy | null;
   images: GeneratedImage[];

@@ -27,6 +27,18 @@ pub struct AppConfig {
     pub default_stock: i64,
     /// Whether publish should set stock automatically once the card is created.
     pub auto_stock: bool,
+    /// Seller's typical package: dimensions (cm) + gross weight (kg). Used when a
+    /// listing doesn't carry its own (batch/Excel) and to pre-fill the workbench.
+    /// WB bills logistics/storage on these, so the defaults are a starting point
+    /// the seller MUST adjust — never a substitute for real measurements.
+    #[serde(default)]
+    pub default_length: i64,
+    #[serde(default)]
+    pub default_width: i64,
+    #[serde(default)]
+    pub default_height: i64,
+    #[serde(default)]
+    pub default_weight: f64,
     /// Editable image-prompt templates. None = use the built-in defaults.
     #[serde(default)]
     pub image_templates: Option<crate::templates::ImageTemplates>,
@@ -56,6 +68,10 @@ impl Default for AppConfig {
             // Safe default OFF: auto-stocking silently puts real FBS units on a
             // brand-new card; make it an explicit opt-in in Settings.
             auto_stock: false,
+            default_length: 20,
+            default_width: 15,
+            default_height: 5,
+            default_weight: 0.3,
             image_templates: None,
         }
     }
@@ -120,6 +136,18 @@ fn apply_file(cfg: &mut AppConfig, file: &Path) {
     }
     if let Some(b) = obj.get("autoStock").and_then(|x| x.as_bool()) {
         cfg.auto_stock = b;
+    }
+    if let Some(n) = obj.get("defaultLength").and_then(|x| x.as_i64()) {
+        cfg.default_length = n;
+    }
+    if let Some(n) = obj.get("defaultWidth").and_then(|x| x.as_i64()) {
+        cfg.default_width = n;
+    }
+    if let Some(n) = obj.get("defaultHeight").and_then(|x| x.as_i64()) {
+        cfg.default_height = n;
+    }
+    if let Some(n) = obj.get("defaultWeight").and_then(|x| x.as_f64()) {
+        cfg.default_weight = n;
     }
     if let Some(v) = obj.get("imageTemplates") {
         match serde_json::from_value::<crate::templates::ImageTemplates>(v.clone()) {
@@ -188,6 +216,10 @@ pub fn redact_config(cfg: &AppConfig) -> Value {
         "defaultWarehouseId": cfg.default_warehouse_id,
         "defaultStock": cfg.default_stock,
         "autoStock": cfg.auto_stock,
+        "defaultLength": cfg.default_length,
+        "defaultWidth": cfg.default_width,
+        "defaultHeight": cfg.default_height,
+        "defaultWeight": cfg.default_weight,
         // Non-secret → the one sanctioned channel for the editable templates.
         "imageTemplates": serde_json::to_value(active_templates(cfg)).unwrap_or(Value::Null),
     })

@@ -191,6 +191,14 @@ async fn run_pipeline(
     let discount = listing.discount.clamp(0.0, 99.0).round();
     let base = original_price(listing.price, discount) as i64;
 
+    // Real package dims from the listing (set in generate_listing from the user's
+    // input or the seller's configured default). Fall back only for OLD records
+    // created before the field existed (≤ 0). WB bills logistics/storage on these.
+    let dim_l = if listing.length > 0 { listing.length } else { 20 };
+    let dim_w = if listing.width > 0 { listing.width } else { 15 };
+    let dim_h = if listing.height > 0 { listing.height } else { 5 };
+    let dim_kg = if listing.weight > 0.0 { listing.weight } else { 0.3 };
+
     // Try the listing's brand first; if WB rejects it ("Бренд … не найден"),
     // retry once with the universally-accepted "Нет бренда" (fresh vendorCode).
     let mut brand_attempts: Vec<String> = vec![listing.brand.clone()];
@@ -215,7 +223,7 @@ async fn run_pipeline(
                 "title": copy.title,
                 "description": copy.description,
                 "brand": brand,
-                "dimensions": { "length": 20, "width": 15, "height": 5, "weightBrutto": 0.3 },
+                "dimensions": { "length": dim_l, "width": dim_w, "height": dim_h, "weightBrutto": dim_kg },
                 "characteristics": characteristics,
                 "sizes": [{ "price": base, "skus": [sku.clone()] }]
             }]

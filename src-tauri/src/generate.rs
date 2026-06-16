@@ -245,6 +245,19 @@ pub async fn generate_listing(
         .map(|b| b.to_string())
         .unwrap_or_else(|| NO_BRAND.to_string());
 
+    // Package dims: per-listing input if set, else the seller's configured
+    // defaults (never zero — WB bills logistics/storage on these).
+    let length = if raw.length > 0 { raw.length } else { cfg.default_length.max(1) };
+    let width = if raw.width > 0 { raw.width } else { cfg.default_width.max(1) };
+    let height = if raw.height > 0 { raw.height } else { cfg.default_height.max(1) };
+    let weight = if raw.weight > 0.0 {
+        raw.weight
+    } else if cfg.default_weight > 0.0 {
+        cfg.default_weight
+    } else {
+        0.3
+    };
+
     Ok(Listing {
         id: new_id("lst_"),
         created_at: now.clone(),
@@ -254,6 +267,10 @@ pub async fn generate_listing(
         price,
         discount,
         brand,
+        length,
+        width,
+        height,
+        weight,
         copy: Some(ProductCopy {
             title: copy.title.clone(),
             description: copy.description.clone(),
