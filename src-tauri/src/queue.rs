@@ -160,21 +160,57 @@ pub async fn run_worker(state: Arc<AppState>) {
         let cfg = get_config(&state.paths);
         let outcome: anyhow::Result<()> = async {
             let noop = |_s: &str, _o: bool, _m: &str| {};
-            let listing = generate_listing(&state, &cfg, &job.input, &noop, false).await?;
-            let lid = listing.id.clone();
-            save_listing(&state.paths, listing.clone());
-            patch(&state, &job.id, |j| j.listing_id = Some(lid.clone())).await;
+            // Crash-resume: if this job already produced a listing, REUSE it
+            // rather than regenerating — regenerate + re-publish would create a
+            // duplicate card. The pipeline's nmID idempotency covers the case
+            // where the prior run already created the WB card.
+            let listing = match job
+                .listing_id
+                .as_ref()
+                .and_then(|lid| crate::store::get_listing(&state.paths, lid))
+            {
+                Some(l) => l,
+                None => {
+                    let l = generate_listing(&state, &cfg, &job.input, &noop, false).await?;
+                    let lid = l.id.clone();
+                    save_listing(&state.paths, l.clone());
+                    patch(&state, &job.id, |j| j.listing_id = Some(lid.clone())).await;
+                    l
+                }
+            };
 
             if job.auto_publish {
                 patch(&state, &job.id, |j| j.status = JobStatus::Publishing).await;
+                // Share the in-flight guard with the manual `publish` command so a
+                // user clicking Publish on this same listing can't race us into a
+                // duplicate card. If it's already in flight, the other path owns it.
+                let got_lock = {
+                    let mut inflight = state.publishing.lock().unwrap_or_else(|e| e.into_inner());
+                    inflight.insert(listing.id.clone())
+                };
+                if !got_lock {
+                    patch(&state, &job.id, |j| {
+                        j.status = JobStatus::Done;
+                        j.error = Some("已由手动上架处理，跳过以避免重复建卡".into());
+                    })
+                    .await;
+                    return Ok(());
+                }
                 let noop = |_s: &str, _o: bool, _m: &str| {};
                 let result = publish_listing(&state, &listing, &cfg, &noop).await;
+                {
+                    let mut inflight = state.publishing.lock().unwrap_or_else(|e| e.into_inner());
+                    inflight.remove(&listing.id);
+                }
                 update_listing(&state.paths, &listing.id, |l| {
                     l.stage = result.stage;
-                    l.nm_id = result.nm_id;
-                    l.imt_id = result.imt_id;
-                    l.subject_id = result.subject_id;
-                    l.subject_name = result.subject_name.clone();
+                    // never erase a known nmID with a None (orphan guard)
+                    l.nm_id = result.nm_id.or(l.nm_id);
+                    l.imt_id = result.imt_id.or(l.imt_id);
+                    l.subject_id = result.subject_id.or(l.subject_id);
+                    if result.subject_name.is_some() {
+                        l.subject_name = result.subject_name.clone();
+                    }
                     l.dry_run = result.dry_run;
                     l.sandbox = result.sandbox;
                     l.logs = result.logs.clone();

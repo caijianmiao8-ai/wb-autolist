@@ -171,6 +171,16 @@ pub async fn publish(
     let cfg = get_config(&st.paths);
     let listing = store::get_listing(&st.paths, &id).ok_or("未找到该商品")?;
 
+    // In-flight guard: refuse a second concurrent publish of the same listing
+    // (double-click, or the batch worker racing a manual publish). Combined with
+    // the pipeline's nmID idempotency, this stops duplicate cards.
+    {
+        let mut inflight = st.publishing.lock().unwrap_or_else(|e| e.into_inner());
+        if !inflight.insert(id.clone()) {
+            return Err("该商品正在上架中，请稍候…".into());
+        }
+    }
+
     let app2 = app.clone();
     let id2 = id.clone();
     let on = move |stage: &str, ok: bool, msg: &str| {
@@ -180,13 +190,22 @@ pub async fn publish(
         );
     };
     let result = publish_listing(&st, &listing, &cfg, &on).await;
+    // release the in-flight guard regardless of outcome (no `?` above)
+    {
+        let mut inflight = st.publishing.lock().unwrap_or_else(|e| e.into_inner());
+        inflight.remove(&id);
+    }
 
     let updated = store::update_listing(&st.paths, &id, |l| {
         l.stage = result.stage;
-        l.nm_id = result.nm_id;
-        l.imt_id = result.imt_id;
-        l.subject_id = result.subject_id;
-        l.subject_name = result.subject_name.clone();
+        // Never let a None erase a known nmID/imtID — a card created in a prior
+        // partial attempt must stay visible & fixable, not orphaned.
+        l.nm_id = result.nm_id.or(l.nm_id);
+        l.imt_id = result.imt_id.or(l.imt_id);
+        l.subject_id = result.subject_id.or(l.subject_id);
+        if result.subject_name.is_some() {
+            l.subject_name = result.subject_name.clone();
+        }
         l.dry_run = result.dry_run;
         l.sandbox = result.sandbox;
         l.logs = result.logs.clone();
@@ -670,6 +689,15 @@ pub async fn set_card_price(
     let cfg = get_config(&st.paths);
     if cfg.wb_content_token.is_empty() {
         return Err("未配置 WB Token。".into());
+    }
+    // Fat-finger guard: a stray extra zero pushes a wildly wrong price to the
+    // LIVE store before WB's ~1-min async apply. Reject the clearly-invalid here;
+    // the UI also confirms the exact value. (WB's own ceiling is well under this.)
+    if price <= 0 {
+        return Err("价格必须大于 0。".into());
+    }
+    if price > 99_999_999 {
+        return Err("价格异常过大（可能多打了 0），请确认后再提交。".into());
     }
     let ctx = WbCtx {
         token: prices_token(&cfg),

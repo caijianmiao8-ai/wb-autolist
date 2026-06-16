@@ -100,6 +100,14 @@ async fn run_pipeline(
         return Ok(dry_run_pipeline(listing, logs, on).await);
     }
 
+    // IDEMPOTENCY: if this listing already has a WB card, NEVER create a second
+    // one. A repeat publish (double-click, crash-resume, retry after a flaky
+    // media upload) re-submits price/stock for the existing nmID instead of
+    // spawning a duplicate card in the seller's live store.
+    if let Some(nm) = listing.nm_id {
+        return resume_existing(state, listing, cfg, nm, logs, on).await;
+    }
+
     let ctx = WbCtx {
         token: cfg.wb_content_token.clone(),
         sandbox: cfg.wb_sandbox,
@@ -258,21 +266,33 @@ async fn run_pipeline(
     );
 
     // ── Step 5: media (byte upload, one per slot) ──
+    // NON-FATAL after creation: the card already exists on WB, so a media error
+    // must NOT propagate as Err (that path drops result.nm_id, orphaning a live
+    // card the app can no longer see/price/trash). Record failures, keep going,
+    // and surface them as a warning while preserving the nmID.
     let ordered = order_images(listing);
     let mut slot = 1i64;
+    let mut media_failures = 0u32;
+    let mut first_media_err: Option<String> = None;
     for img in ordered {
         let file = img.url.rsplit('/').next().unwrap_or(&img.url).to_string();
-        let bytes = std::fs::read(state.paths.images().join(&file))
-            .map_err(|e| anyhow!("读取图片失败 {}: {}", file, e))?;
-        upload_media_bytes(state, &ctx, created.nm_id, slot, bytes, &file).await?;
-        log(
-            logs,
-            "media",
-            true,
-            &format!("已上传第 {} 张图（{}）", slot, img.kind),
-            on,
-        );
-        slot += 1;
+        let res = match std::fs::read(state.paths.images().join(&file)) {
+            Ok(bytes) => upload_media_bytes(state, &ctx, created.nm_id, slot, bytes, &file).await,
+            Err(e) => Err(anyhow!("读取图片失败 {}: {}", file, e)),
+        };
+        match res {
+            Ok(_) => {
+                log(logs, "media", true, &format!("已上传第 {} 张图（{}）", slot, img.kind), on);
+                slot += 1;
+            }
+            Err(e) => {
+                media_failures += 1;
+                if first_media_err.is_none() {
+                    first_media_err = Some(e.to_string());
+                }
+                log(logs, "media", false, &format!("第 {} 张图上传失败：{}", slot, e), on);
+            }
+        }
     }
 
     // ── Step 6: price (submit once, no polling) ──
@@ -343,6 +363,74 @@ async fn run_pipeline(
                 ),
             }
         }
+    }
+
+    // Card exists (nmID preserved) but some photos didn't upload — surface it as
+    // a warning rather than losing the card to an Err.
+    if media_failures > 0 {
+        let note = format!(
+            "卡片已创建 nmID={}，但有 {} 张图未上传成功（{}）。可在「上架记录」删除后重做，或在 WB 后台补图。",
+            created.nm_id,
+            media_failures,
+            first_media_err.unwrap_or_default()
+        );
+        log(logs, "live", false, &note, on);
+        result.error = Some(note);
+    }
+    Ok(result)
+}
+
+/// Resume an already-created card: re-submit price (+ FBS stock) for its nmID
+/// WITHOUT creating a new card. Used when a publish is repeated (double-click,
+/// crash-resume, or retry after a partial failure) so the seller's store never
+/// gets a duplicate listing.
+async fn resume_existing(
+    state: &AppState,
+    listing: &Listing,
+    cfg: &AppConfig,
+    nm: i64,
+    logs: &mut Vec<StageLog>,
+    on: &Progress,
+) -> Result<PublishResult> {
+    let price_ctx = WbCtx {
+        token: prices_token(cfg),
+        sandbox: cfg.wb_sandbox,
+    };
+    let discount = listing.discount.clamp(0.0, 99.0).round();
+    let base = original_price(listing.price, discount) as i64;
+    let result = PublishResult {
+        stage: ListingStage::Live,
+        nm_id: Some(nm),
+        imt_id: listing.imt_id,
+        subject_id: listing.subject_id,
+        subject_name: listing.subject_name.clone(),
+        dry_run: false,
+        sandbox: cfg.wb_sandbox,
+        logs: vec![],
+        error: None,
+    };
+    log(
+        logs,
+        "pricing",
+        true,
+        &format!("商品已存在（nmID={}），仅重新提交价格/折扣，不重复建卡。", nm),
+        on,
+    );
+    match upload_price_task(
+        state,
+        &price_ctx,
+        vec![json!({ "nmID": nm, "price": base, "discount": discount as i64 })],
+    )
+    .await
+    {
+        Ok(_) => log(logs, "live", true, "价格/折扣已重新提交（WB 异步处理）。", on),
+        Err(e) => log(
+            logs,
+            "live",
+            false,
+            &format!("价格暂未提交（接口限流）：{}。可稍后在「上架记录」重试定价。", e),
+            on,
+        ),
     }
     Ok(result)
 }

@@ -89,7 +89,8 @@ export function SettingsForm() {
     <div className="mx-auto max-w-2xl animate-fade-up">
       <h1 className="mb-1 text-2xl font-semibold tracking-tight">设置</h1>
       <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
-        所有配置（含密钥）仅保存在<b className="text-slate-700 dark:text-slate-300">本机</b>应用数据目录，不会上传任何服务器。
+        密钥仅保存在<b className="text-slate-700 dark:text-slate-300">本机</b>应用数据目录，不随程序上传。
+        生成图片/文案时，商品名、关键词等内容会发送到所选 AI 网关（如 Aurixel）进行处理。
       </p>
 
       <div className="space-y-5">

@@ -5,6 +5,7 @@ use crate::paths::Paths;
 use crate::queue::BatchJob;
 use crate::wb::categories::WbCaches;
 use crate::wb::client::SerialGate;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::time::Duration;
@@ -29,6 +30,9 @@ pub struct AppState {
     /// Epoch-seconds until which the prices DOMAIN is cooling down after a 429
     /// (set from X-Ratelimit-Retry). 0 = no cooldown. Gates all price sync.
     pub prices_cooldown_until: AtomicI64,
+    /// Listing ids with a publish in flight — guards against a double-click or a
+    /// workbench publish racing the batch worker creating two cards for one item.
+    pub publishing: std::sync::Mutex<HashSet<String>>,
 }
 
 impl AppState {
@@ -54,6 +58,7 @@ impl AppState {
             worker_running: AtomicBool::new(false),
             db: std::sync::Mutex::new(db),
             prices_cooldown_until: AtomicI64::new(0),
+            publishing: std::sync::Mutex::new(HashSet::new()),
         }
     }
 }

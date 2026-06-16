@@ -57,6 +57,7 @@ export function ManagePanel() {
   const [busyNm, setBusyNm] = useState<number | null>(null);
   const [editingNm, setEditingNm] = useState<number | null>(null);
   const [cooldown, setCooldown] = useState(0); // seconds left on prices
+  const [sandbox, setSandbox] = useState(false); // which store these cards live in
   const cdRef = useRef(0);
 
   // read the local DB (instant, no network)
@@ -78,6 +79,7 @@ export function ManagePanel() {
       setLoading(true);
       try {
         const cfg = await api.getSettings().catch(() => null);
+        setSandbox(!!cfg?.wbSandbox);
         const def = cfg?.defaultWarehouseId || 0;
         const v = await loadDb(def || null);
         // if a default warehouse exists but the first read used null, re-read for stock
@@ -172,6 +174,18 @@ export function ManagePanel() {
   }
 
   async function doSetPrice(card: ManagedCard, price: number, discount: number) {
+    // Confirm the exact value before pushing to the store — a fat-fingered extra
+    // zero on a price is a direct, hard-to-undo financial mistake.
+    const final = discount > 0 ? Math.round(price * (1 - discount / 100)) : price;
+    if (
+      !window.confirm(
+        `确认修改价格？\n\n` +
+          `${card.title || card.vendorCode}（nmID ${card.nmID}）\n` +
+          `划线价 ${price.toLocaleString()} · 折扣 ${discount}% → 到手约 ${final.toLocaleString()}\n\n` +
+          `会异步推送到${sandbox ? "沙盒" : "真实"}店铺（约 1 分钟生效）。`
+      )
+    )
+      return;
     setBusyNm(card.nmID);
     try {
       await api.setCardPrice(card.nmID, price, discount);
@@ -213,6 +227,17 @@ export function ManagePanel() {
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
             <Boxes className="h-6 w-6 text-wb-pink" /> 商品管理
+            <span
+              className={clsx(
+                "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                sandbox
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300"
+                  : "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+              )}
+              title={sandbox ? "当前操作的是沙盒店铺（测试）" : "当前操作的是真实店铺，改价/删卡会影响线上"}
+            >
+              {sandbox ? "沙盒" : "线上"}
+            </span>
           </h1>
           <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
             <Database className="h-3.5 w-3.5" /> 读取本地缓存（秒开、不限流）。用「同步」按需从 WB 拉取。

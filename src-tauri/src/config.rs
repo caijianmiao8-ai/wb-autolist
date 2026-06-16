@@ -53,7 +53,9 @@ impl Default for AppConfig {
             public_base_url: String::new(),
             default_warehouse_id: 0,
             default_stock: 99,
-            auto_stock: true,
+            // Safe default OFF: auto-stocking silently puts real FBS units on a
+            // brand-new card; make it an explicit opt-in in Settings.
+            auto_stock: false,
             image_templates: None,
         }
     }

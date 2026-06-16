@@ -27,6 +27,7 @@ interface SettingsState {
   wbContentTokenSet: boolean;
   dryRun: boolean;
   imageProvider: string;
+  wbSandbox: boolean;
 }
 
 export function Workbench() {
@@ -116,6 +117,8 @@ export function Workbench() {
   }, [logs]);
 
   const dryRun = settings ? settings.dryRun : true;
+  const sandbox = settings ? settings.wbSandbox : false;
+  const live = !dryRun && !sandbox; // real store — the one that needs a guard
 
   // What WB actually receives: the pre-discount "struck-through" base price
   // (= final ÷ (1−discount)). Surface it so a high price/discount doesn't
@@ -204,6 +207,19 @@ export function Workbench() {
 
   async function handlePublish() {
     if (!listing) return;
+    // Guard irreversible LIVE actions: a confirm that names the environment so a
+    // seller never publishes AI-generated cards to their real store by accident.
+    if (!dryRun) {
+      const envLine = live
+        ? "⚠️ 线上真实店铺（会出现在你的真实 Wildberries 店铺）"
+        : "沙盒测试环境（不影响真实店铺）";
+      const ok = window.confirm(
+        `确认上架到 ${envLine}？\n\n` +
+          `商品：${listing.productName || productName}\n` +
+          `到手价：${price} · 折扣 ${discount}%（划线价 ≈ ${wbBase.toLocaleString()}）`
+      );
+      if (!ok) return;
+    }
     setStep("publishing");
     setLogs([]);
     setDone(null);
@@ -300,6 +316,19 @@ export function Workbench() {
         <p className="mt-2.5 text-[15px] leading-relaxed text-slate-500 dark:text-slate-400">
           输入商品名与关键字，生成主图、宣传图与俄文文案，发布到 Wildberries。
         </p>
+        {settings && !dryRun && (
+          <span
+            className={clsx(
+              "mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+              live
+                ? "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300"
+            )}
+          >
+            <span className={clsx("h-1.5 w-1.5 rounded-full", live ? "bg-rose-500" : "bg-amber-500")} />
+            {live ? "线上真实店铺 — 上架会进入真实店铺" : "沙盒测试环境 — 不影响真实店铺"}
+          </span>
+        )}
       </div>
 
       {dryRun && (
@@ -513,7 +542,7 @@ export function Workbench() {
               {!listing.partial && step !== "publishing" && step !== "done" && (
                 <button className="btn-primary w-full" onClick={handlePublish}>
                   <Rocket className="h-4 w-4" />
-                  {dryRun ? "演示上架" : "上架到 Wildberries"}
+                  {dryRun ? "演示上架" : live ? "上架到 Wildberries（线上）" : "上架到沙盒（测试）"}
                 </button>
               )}
 
@@ -706,7 +735,11 @@ function ProgressPanel({
   logEndRef: React.RefObject<HTMLDivElement>;
   onReset: () => void;
 }) {
-  const success = done && done.stage === "live";
+  // A card created but with a warning (e.g. some images failed to upload) must
+  // NOT read as a clean success — surface it as "partial" so the seller knows to
+  // fix it, never as a green "上架成功" for an imageless/priceless card.
+  const success = !!done && done.stage === "live" && !done.error;
+  const partial = !!done && !!done.nmID && !!done.error && !success;
   return (
     <div className="card p-6">
       <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
@@ -714,6 +747,8 @@ function ProgressPanel({
           <Loader2 className="h-4 w-4 animate-spin text-wb-pink" />
         ) : success ? (
           <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+        ) : partial ? (
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
         ) : (
           <AlertTriangle className="h-4 w-4 text-rose-600 dark:text-rose-400" />
         )}
@@ -739,13 +774,19 @@ function ProgressPanel({
             "mt-4 rounded-xl border px-4 py-3 text-sm",
             success
               ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+              : partial
+              ? "border-amber-400/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"
               : "border-rose-400/30 bg-rose-500/10 text-rose-700 dark:text-rose-200"
           )}
         >
-          {success ? (
+          {success || partial ? (
             <div>
               <div className="font-medium">
-                {done.dryRun ? "演示完成（未真实上架）" : "上架成功"}
+                {success
+                  ? done.dryRun
+                    ? "演示完成（未真实上架）"
+                    : "上架成功"
+                  : "卡片已创建，但未全部完成"}
               </div>
               {done.nmID && (
                 <div className="mt-1 text-xs">
@@ -767,6 +808,9 @@ function ProgressPanel({
                     </button>
                   )}
                 </div>
+              )}
+              {partial && done.error && (
+                <div className="mt-2 text-xs leading-relaxed">{done.error}</div>
               )}
             </div>
           ) : (
