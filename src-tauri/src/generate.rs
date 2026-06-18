@@ -11,6 +11,7 @@ use crate::state::AppState;
 use crate::templates::fill;
 use crate::types::{GeneratedImage, Listing, ListingInput, ListingStage, ProductCopy};
 use crate::util::{make_vendor_code, new_id, now_iso};
+use crate::wb::barcode::generate_ean13;
 use crate::wb::pipeline::Progress;
 use anyhow::Result;
 use base64::Engine;
@@ -92,6 +93,7 @@ pub(crate) async fn render_one(
     idx: usize,
 ) -> Result<GeneratedImage> {
     let prompt = fill(&tmpl.body, ctx);
+    let mut is_placeholder = false;
     let raw_bytes: Result<Vec<u8>> = match base {
         Some(b) => match to_png_square(b, 1024) {
             Ok(png) => edit_image(&state.http, cfg, &png, &prompt, "1024x1536").await,
@@ -120,13 +122,18 @@ pub(crate) async fn render_one(
                 .and_then(|b| to_png_square(b, 1200).ok())
                 .and_then(|p| normalize_main(&p, 1200, 1600).ok());
             match fallback {
-                Some(b) => b,
-                None => make_placeholder(product_name, keywords, 1200, 1600, idx as u32)?,
+                Some(b) => b, // derived from the real photo — safe to ship
+                None => {
+                    is_placeholder = true;
+                    make_placeholder(product_name, keywords, 1200, 1600, idx as u32)?
+                }
             }
         }
     };
     let mut img = save_image(&state.paths, &buf, &tmpl.slot, &prompt, 1200, 1600, "jpg");
-    img.template_kind = tmpl.kind.clone();
+    // Tag synthetic placeholders so the publish pipeline can refuse to ship one
+    // as a live product photo (it carries instructional text, not the product).
+    img.template_kind = if is_placeholder { "placeholder".to_string() } else { tmpl.kind.clone() };
     Ok(img)
 }
 
@@ -284,6 +291,9 @@ pub async fn generate_listing(
         subject_id: None,
         subject_name: None,
         vendor_code: make_vendor_code(&raw.product_name),
+        // Mint the barcode ONCE here and reuse on every publish/resume so a retry
+        // can't create a second card and a resumed card can set stock.
+        sku: generate_ean13(),
         stage: ListingStage::Draft,
         nm_id: None,
         imt_id: None,

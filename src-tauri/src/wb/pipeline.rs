@@ -9,7 +9,7 @@ use crate::state::AppState;
 use crate::types::{GeneratedImage, Listing, ListingStage, ProductCopy, StageLog};
 use crate::util::{now_iso, original_price};
 use crate::wb::barcode::generate_ean13;
-use crate::wb::cards::{upload_cards, wait_for_card};
+use crate::wb::cards::{find_card_by_vendor_code, upload_cards, wait_for_card};
 use crate::wb::categories::{get_characteristics, get_colors, get_tnved, resolve_subject};
 use crate::wb::client::WbCtx;
 use crate::wb::marketplace::set_stocks;
@@ -31,10 +31,31 @@ pub struct PublishResult {
     pub imt_id: Option<i64>,
     pub subject_id: Option<i64>,
     pub subject_name: Option<String>,
+    /// The vendorCode/sku actually used to create the card (may differ from the
+    /// listing's if a brand-retry minted a -Rn code). Caller persists them so a
+    /// later resume/stock targets the real card. None = unchanged.
+    pub vendor_code: Option<String>,
+    pub sku: Option<String>,
     pub dry_run: bool,
     pub sandbox: bool,
     pub logs: Vec<StageLog>,
     pub error: Option<String>,
+}
+
+fn env_name(sandbox: bool) -> &'static str {
+    if sandbox {
+        "沙盒"
+    } else {
+        "线上"
+    }
+}
+
+/// Is `id` a valid warehouse for the CURRENT account? Guards auto-stock from
+/// pushing to a stale/foreign warehouse after an env/seller switch. If no
+/// warehouses have been synced yet we can't validate → allow (no regression).
+fn warehouse_ok(state: &AppState, id: i64) -> bool {
+    let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+    crate::db::warehouse_allows(&conn, id).unwrap_or(true)
 }
 
 fn log(logs: &mut Vec<StageLog>, stage: &str, ok: bool, msg: &str, on: &Progress) {
@@ -71,6 +92,8 @@ pub async fn publish_listing(
                 imt_id: None,
                 subject_id: listing.subject_id,
                 subject_name: listing.subject_name.clone(),
+                vendor_code: None,
+                sku: None,
                 dry_run: dry,
                 sandbox: !dry && cfg.wb_sandbox,
                 logs,
@@ -88,6 +111,15 @@ async fn run_pipeline(
     logs: &mut Vec<StageLog>,
     on: &Progress,
 ) -> Result<PublishResult> {
+    // The keychain couldn't be read this run — a previously-saved token may exist
+    // but be momentarily unreadable. Refuse rather than silently fall to dry-run
+    // and publish nothing while the user thinks it's live.
+    if cfg.kc_error {
+        return Err(anyhow!(
+            "钥匙串暂时不可用，已暂停上架以免误判为演示模式。请重试或重启应用。"
+        ));
+    }
+
     let copy = listing
         .copy
         .as_ref()
@@ -98,6 +130,33 @@ async fn run_pipeline(
 
     if dry {
         return Ok(dry_run_pipeline(listing, logs, on).await);
+    }
+
+    // ── Live-publish guards (real store ahead) ──
+    // (a) half-generated main-first draft must not go live as a 1-photo card.
+    if listing.partial {
+        return Err(anyhow!("该商品只生成了主图，请先「继续生成其余图片」再上架。"));
+    }
+    // (b) environment must match the one the card was DRAFTED in (skip demo drafts
+    //     which have no real env affinity) — a sandbox draft must not become a
+    //     real live card after the user flips the Settings toggle.
+    if !listing.dry_run && listing.sandbox != cfg.wb_sandbox {
+        return Err(anyhow!(
+            "此商品在{}创建，当前是{}环境。请在设置切回{}环境后再上架，以免发到错误的店铺。",
+            env_name(listing.sandbox),
+            env_name(cfg.wb_sandbox),
+            env_name(listing.sandbox)
+        ));
+    }
+    // (c) refuse to ship a synthetic placeholder as the live main photo.
+    if order_images(listing)
+        .first()
+        .map(|i| i.template_kind == "placeholder")
+        .unwrap_or(false)
+    {
+        return Err(anyhow!(
+            "主图是占位图（图像服务此前失败）。请重新生成主图后再上架。"
+        ));
     }
 
     // IDEMPOTENCY: if this listing already has a WB card, NEVER create a second
@@ -112,6 +171,27 @@ async fn run_pipeline(
         token: cfg.wb_content_token.clone(),
         sandbox: cfg.wb_sandbox,
     };
+
+    // RECONCILE: a prior attempt may have created the card but lost the nmID
+    // (poll timeout / network drop). Only worth a lookup when this looks like a
+    // retry (a previous error is recorded). If the card already exists, resume it
+    // instead of creating a duplicate in the seller's store.
+    if listing.error.is_some() {
+        if let Ok(Some(existing)) =
+            find_card_by_vendor_code(state, &ctx, &listing.vendor_code).await
+        {
+            if existing.nm_id > 0 {
+                log(
+                    logs,
+                    "creating",
+                    true,
+                    &format!("发现已存在的卡片 nmID={}，转为补图+定价，不重复建卡。", existing.nm_id),
+                    on,
+                );
+                return resume_existing(state, listing, cfg, existing.nm_id, logs, on).await;
+            }
+        }
+    }
     let price_ctx = WbCtx {
         token: prices_token(cfg),
         sandbox: cfg.wb_sandbox,
@@ -123,6 +203,8 @@ async fn run_pipeline(
         imt_id: None,
         subject_id: None,
         subject_name: None,
+        vendor_code: None,
+        sku: None,
         dry_run: false,
         sandbox: cfg.wb_sandbox,
         logs: vec![],
@@ -208,6 +290,7 @@ async fn run_pipeline(
 
     let mut created: Option<crate::wb::types::WbCardListItem> = None;
     let mut used_sku: Option<String> = None;
+    let mut used_vc: Option<String> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for (i, brand) in brand_attempts.iter().enumerate() {
         let vendor_code = if i == 0 {
@@ -215,7 +298,13 @@ async fn run_pipeline(
         } else {
             format!("{}-R{}", listing.vendor_code, i)
         };
-        let sku = generate_ean13();
+        // Reuse the barcode minted at draft time for the first attempt (so a
+        // retry never mints a second card); brand-retry uses a fresh one.
+        let sku = if i == 0 && !listing.sku.is_empty() {
+            listing.sku.clone()
+        } else {
+            generate_ean13()
+        };
         let card = json!({
             "subjectID": subject.subject_id,
             "variants": [{
@@ -248,6 +337,7 @@ async fn run_pipeline(
             Ok(c) => {
                 created = Some(c);
                 used_sku = Some(sku);
+                used_vc = Some(vendor_code);
                 break;
             }
             Err(e) => {
@@ -257,6 +347,18 @@ async fn run_pipeline(
                     last_err = Some(e);
                     continue;
                 }
+                // The card may actually have been created (poll timeout / a
+                // transient read error inside the poll). Do a final lookup before
+                // giving up, so we learn the nmID rather than orphaning a live card.
+                if let Ok(Some(c)) = find_card_by_vendor_code(state, &ctx, &vendor_code).await {
+                    if c.nm_id > 0 {
+                        log(logs, "creating", true, &format!("超时后找回卡片 nmID={}", c.nm_id), on);
+                        created = Some(c);
+                        used_sku = Some(sku);
+                        used_vc = Some(vendor_code);
+                        break;
+                    }
+                }
                 return Err(e);
             }
         }
@@ -264,6 +366,10 @@ async fn run_pipeline(
     let created = created.ok_or_else(|| last_err.unwrap_or_else(|| anyhow!("建卡失败")))?;
     result.nm_id = Some(created.nm_id);
     result.imt_id = Some(created.imt_id);
+    // Persist the ACTUAL vendorCode/sku used so a later resume/stock targets the
+    // real card (matters when a brand-retry minted a -Rn code).
+    result.vendor_code = used_vc;
+    result.sku = used_sku.clone();
     result.stage = ListingStage::Media;
     log(
         logs,
@@ -340,35 +446,39 @@ async fn run_pipeline(
     // marketplace scope / no warehouse just leaves it for the management panel.
     if cfg.auto_stock && cfg.default_warehouse_id > 0 && cfg.default_stock > 0 && !cfg.wb_sandbox {
         if let Some(sku) = &used_sku {
-            let mp_ctx = WbCtx {
-                token: cfg.wb_content_token.clone(),
-                sandbox: false,
-            };
-            match set_stocks(
-                state,
-                &mp_ctx,
-                cfg.default_warehouse_id,
-                &[(sku.clone(), cfg.default_stock)],
-            )
-            .await
-            {
-                Ok(_) => log(
-                    logs,
-                    "live",
-                    true,
-                    &format!(
-                        "已设库存 {} 件（仓库 {}）——商品在审核+定价后即可售。",
-                        cfg.default_stock, cfg.default_warehouse_id
+            if warehouse_ok(state, cfg.default_warehouse_id) {
+                let mp_ctx = WbCtx {
+                    token: cfg.wb_content_token.clone(),
+                    sandbox: cfg.wb_sandbox,
+                };
+                match set_stocks(
+                    state,
+                    &mp_ctx,
+                    cfg.default_warehouse_id,
+                    &[(sku.clone(), cfg.default_stock)],
+                )
+                .await
+                {
+                    Ok(_) => log(
+                        logs,
+                        "live",
+                        true,
+                        &format!(
+                            "已设库存 {} 件（仓库 {}）——商品在审核+定价后即可售。",
+                            cfg.default_stock, cfg.default_warehouse_id
+                        ),
+                        on,
                     ),
-                    on,
-                ),
-                Err(e) => log(
-                    logs,
-                    "live",
-                    false,
-                    &format!("库存未自动设置（可在「商品管理」补货）：{}", e),
-                    on,
-                ),
+                    Err(e) => log(
+                        logs,
+                        "live",
+                        false,
+                        &format!("库存未自动设置（可在「商品管理」补货）：{}", e),
+                        on,
+                    ),
+                }
+            } else {
+                log(logs, "live", false, "默认仓库在当前环境/账号不存在，已跳过自动设库存。", on);
             }
         }
     }
@@ -412,6 +522,8 @@ async fn resume_existing(
         imt_id: listing.imt_id,
         subject_id: listing.subject_id,
         subject_name: listing.subject_name.clone(),
+        vendor_code: None,
+        sku: None,
         dry_run: false,
         sandbox: cfg.wb_sandbox,
         logs: vec![],
@@ -464,6 +576,25 @@ async fn resume_existing(
             on,
         ),
     }
+
+    // FBS stock for the resumed card (same opt-in guard as the main path; uses the
+    // persisted sku, validated against the current account's synced warehouses).
+    if cfg.auto_stock
+        && cfg.default_warehouse_id > 0
+        && cfg.default_stock > 0
+        && !cfg.wb_sandbox
+        && !listing.sku.is_empty()
+    {
+        if warehouse_ok(state, cfg.default_warehouse_id) {
+            let mp_ctx = WbCtx { token: cfg.wb_content_token.clone(), sandbox: cfg.wb_sandbox };
+            match set_stocks(state, &mp_ctx, cfg.default_warehouse_id, &[(listing.sku.clone(), cfg.default_stock)]).await {
+                Ok(_) => log(logs, "live", true, &format!("已设库存 {} 件（仓库 {}）。", cfg.default_stock, cfg.default_warehouse_id), on),
+                Err(e) => log(logs, "live", false, &format!("库存未自动设置（可在「商品管理」补货）：{}", e), on),
+            }
+        } else {
+            log(logs, "live", false, "默认仓库在当前环境/账号不存在，已跳过自动设库存。", on);
+        }
+    }
     Ok(result)
 }
 
@@ -478,6 +609,8 @@ async fn dry_run_pipeline(
         imt_id: None,
         subject_id: None,
         subject_name: listing.copy.as_ref().map(|c| c.category_hint.clone()),
+        vendor_code: None,
+        sku: None,
         dry_run: true,
         sandbox: false,
         logs: vec![],

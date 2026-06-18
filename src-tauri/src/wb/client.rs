@@ -174,6 +174,21 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
         Host::Prices => &state.gate_prices,
         Host::Marketplace => &state.gate_marketplace,
     };
+    // Prices shares one tiny bucket (read+write). Honor the cooldown PROACTIVELY
+    // for all prices traffic — not just the read sync — so a batch / retry / 改价
+    // can't keep firing doomed writes that re-arm the cooldown and never apply.
+    if matches!(req.host, Host::Prices) {
+        let until = state
+            .prices_cooldown_until
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let now = chrono::Utc::now().timestamp();
+        if now < until {
+            return Err(anyhow!(
+                "WB 价格接口冷却中，约 {} 秒后可再操作价格。",
+                until - now
+            ));
+        }
+    }
     let mut attempt: u64 = 0;
     // WB wants the raw token; Bearer is only a 401 fallback.
     let mut use_bearer = false;
@@ -221,7 +236,8 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
         // cooldown from X-Ratelimit-Retry and FAIL FAST — retrying just burns
         // more of an already-empty bucket. Sync code gates on this cooldown.
         if status == 429 && matches!(req.host, Host::Prices) {
-            let retry = retry_after.unwrap_or(60);
+            // clamp so a buggy/hostile Retry-After can't lock pricing for hours.
+            let retry = retry_after.unwrap_or(60).min(3600);
             let until = chrono::Utc::now().timestamp() + retry as i64;
             state
                 .prices_cooldown_until
@@ -230,6 +246,10 @@ pub async fn wb_fetch(state: &AppState, ctx: &WbCtx, req: WbReq) -> Result<Value
                 "WB 价格接口限流(429)，约 {} 秒后可再同步价格。",
                 retry
             ));
+        }
+        // Prices 5xx: fail fast too (retrying burns the shared bucket).
+        if status >= 500 && matches!(req.host, Host::Prices) {
+            return Err(anyhow!("WB 价格接口暂时不可用(HTTP {})，请稍后再试。", status));
         }
         if (status == 429 || status >= 500) && attempt < 3 {
             let wait = retry_after.unwrap_or(attempt * 2);

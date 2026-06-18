@@ -115,6 +115,15 @@ pub async fn retry_pricing(state: State<'_, Arc<AppState>>, id: String) -> Resul
         return Err("演示模式不支持定价".into());
     }
     let cfg = get_config(&st.paths);
+    // The card lives in the env it was created in; refuse if the current token is
+    // for the other env (avoids a confusing 401 / wrong-store write).
+    if l.sandbox != cfg.wb_sandbox {
+        return Err(format!(
+            "此商品在{}创建，当前是{}环境，请在设置切回后再重试定价。",
+            if l.sandbox { "沙盒" } else { "线上" },
+            if cfg.wb_sandbox { "沙盒" } else { "线上" }
+        ));
+    }
     let ctx = WbCtx {
         token: prices_token(&cfg),
         sandbox: l.sandbox,
@@ -205,6 +214,13 @@ pub async fn publish(
         l.subject_id = result.subject_id.or(l.subject_id);
         if result.subject_name.is_some() {
             l.subject_name = result.subject_name.clone();
+        }
+        // persist the ACTUAL vendorCode/sku used (brand-retry may have changed them)
+        if let Some(vc) = &result.vendor_code {
+            l.vendor_code = vc.clone();
+        }
+        if let Some(sk) = &result.sku {
+            l.sku = sk.clone();
         }
         l.dry_run = result.dry_run;
         l.sandbox = result.sandbox;
@@ -352,23 +368,38 @@ fn prices_cooldown(st: &AppState) -> i64 {
 /// seller), the cache is wiped so we never show one account's data under another.
 fn account_key(cfg: &AppConfig) -> String {
     let env = if cfg.wb_sandbox { "sandbox" } else { "live" };
+    // No token (or keychain read failed → empty): an unauthenticated namespace
+    // that ensure_account treats as a no-op — never wipes a known account.
+    if cfg.wb_content_token.is_empty() {
+        return format!("{}:none", env);
+    }
     let claims = cfg
         .wb_content_token
         .split('.')
         .nth(1)
         .and_then(|b| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(b).ok())
         .and_then(|by| serde_json::from_slice::<Value>(&by).ok());
-    let id = claims
-        .as_ref()
-        .and_then(|v| {
-            ["oid", "sid", "id"].iter().find_map(|k| {
-                v.get(*k).and_then(|x| {
-                    x.as_i64().map(|n| n.to_string()).or_else(|| x.as_str().map(|s| s.to_string()))
-                })
+    let id = claims.as_ref().and_then(|v| {
+        ["oid", "sid", "id"].iter().find_map(|k| {
+            v.get(*k).and_then(|x| {
+                x.as_i64().map(|n| n.to_string()).or_else(|| x.as_str().map(|s| s.to_string()))
             })
         })
-        .unwrap_or_else(|| "unknown".into());
-    format!("{}:{}", env, id)
+    });
+    match id {
+        Some(id) => format!("{}:{}", env, id),
+        // Can't extract a supplier id → key by a hash of the token so two
+        // different unidentifiable tokens NEVER share one cache namespace.
+        None => format!("{}:h{}", env, token_hash(&cfg.wb_content_token)),
+    }
+}
+
+/// Non-cryptographic short hash, only for namespacing distinct tokens.
+fn token_hash(s: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:x}", h.finish())
 }
 
 /// Pull ALL cards via cursor pagination. Returns `(cards, truncated)` where
@@ -492,6 +523,24 @@ pub fn db_list_cards(
 ) -> Result<ManageView, String> {
     let st = state.inner().clone();
     let cfg = get_config(&st.paths);
+    // No token (or a transient keychain read error → empty): serve an empty view
+    // and DON'T touch the cache, so an unauthenticated read can never wipe or leak
+    // a known account's data.
+    if cfg.wb_content_token.is_empty() {
+        return Ok(ManageView {
+            cards: vec![],
+            warehouses: vec![],
+            sync: SyncStatus {
+                products: db::MetaRow::default(),
+                prices: db::MetaRow::default(),
+                stocks: db::MetaRow::default(),
+                warehouses: db::MetaRow::default(),
+                prices_cooldown_remaining: prices_cooldown(&st),
+                now_epoch: now_epoch(),
+            },
+            warehouse_id,
+        });
+    }
     let key = account_key(&cfg);
     let conn = lock_db(&st);
     db::ensure_account(&conn, &key).map_err(|e| e.to_string())?;
@@ -686,6 +735,13 @@ pub async fn set_card_stock(
     }
     if skus.is_empty() {
         return Err("该商品没有条码(sku)，无法设库存。".into());
+    }
+    // Guard against a stale/foreign warehouse id after an env/seller switch.
+    {
+        let conn = lock_db(&st);
+        if !db::warehouse_allows(&conn, warehouse_id).unwrap_or(true) {
+            return Err("该仓库不在当前账号的仓库列表中（可能切换了环境/账号），请重新选择仓库。".into());
+        }
     }
     let ctx = WbCtx {
         token: cfg.wb_content_token.clone(),

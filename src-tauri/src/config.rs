@@ -42,6 +42,11 @@ pub struct AppConfig {
     /// Editable image-prompt templates. None = use the built-in defaults.
     #[serde(default)]
     pub image_templates: Option<crate::templates::ImageTemplates>,
+    /// True when the keychain couldn't be read this load (NOT persisted). Lets the
+    /// publish path refuse rather than silently degrade to dry-run with an empty
+    /// token that the user believes is configured.
+    #[serde(skip)]
+    pub kc_error: bool,
 }
 
 /// The templates actually in effect (user override, else built-in defaults).
@@ -73,6 +78,7 @@ impl Default for AppConfig {
             default_height: 5,
             default_weight: 0.3,
             image_templates: None,
+            kc_error: false,
         }
     }
 }
@@ -215,7 +221,12 @@ fn kc_del(account: &str) {
 /// the account so ONLY that key is stripped from json. On a keychain ERROR, do
 /// nothing — keep whatever plaintext we have and never strip (no data loss, no
 /// false logout via a partial-migration wipe).
-fn resolve_secret(field: &mut String, account: &'static str, migrated: &mut Vec<&'static str>) {
+fn resolve_secret(
+    field: &mut String,
+    account: &'static str,
+    migrated: &mut Vec<&'static str>,
+    errored: &mut Vec<&'static str>,
+) {
     match kc_read(account) {
         KcRead::Found(v) => *field = v,
         KcRead::Absent => {
@@ -230,6 +241,7 @@ fn resolve_secret(field: &mut String, account: &'static str, migrated: &mut Vec<
         }
         KcRead::Error => {
             eprintln!("⚠ 钥匙串读取失败({})，本次回退使用本地值", account);
+            errored.push(account);
         }
     }
 }
@@ -266,14 +278,18 @@ pub fn get_config(paths: &Paths) -> AppConfig {
     // plaintext from config.json/env on first run, then strip ONLY the cleartext
     // we successfully moved (per-field, so a partial migration loses nothing).
     let mut migrated: Vec<&'static str> = vec![];
-    resolve_secret(&mut cfg.wb_content_token, "wbContentToken", &mut migrated);
-    resolve_secret(&mut cfg.wb_prices_token, "wbPricesToken", &mut migrated);
-    resolve_secret(&mut cfg.aurixel_api_key, "aurixelApiKey", &mut migrated);
-    resolve_secret(&mut cfg.openai_api_key, "openaiApiKey", &mut migrated);
-    resolve_secret(&mut cfg.pollinations_token, "pollinationsToken", &mut migrated);
+    let mut errored: Vec<&'static str> = vec![];
+    resolve_secret(&mut cfg.wb_content_token, "wbContentToken", &mut migrated, &mut errored);
+    resolve_secret(&mut cfg.wb_prices_token, "wbPricesToken", &mut migrated, &mut errored);
+    resolve_secret(&mut cfg.aurixel_api_key, "aurixelApiKey", &mut migrated, &mut errored);
+    resolve_secret(&mut cfg.openai_api_key, "openaiApiKey", &mut migrated, &mut errored);
+    resolve_secret(&mut cfg.pollinations_token, "pollinationsToken", &mut migrated, &mut errored);
     if !migrated.is_empty() {
         strip_secrets_from_file(&paths.config(), &migrated);
     }
+    // Gate on the CONTENT token specifically — it drives dry-run + the cache
+    // namespace. A failed read there must not look like "no token configured".
+    cfg.kc_error = errored.contains(&"wbContentToken");
     // Defensive: tokens often arrive with trailing whitespace/newline from a
     // paste, which corrupts the Authorization header. Strip it.
     cfg.wb_content_token = cfg.wb_content_token.trim().to_string();

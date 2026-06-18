@@ -211,6 +211,12 @@ pub async fn run_worker(state: Arc<AppState>) {
                     if result.subject_name.is_some() {
                         l.subject_name = result.subject_name.clone();
                     }
+                    if let Some(vc) = &result.vendor_code {
+                        l.vendor_code = vc.clone();
+                    }
+                    if let Some(sk) = &result.sku {
+                        l.sku = sk.clone();
+                    }
                     l.dry_run = result.dry_run;
                     l.sandbox = result.sandbox;
                     l.logs = result.logs.clone();

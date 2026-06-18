@@ -83,6 +83,11 @@ pub fn open_memory() -> Result<Connection> {
 /// changes, wipe the cached data so we never show sandbox rows on production
 /// (or another seller's data). `key` = e.g. "sandbox:oid" or "live:oid".
 pub fn ensure_account(conn: &Connection, key: &str) -> Result<()> {
+    // An unauthenticated/unidentifiable account (empty token, or a keychain read
+    // error) must NEVER overwrite or wipe a known account's cache.
+    if key.ends_with(":none") {
+        return Ok(());
+    }
     let prev: Option<String> = conn
         .query_row("SELECT value FROM kv WHERE key='account'", [], |r| r.get(0))
         .ok();
@@ -96,6 +101,23 @@ pub fn ensure_account(conn: &Connection, key: &str) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// Whether warehouse `id` is valid for the current account. Returns true when no
+/// warehouses are synced yet (can't validate → don't block auto-stock); once a
+/// set exists, only a member id passes. Guards pushing stock to a stale/foreign
+/// warehouse after an environment or seller switch.
+pub fn warehouse_allows(conn: &Connection, id: i64) -> Result<bool> {
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM warehouses", [], |r| r.get(0))?;
+    if total == 0 {
+        return Ok(true);
+    }
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM warehouses WHERE id=?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
 }
 
 // ── row types ────────────────────────────────────────────────────────────────

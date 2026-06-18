@@ -326,6 +326,7 @@ export function ManagePanel() {
                 key={c.nmID}
                 card={c}
                 hasWarehouse={!!warehouseId}
+                priceLocked={cooldown > 0}
                 busy={busyNm === c.nmID}
                 open={editingNm === c.nmID}
                 onToggle={() => setEditingNm((n) => (n === c.nmID ? null : c.nmID))}
@@ -368,6 +369,7 @@ function SyncBtn({
 function CardRow({
   card,
   hasWarehouse,
+  priceLocked,
   busy,
   open,
   onToggle,
@@ -377,6 +379,7 @@ function CardRow({
 }: {
   card: ManagedCard;
   hasWarehouse: boolean;
+  priceLocked: boolean;
   busy: boolean;
   open: boolean;
   onToggle: () => void;
@@ -467,11 +470,13 @@ function CardRow({
               <div className="flex items-center gap-2">
                 <input type="number" min={0} className="input px-2.5 py-1.5 text-sm" value={priceInput} onChange={(e) => setPriceInput(Math.max(0, Number(e.target.value) || 0))} placeholder="价格" />
                 <input type="number" min={0} max={99} className="input w-20 px-2.5 py-1.5 text-sm" value={discountInput} onChange={(e) => setDiscountInput(Math.max(0, Math.min(99, Number(e.target.value) || 0)))} placeholder="折扣%" />
-                <button className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={() => onSetPrice(priceInput, discountInput)} disabled={busy || priceInput <= 0}>
+                <button className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={() => onSetPrice(priceInput, discountInput)} disabled={busy || priceInput <= 0 || priceLocked} title={priceLocked ? "价格接口冷却中，请稍候" : undefined}>
                   <RefreshCw className="h-3.5 w-3.5" /> 改价
                 </button>
               </div>
-              <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">价格接口限流较严，提交后约 1 分钟异步生效。</p>
+              <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                {priceLocked ? "价格接口冷却中，暂不可改价。" : "价格接口限流较严，提交后约 1 分钟异步生效。"}
+              </p>
             </div>
           </div>
 

@@ -4,6 +4,15 @@
 use crate::paths::{atomic_write, quarantine_corrupt, Paths};
 use crate::types::Listing;
 use crate::util::now_iso;
+use std::sync::{Mutex, OnceLock};
+
+/// Process-wide guard held across the read+write of listings.json, so concurrent
+/// mutators (batch worker + user commands on the multi-threaded runtime) can't
+/// last-writer-wins each other (which could revert a just-saved nmID → orphan).
+fn store_lock() -> &'static Mutex<()> {
+    static L: OnceLock<Mutex<()>> = OnceLock::new();
+    L.get_or_init(|| Mutex::new(()))
+}
 
 fn read_all(paths: &Paths) -> Vec<Listing> {
     let file = paths.listings();
@@ -35,6 +44,7 @@ pub fn get_listing(paths: &Paths, id: &str) -> Option<Listing> {
 }
 
 pub fn save_listing(paths: &Paths, mut listing: Listing) -> Listing {
+    let _g = store_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut all = read_all(paths);
     listing.updated_at = now_iso();
     if let Some(i) = all.iter().position(|l| l.id == listing.id) {
@@ -47,6 +57,7 @@ pub fn save_listing(paths: &Paths, mut listing: Listing) -> Listing {
 }
 
 pub fn update_listing<F: FnOnce(&mut Listing)>(paths: &Paths, id: &str, f: F) -> Option<Listing> {
+    let _g = store_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut all = read_all(paths);
     let i = all.iter().position(|l| l.id == id)?;
     f(&mut all[i]);
@@ -57,6 +68,7 @@ pub fn update_listing<F: FnOnce(&mut Listing)>(paths: &Paths, id: &str, f: F) ->
 }
 
 pub fn delete_listing(paths: &Paths, id: &str) -> bool {
+    let _g = store_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut all = read_all(paths);
     let n = all.len();
     all.retain(|l| l.id != id);

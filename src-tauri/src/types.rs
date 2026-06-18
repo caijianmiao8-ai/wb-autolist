@@ -86,6 +86,11 @@ pub struct Listing {
     pub subject_id: Option<i64>,
     pub subject_name: Option<String>,
     pub vendor_code: String,
+    /// Barcode (EAN-13) minted once at draft time and reused on every publish/
+    /// resume — so a retry never mints a second card, and a resumed card can set
+    /// FBS stock for the right sku.
+    #[serde(default)]
+    pub sku: String,
     // WB result
     pub stage: ListingStage,
     #[serde(rename = "nmID")]

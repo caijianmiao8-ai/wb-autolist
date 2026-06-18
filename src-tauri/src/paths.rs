@@ -4,6 +4,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Per-call counter so two concurrent writers never share a temp path.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct Paths {
@@ -44,9 +48,15 @@ pub fn atomic_write(file: &Path, data: &[u8]) -> std::io::Result<()> {
         fs::create_dir_all(dir)?;
     }
     let mut tmp = file.as_os_str().to_owned();
-    tmp.push(format!(".tmp.{}", std::process::id()));
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    tmp.push(format!(".tmp.{}.{}", std::process::id(), seq));
     let tmp = PathBuf::from(tmp);
     fs::write(&tmp, data)?;
+    // Windows rename fails if the destination exists — replace it.
+    #[cfg(windows)]
+    if file.exists() {
+        let _ = fs::remove_file(file);
+    }
     fs::rename(&tmp, file)?;
     Ok(())
 }

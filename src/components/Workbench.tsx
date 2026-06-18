@@ -238,10 +238,20 @@ export function Workbench() {
       const envLine = live
         ? "⚠️ 线上真实店铺（会出现在你的真实 Wildberries 店铺）"
         : "沙盒测试环境（不影响真实店铺）";
+      // Use the STORED listing values (what actually publishes), not the editable
+      // form state — on a restored draft the form resets to defaults and would
+      // assert numbers that don't match what gets published.
+      const lDisc = Math.max(0, Math.min(99, listing.discount || 0));
+      const lBase =
+        listing.price > 0
+          ? lDisc > 0
+            ? Math.round(listing.price / (1 - lDisc / 100))
+            : Math.round(listing.price)
+          : 0;
       const ok = window.confirm(
         `确认上架到 ${envLine}？\n\n` +
           `商品：${listing.productName || productName}\n` +
-          `到手价：${price} · 折扣 ${discount}%（划线价 ≈ ${wbBase.toLocaleString()}）`
+          `到手价：${listing.price} · 折扣 ${lDisc}%（划线价 ≈ ${lBase.toLocaleString()}）`
       );
       if (!ok) return;
     }
@@ -268,6 +278,7 @@ export function Workbench() {
     );
     try {
       const updated = await api.publish(listing.id);
+      setListing(updated);
       setDone({
         stage: updated.stage,
         nmID: updated.nmID,
@@ -276,6 +287,13 @@ export function Workbench() {
         error: updated.error,
       });
       setStep("done");
+      // Don't let a now-published listing restore as an editable 'preview' draft
+      // (which would re-show Publish and re-hit the prices quota on a re-click).
+      try {
+        sessionStorage.removeItem("wb:listingId");
+      } catch {
+        /* ignore */
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "上架失败");
       setStep("preview");
@@ -618,12 +636,18 @@ export function Workbench() {
                 </button>
               )}
 
-              {/* Publish action */}
-              {!listing.partial && step !== "publishing" && step !== "done" && (
+              {/* Publish action — hidden once the card is live (nmID set), so a
+                  restored published listing can't be re-published by mistake. */}
+              {!listing.partial && !listing.nmID && step !== "publishing" && step !== "done" && (
                 <button className="btn-primary w-full" onClick={handlePublish}>
                   <Rocket className="h-4 w-4" />
                   {dryRun ? "演示上架" : live ? "上架到 Wildberries（线上）" : "上架到沙盒（测试）"}
                 </button>
+              )}
+              {!listing.partial && !!listing.nmID && step !== "publishing" && step !== "done" && (
+                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.08] px-4 py-3 text-sm text-emerald-700 dark:text-emerald-200">
+                  此商品已上架（nmID {listing.nmID}）。如需补图/改价，请到「上架记录」或「商品管理」操作。
+                </div>
               )}
 
               {(step === "publishing" || step === "done") && (
