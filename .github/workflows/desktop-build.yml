@@ -56,7 +56,7 @@ jobs:
           releaseName: WB AutoList ${{ github.ref_name }}
           releaseBody: |
             未签名安装包 — 首次打开会被系统拦截，请按安装指引放行：
-            https://github.com/${{ github.repository }}/blob/main/docs/INSTALL.md
+            https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALL.md
 
             - Windows: SmartScreen 弹窗 → 更多信息 → 仍要运行
             - macOS: 右键 → 打开（或 系统设置 → 隐私与安全性 → 仍要打开）
