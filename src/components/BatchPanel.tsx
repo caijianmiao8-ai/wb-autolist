@@ -44,7 +44,6 @@ export function BatchPanel() {
   const [enqueuing, setEnqueuing] = useState(false);
   const [env, setEnv] = useState<{ dryRun: boolean; wbSandbox: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     api
@@ -53,19 +52,22 @@ export function BatchPanel() {
       .catch(() => {});
   }, []);
 
-  // poll queue status while anything is in flight
+  const active = jobs.some((j) => j.status === "pending" || j.status === "generating" || j.status === "publishing");
+
+  // initial load once
   useEffect(() => {
-    const load = async () => {
-      setJobs(await api.listJobs());
-    };
-    load();
-    pollRef.current = setInterval(load, 2500);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+    api.listJobs().then(setJobs).catch(() => {});
   }, []);
 
-  const active = jobs.some((j) => j.status === "pending" || j.status === "generating" || j.status === "publishing");
+  // poll ONLY while something is in flight — stop when the queue goes idle so a
+  // desktop app left open doesn't churn a wakeup every 2.5s forever.
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => {
+      api.listJobs().then(setJobs).catch(() => {});
+    }, 2500);
+    return () => clearInterval(id);
+  }, [active]);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -88,7 +90,7 @@ export function BatchPanel() {
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   }
   function addRow() {
-    setRows((rs) => [...rs, { productName: "", keywords: [], brand: "", price: 1990, discount: 30 }]);
+    setRows((rs) => [...rs, { productName: "", keywords: [], brand: "", price: 1990, discount: 0 }]);
   }
 
   async function enqueue() {

@@ -11,6 +11,7 @@ interface Redacted {
   wbContentTokenSet: boolean;
   wbPricesTokenSet: boolean;
   wbTokenExpiresInDays: number | null;
+  wbPricesTokenExpiresInDays: number | null;
   wbSandbox: boolean;
   imageProvider: string;
   openaiKeySet: boolean;
@@ -150,6 +151,22 @@ export function SettingsForm() {
           <label className="label">
             价格(Цены) Token（可选，留空复用上面的 Token）
             {redacted?.wbPricesTokenSet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
+            {redacted?.wbPricesTokenSet && redacted.wbPricesTokenExpiresInDays != null && (
+              <span
+                className={clsx(
+                  "ml-1",
+                  redacted.wbPricesTokenExpiresInDays < 0
+                    ? "text-rose-600 dark:text-rose-400"
+                    : redacted.wbPricesTokenExpiresInDays <= 14
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-slate-400"
+                )}
+              >
+                {redacted.wbPricesTokenExpiresInDays < 0
+                  ? "· 已过期"
+                  : `· 剩 ${redacted.wbPricesTokenExpiresInDays} 天`}
+              </span>
+            )}
           </label>
           <input
             type="password"

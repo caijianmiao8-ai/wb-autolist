@@ -17,12 +17,14 @@ pub fn save_image(
     width: u32,
     height: u32,
     ext: &str,
-) -> GeneratedImage {
+) -> std::io::Result<GeneratedImage> {
     paths.ensure();
     let id = new_id("img_");
     let file = format!("{}.{}", id, ext);
-    let _ = std::fs::write(paths.images().join(&file), bytes);
-    GeneratedImage {
+    // Propagate write failures (full disk / permissions) so a listing never
+    // references a phantom file that only surfaces much later at upload time.
+    std::fs::write(paths.images().join(&file), bytes)?;
+    Ok(GeneratedImage {
         id,
         kind: kind.to_string(),
         url: file, // bare filename; hydrated to a data URL on the way to the UI
@@ -30,7 +32,7 @@ pub fn save_image(
         width,
         height,
         template_kind: String::new(), // set by the caller (render_one)
-    }
+    })
 }
 
 pub fn content_type_for(file: &str) -> &'static str {

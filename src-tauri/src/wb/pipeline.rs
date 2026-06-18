@@ -385,20 +385,19 @@ async fn run_pipeline(
     // card the app can no longer see/price/trash). Record failures, keep going,
     // and surface them as a warning while preserving the nmID.
     let ordered = order_images(listing);
-    let mut slot = 1i64;
     let mut media_failures = 0u32;
     let mut first_media_err: Option<String> = None;
-    for img in ordered {
+    for (i, img) in ordered.into_iter().enumerate() {
+        // Slot bound to POSITION (idx+1), not a running counter — a failed earlier
+        // image must NOT promote the next one to photo #1 (the search cover).
+        let slot = (i + 1) as i64;
         let file = img.url.rsplit('/').next().unwrap_or(&img.url).to_string();
         let res = match std::fs::read(state.paths.images().join(&file)) {
             Ok(bytes) => upload_media_bytes(state, &ctx, created.nm_id, slot, bytes, &file).await,
             Err(e) => Err(anyhow!("读取图片失败 {}: {}", file, e)),
         };
         match res {
-            Ok(_) => {
-                log(logs, "media", true, &format!("已上传第 {} 张图（{}）", slot, img.kind), on);
-                slot += 1;
-            }
+            Ok(_) => log(logs, "media", true, &format!("已上传第 {} 张图（{}）", slot, img.kind), on),
             Err(e) => {
                 media_failures += 1;
                 if first_media_err.is_none() {
@@ -544,20 +543,15 @@ async fn resume_existing(
         sandbox: cfg.wb_sandbox,
     };
     let ordered = order_images(listing);
-    if !ordered.is_empty() {
-        let mut slot = 1i64;
-        for img in ordered {
-            let file = img.url.rsplit('/').next().unwrap_or(&img.url).to_string();
-            match std::fs::read(state.paths.images().join(&file)) {
-                Ok(bytes) => match upload_media_bytes(state, &ctx, nm, slot, bytes, &file).await {
-                    Ok(_) => {
-                        log(logs, "media", true, &format!("已上传第 {} 张图（{}）", slot, img.kind), on);
-                        slot += 1;
-                    }
-                    Err(e) => log(logs, "media", false, &format!("第 {} 张图上传失败：{}", slot, e), on),
-                },
-                Err(e) => log(logs, "media", false, &format!("读取图片失败 {}: {}", file, e), on),
-            }
+    for (i, img) in ordered.into_iter().enumerate() {
+        let slot = (i + 1) as i64; // position-bound (see main loop)
+        let file = img.url.rsplit('/').next().unwrap_or(&img.url).to_string();
+        match std::fs::read(state.paths.images().join(&file)) {
+            Ok(bytes) => match upload_media_bytes(state, &ctx, nm, slot, bytes, &file).await {
+                Ok(_) => log(logs, "media", true, &format!("已上传第 {} 张图（{}）", slot, img.kind), on),
+                Err(e) => log(logs, "media", false, &format!("第 {} 张图上传失败：{}", slot, e), on),
+            },
+            Err(e) => log(logs, "media", false, &format!("读取图片失败 {}: {}", file, e), on),
         }
     }
     match upload_price_task(

@@ -41,7 +41,8 @@ export function Workbench() {
   const [keywordInput, setKeywordInput] = useState("");
   const [keywords, setKeywords] = useState<string[]>([]);
   const [price, setPrice] = useState(1990);
-  const [discount, setDiscount] = useState(30);
+  // default 0 — never ship a struck-through "discount" the seller didn't choose.
+  const [discount, setDiscount] = useState(0);
   const [brand, setBrand] = useState("");
   // package dims (cm) + gross weight (kg) — pre-filled from the seller's
   // configured defaults once settings load.
@@ -483,7 +484,7 @@ export function Workbench() {
                 value={discount}
                 min={0}
                 max={99}
-                onChange={(e) => setDiscount(Number(e.target.value))}
+                onChange={(e) => setDiscount(Math.max(0, Math.min(99, Number(e.target.value) || 0)))}
               />
             </div>
           </div>
@@ -623,7 +624,7 @@ export function Workbench() {
           {listing && (
             <>
               <ImagesPanel listing={listing} onRegenerate={doRegenerate} regenLoading={regenLoading} />
-              <CopyPanel listing={listing} onUpdate={setListing} />
+              <CopyPanel key={listing.id} listing={listing} onUpdate={setListing} />
 
               {/* main-first: generate the remaining images on approval */}
               {listing.partial && (

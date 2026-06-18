@@ -130,7 +130,7 @@ pub(crate) async fn render_one(
             }
         }
     };
-    let mut img = save_image(&state.paths, &buf, &tmpl.slot, &prompt, 1200, 1600, "jpg");
+    let mut img = save_image(&state.paths, &buf, &tmpl.slot, &prompt, 1200, 1600, "jpg")?;
     // Tag synthetic placeholders so the publish pipeline can refuse to ship one
     // as a live product photo (it carries instructional text, not the product).
     img.template_kind = if is_placeholder { "placeholder".to_string() } else { tmpl.kind.clone() };
@@ -155,7 +155,7 @@ pub async fn generate_listing(
     let brand_in = raw.brand.clone();
 
     on("generate", true, "生成俄文文案中…");
-    let copy = generate_copy(
+    let (copy, ai_ok) = generate_copy(
         &state.http,
         cfg,
         &raw.product_name,
@@ -163,6 +163,9 @@ pub async fn generate_listing(
         brand_in.as_deref(),
     )
     .await;
+    if !ai_ok {
+        on("generate", false, "AI 文案不可用，已用模板兜底（请检查 Aurixel Key/网络后重新生成）。");
+    }
 
     let core_prompt = copy
         .image_prompt
@@ -187,6 +190,19 @@ pub async fn generate_listing(
         .iter()
         .filter_map(|s| decode_image_input(s))
         .collect();
+    // Surface partial decode failures — silently dropping a seller's product
+    // photos and switching to text-to-image yields a hallucinated product.
+    if !raw.base_photos.is_empty() && bases.len() < raw.base_photos.len() {
+        on(
+            "generate",
+            false,
+            &format!(
+                "{} 张产品图无法读取，已忽略{}。",
+                raw.base_photos.len() - bases.len(),
+                if bases.is_empty() { "，将改用 AI 文生图（可能不像实物）" } else { "" }
+            ),
+        );
+    }
     let is_edit = !bases.is_empty();
     let requested = raw.image_count.unwrap_or(3).clamp(1, 12) as usize;
     let custom = raw.custom_prompt.clone().unwrap_or_default();

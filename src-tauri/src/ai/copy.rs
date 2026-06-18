@@ -12,27 +12,48 @@ use std::time::Duration;
 
 const AURIXEL_CHAT: &str = "https://conduit-api.aurixel.ai/v1/chat/completions";
 
+/// Returns (copy, ai_used). ai_used=false means the AI call failed and we fell
+/// back to a deterministic template — the caller should surface that so the user
+/// isn't misled into thinking boilerplate is AI-written SEO copy.
 pub async fn generate_copy(
     http: &reqwest::Client,
     cfg: &AppConfig,
     product_name: &str,
     keywords: &[String],
     brand: Option<&str>,
-) -> ProductCopy {
+) -> (ProductCopy, bool) {
     if !cfg.aurixel_api_key.is_empty() {
         let model = if cfg.aurixel_chat_model.is_empty() {
             "gpt-5.5"
         } else {
             &cfg.aurixel_chat_model
         };
-        if let Ok(c) =
+        if let Ok(mut c) =
             generate_with_aurixel(http, &cfg.aurixel_api_key, model, product_name, keywords, brand)
                 .await
         {
-            return c;
+            // Guard the two most visible fields against untranslated Chinese — the
+            // headline is the worst place to leak CJK onto a live WB card.
+            if has_cjk(&c.title) {
+                c.title = template_copy(product_name, keywords, brand).title;
+            }
+            if has_cjk(&c.description) {
+                let cleaned: String = c
+                    .description
+                    .lines()
+                    .filter(|l| !has_cjk(l))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                c.description = if cleaned.trim().is_empty() {
+                    template_copy(product_name, keywords, brand).description
+                } else {
+                    cleaned
+                };
+            }
+            return (c, true);
         }
     }
-    template_copy(product_name, keywords, brand)
+    (template_copy(product_name, keywords, brand), false)
 }
 
 fn copy_schema() -> Value {

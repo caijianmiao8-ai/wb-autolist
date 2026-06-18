@@ -409,7 +409,7 @@ fn token_hash(s: &str) -> String {
 async fn fetch_all_cards(st: &AppState, ctx: &WbCtx) -> Result<(Vec<Value>, bool), String> {
     let mut raw: Vec<Value> = vec![];
     let mut cursor = json!({ "limit": 100 });
-    const MAX_PAGES: u32 = 15;
+    const MAX_PAGES: u32 = 50; // up to 5000 cards before truncation
     let mut truncated = false;
     for page in 0..MAX_PAGES {
         let v = wb_fetch(
@@ -609,7 +609,7 @@ pub async fn sync_products(state: State<'_, Arc<AppState>>) -> Result<SyncResult
         let n = db::upsert_products(&mut conn, &rows, now, !truncated).map_err(|e| e.to_string())?;
         db::apply_rejections(&conn, &rejected).map_err(|e| e.to_string())?;
         let detail = if truncated {
-            format!("{} 个商品(超 1500 已截断) · {} 被拒", n, rejected.len())
+            format!("{} 个商品(超 5000 已截断) · {} 被拒", n, rejected.len())
         } else {
             format!("{} 个商品 · {} 被拒", n, rejected.len())
         };
@@ -617,7 +617,7 @@ pub async fn sync_products(state: State<'_, Arc<AppState>>) -> Result<SyncResult
         n
     };
     let message = if truncated {
-        format!("已同步 {} 个商品（超过 1500，已截断）", n)
+        format!("已同步 {} 个商品（超过 5000，已截断）", n)
     } else {
         format!("已同步 {} 个商品", n)
     };

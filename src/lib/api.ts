@@ -17,6 +17,8 @@ export interface RedactedConfig {
   wbPricesTokenSet: boolean;
   /** Days until the WB content token (JWT) expires; null if none/unparseable. */
   wbTokenExpiresInDays: number | null;
+  /** Days until the price-write token expires (can differ from content token). */
+  wbPricesTokenExpiresInDays: number | null;
   wbSandbox: boolean;
   imageProvider: string;
   openaiKeySet: boolean;

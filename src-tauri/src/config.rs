@@ -7,6 +7,14 @@ use crate::paths::{atomic_write, quarantine_corrupt, Paths};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+
+/// Serializes config.json read-modify-write between save_config and the
+/// keychain-migration strip, so a concurrent save can't lose a setting.
+fn config_lock() -> &'static Mutex<()> {
+    static L: OnceLock<Mutex<()>> = OnceLock::new();
+    L.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -224,18 +232,24 @@ fn kc_del(account: &str) {
 fn resolve_secret(
     field: &mut String,
     account: &'static str,
-    migrated: &mut Vec<&'static str>,
+    to_strip: &mut Vec<&'static str>,
     errored: &mut Vec<&'static str>,
 ) {
     match kc_read(account) {
-        KcRead::Found(v) => *field = v,
+        // Confirmed present in the keychain → mark for stripping from json. Doing
+        // this on EVERY run (not just first-migration) cleans up a cleartext copy
+        // left behind by a prior write-but-failed-verify.
+        KcRead::Found(v) => {
+            *field = v;
+            to_strip.push(account);
+        }
         KcRead::Absent => {
             let plain = field.trim().to_string();
             if !plain.is_empty() && kc_set(account, &plain) {
                 // verify the write is actually readable before allowing the
                 // plaintext to be stripped — otherwise we'd risk losing it.
                 if matches!(kc_read(account), KcRead::Found(_)) {
-                    migrated.push(account);
+                    to_strip.push(account);
                 }
             }
         }
@@ -277,15 +291,18 @@ pub fn get_config(paths: &Paths) -> AppConfig {
     // Secrets live in the OS keychain — overlay them, migrating any legacy
     // plaintext from config.json/env on first run, then strip ONLY the cleartext
     // we successfully moved (per-field, so a partial migration loses nothing).
-    let mut migrated: Vec<&'static str> = vec![];
+    let mut to_strip: Vec<&'static str> = vec![];
     let mut errored: Vec<&'static str> = vec![];
-    resolve_secret(&mut cfg.wb_content_token, "wbContentToken", &mut migrated, &mut errored);
-    resolve_secret(&mut cfg.wb_prices_token, "wbPricesToken", &mut migrated, &mut errored);
-    resolve_secret(&mut cfg.aurixel_api_key, "aurixelApiKey", &mut migrated, &mut errored);
-    resolve_secret(&mut cfg.openai_api_key, "openaiApiKey", &mut migrated, &mut errored);
-    resolve_secret(&mut cfg.pollinations_token, "pollinationsToken", &mut migrated, &mut errored);
-    if !migrated.is_empty() {
-        strip_secrets_from_file(&paths.config(), &migrated);
+    resolve_secret(&mut cfg.wb_content_token, "wbContentToken", &mut to_strip, &mut errored);
+    resolve_secret(&mut cfg.wb_prices_token, "wbPricesToken", &mut to_strip, &mut errored);
+    resolve_secret(&mut cfg.aurixel_api_key, "aurixelApiKey", &mut to_strip, &mut errored);
+    resolve_secret(&mut cfg.openai_api_key, "openaiApiKey", &mut to_strip, &mut errored);
+    resolve_secret(&mut cfg.pollinations_token, "pollinationsToken", &mut to_strip, &mut errored);
+    if !to_strip.is_empty() {
+        // serialized with save_config; strip_secrets_from_file only writes if a
+        // cleartext key is actually present, so this is a no-op once clean.
+        let _g = config_lock().lock().unwrap_or_else(|e| e.into_inner());
+        strip_secrets_from_file(&paths.config(), &to_strip);
     }
     // Gate on the CONTENT token specifically — it drives dry-run + the cache
     // namespace. A failed read there must not look like "no token configured".
@@ -300,6 +317,7 @@ pub fn get_config(paths: &Paths) -> AppConfig {
 }
 
 pub fn save_config(paths: &Paths, patch: &Value) -> AppConfig {
+    let _g = config_lock().lock().unwrap_or_else(|e| e.into_inner());
     let file = paths.config();
     let mut obj = std::fs::read_to_string(&file)
         .ok()
@@ -333,6 +351,7 @@ pub fn save_config(paths: &Paths, patch: &Value) -> AppConfig {
     }
     let bytes = serde_json::to_vec_pretty(&Value::Object(obj)).unwrap_or_default();
     let _ = atomic_write(&file, &bytes);
+    drop(_g); // release before get_config (which re-takes config_lock for its strip)
     get_config(paths)
 }
 
@@ -371,6 +390,9 @@ pub fn redact_config(cfg: &AppConfig) -> Value {
         "wbContentTokenSet": !cfg.wb_content_token.is_empty(),
         "wbPricesTokenSet": !cfg.wb_prices_token.is_empty(),
         "wbTokenExpiresInDays": wb_token_expiry_days(&cfg.wb_content_token),
+        // The price-write token actually used (separate field; can outlive a
+        // rotated content token) — surface its own expiry so it can't silently die.
+        "wbPricesTokenExpiresInDays": wb_token_expiry_days(&prices_token(cfg)),
         "wbSandbox": cfg.wb_sandbox,
         "imageProvider": cfg.image_provider,
         "openaiKeySet": !cfg.openai_api_key.is_empty(),

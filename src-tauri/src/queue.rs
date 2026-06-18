@@ -82,7 +82,10 @@ pub async fn clear_jobs(state: &AppState, which: &str) -> Vec<BatchJob> {
     {
         let mut q = state.queue.lock().await;
         if which == "all" {
-            q.retain(|j| j.status == JobStatus::Generating || j.status == JobStatus::Publishing);
+            // Full clear, including any wedged Generating/Publishing job. The
+            // worker holds its own snapshot, so a cleared in-flight job just stops
+            // status updates (its WB work + saved listing are unaffected).
+            q.clear();
         } else {
             q.retain(|j| j.status != JobStatus::Done && j.status != JobStatus::Error);
         }
@@ -138,7 +141,10 @@ pub async fn run_worker(state: Arc<AppState>) {
         return; // already running
     }
     loop {
-        // claim the next pending job
+        // Claim the next pending job. If none, reset the running flag WHILE STILL
+        // HOLDING the queue lock — enqueue() also locks the queue before spawning
+        // a worker, so this serialization prevents a lost wakeup (a job arriving
+        // exactly as we decide to exit).
         let job = {
             let mut q = state.queue.lock().await;
             match q.iter_mut().find(|j| j.status == JobStatus::Pending) {
@@ -149,16 +155,59 @@ pub async fn run_worker(state: Arc<AppState>) {
                     persist_jobs(&state.paths, &q);
                     Some(snap)
                 }
-                None => None,
+                None => {
+                    state.worker_running.store(false, Ordering::SeqCst);
+                    None
+                }
             }
         };
         let job = match job {
             Some(j) => j,
-            None => break,
+            None => return,
         };
 
-        let cfg = get_config(&state.paths);
-        let outcome: anyhow::Result<()> = async {
+        // Token expired + this job would publish → PAUSE: put it back to Pending
+        // and stop, so we don't burn the rest of the batch into errors after some
+        // cards already went live. The user refreshes the token, then re-runs.
+        if job.auto_publish {
+            let cfg = get_config(&state.paths);
+            if crate::config::wb_token_expiry_days(&cfg.wb_content_token)
+                .map(|d| d < 0)
+                .unwrap_or(false)
+            {
+                {
+                    let mut q = state.queue.lock().await;
+                    if let Some(j) = q.iter_mut().find(|j| j.id == job.id) {
+                        j.status = JobStatus::Pending;
+                        j.error = Some("WB token 已过期，已暂停批量。请更新 token 后重试。".into());
+                        j.updated_at = now_iso();
+                    }
+                    persist_jobs(&state.paths, &q);
+                    state.worker_running.store(false, Ordering::SeqCst);
+                }
+                eprintln!("WB token 已过期，已暂停批量处理");
+                return;
+            }
+        }
+
+        // Run the job in a CHILD TASK so a panic in one job can't brick the
+        // worker (which would leave worker_running=true and wedge the queue).
+        let jid = job.id.clone();
+        let st2 = state.clone();
+        if tauri::async_runtime::spawn(process_job(st2, job)).await.is_err() {
+            patch(&state, &jid, |j| {
+                j.status = JobStatus::Error;
+                j.error = Some("内部错误，已跳过该任务".into());
+            })
+            .await;
+        }
+    }
+}
+
+/// Process one claimed job (generate, optionally publish). Runs in its own task.
+async fn process_job(state: Arc<AppState>, job: BatchJob) {
+    let cfg = get_config(&state.paths);
+    let outcome: anyhow::Result<()> = async {
             let noop = |_s: &str, _o: bool, _m: &str| {};
             // Crash-resume: if this job already produced a listing, REUSE it
             // rather than regenerating — regenerate + re-publish would create a
@@ -244,16 +293,14 @@ pub async fn run_worker(state: Arc<AppState>) {
         }
         .await;
 
-        if let Err(e) = outcome {
-            let msg = e.to_string();
-            patch(&state, &job.id, move |j| {
-                j.status = JobStatus::Error;
-                j.error = Some(msg);
-            })
-            .await;
-        }
+    if let Err(e) = outcome {
+        let msg = e.to_string();
+        patch(&state, &job.id, move |j| {
+            j.status = JobStatus::Error;
+            j.error = Some(msg);
+        })
+        .await;
     }
-    state.worker_running.store(false, Ordering::SeqCst);
 }
 
 /// Re-kick the worker on startup if jobs were left pending.

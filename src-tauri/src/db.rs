@@ -66,9 +66,15 @@ CREATE TABLE IF NOT EXISTS sync_meta (
 );
 "#;
 
+/// Bump on any schema change. The cache is DISPOSABLE: on an upgrade we drop +
+/// recreate (then the user re-syncs) rather than write column-add migrations —
+/// avoids a future "no such column" against get_managed_cards' fixed SELECT.
+const SCHEMA_VERSION: i64 = 1;
+
 pub fn open(path: &std::path::Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(conn)
 }
 
@@ -76,7 +82,26 @@ pub fn open(path: &std::path::Path) -> Result<Connection> {
 pub fn open_memory() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(conn)
+}
+
+fn migrate(conn: &Connection) -> Result<()> {
+    let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+    if v < SCHEMA_VERSION {
+        // v==0 = fresh DB or a pre-versioning DB that already matches v1's schema
+        // (so don't wipe it); a real version bump (v>=1 < current) drops+recreates.
+        if v != 0 {
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS products; DROP TABLE IF EXISTS prices;
+                 DROP TABLE IF EXISTS stocks; DROP TABLE IF EXISTS warehouses;
+                 DROP TABLE IF EXISTS sync_meta; DROP TABLE IF EXISTS kv;",
+            )?;
+            conn.execute_batch(SCHEMA)?;
+        }
+        conn.execute_batch(&format!("PRAGMA user_version = {};", SCHEMA_VERSION))?;
+    }
+    Ok(())
 }
 
 /// The cache belongs to ONE account+environment. If the active token/sandbox
@@ -188,13 +213,19 @@ pub fn upsert_products(conn: &mut Connection, rows: &[ProductRow], now: i64, ful
             ])?;
         }
     }
-    // Drop products that no longer exist on WB — ONLY on a complete snapshot.
-    if full_snapshot && !rows.is_empty() {
-        let ids: Vec<String> = rows.iter().map(|p| p.nm_id.to_string()).collect();
-        tx.execute(
-            &format!("DELETE FROM products WHERE nm_id NOT IN ({})", ids.join(",")),
-            [],
-        )?;
+    // Drop products that no longer exist on WB — ONLY on a complete snapshot
+    // (truncated syncs must not prune). Also prune orphaned price rows in the
+    // same transaction. Handles an emptied store (rows empty → clear all).
+    if full_snapshot {
+        if rows.is_empty() {
+            tx.execute("DELETE FROM products", [])?;
+            tx.execute("DELETE FROM prices", [])?;
+        } else {
+            // nm_ids are integers (safe to inline); NOT IN keeps the synced set.
+            let in_list = rows.iter().map(|p| p.nm_id.to_string()).collect::<Vec<_>>().join(",");
+            tx.execute(&format!("DELETE FROM products WHERE nm_id NOT IN ({})", in_list), [])?;
+            tx.execute(&format!("DELETE FROM prices WHERE nm_id NOT IN ({})", in_list), [])?;
+        }
     }
     tx.commit()?;
     Ok(rows.len())

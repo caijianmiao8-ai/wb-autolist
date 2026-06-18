@@ -92,6 +92,16 @@ export function ManagePanel() {
     })();
   }, [loadDb]);
 
+  // Re-derive the live/sandbox env when the window regains focus, in case the
+  // environment was changed elsewhere while this panel stayed mounted.
+  useEffect(() => {
+    const onFocus = () => {
+      api.getSettings().then((s) => setSandbox(!!s.wbSandbox)).catch(() => {});
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
   // cooldown ticker
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -391,6 +401,15 @@ function CardRow({
   const [stockInput, setStockInput] = useState(card.stock ?? 99);
   const [priceInput, setPriceInput] = useState(card.price ?? 0);
   const [discountInput, setDiscountInput] = useState(card.discount ?? 0);
+
+  // Re-seed the editor inputs when the card's synced values change, so a price/
+  // stock sync doesn't leave the editor (and its confirm dialog) showing stale
+  // numbers that could be pushed back to the live store.
+  useEffect(() => {
+    setStockInput(card.stock ?? 99);
+    setPriceInput(card.price ?? 0);
+    setDiscountInput(card.discount ?? 0);
+  }, [card.stock, card.price, card.discount]);
 
   return (
     <div className="card overflow-hidden">

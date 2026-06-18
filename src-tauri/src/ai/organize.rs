@@ -157,7 +157,10 @@ fn heuristic_organize(rows: &[Vec<String>]) -> Vec<ListingInput> {
             let texts: Vec<String> = cells.iter().filter(|c| !is_number(c)).cloned().collect();
             let product_name = texts.first().cloned().unwrap_or_else(|| cells[0].clone());
             let keywords: Vec<String> = texts.iter().skip(1).take(8).cloned().collect();
-            let price = nums.iter().cloned().find(|n| *n >= 1.0).unwrap_or(0.0);
+            // Price = the LARGEST number (a stray small number is far more likely
+            // a discount/qty/weight than the price — picking the first risks
+            // catastrophic underpricing on auto-publish batches).
+            let price = nums.iter().cloned().fold(0.0_f64, f64::max);
             let discount = nums
                 .iter()
                 .cloned()
