@@ -13,6 +13,8 @@ import { makeElevenLabsAsr, makeElevenLabsTts } from './providers/elevenlabs.mjs
 import { makeAurixelAsr, makeAurixelTts } from './providers/aurixelAudio.mjs';
 import { makeQwenTtsVc, makeQwenTts } from './providers/qwenTtsVc.mjs';
 import { makeCosyVoiceTtsVc } from './providers/cosyvoiceTtsVc.mjs';
+import { makeJoyvizTtsVc, makeJoyvizTts } from './providers/joyvizTts.mjs';
+import { makeJoyvizAsr } from './providers/joyvizAsr.mjs';
 import { makeDashscopeAsr } from './providers/dashscopeAsr.mjs';
 import { makeLocalWhisper } from './providers/localWhisper.mjs';
 import { makeDeepgramAsr } from './providers/deepgramAsr.mjs';
@@ -44,9 +46,14 @@ export function pickAsr(cfg) {
       // Speechmatics — cloud ASR with strong speaker diarization + word timestamps.
       // Default: handles both monologue and multi-speaker dialogue from one provider.
       return makeSpeechmaticsAsr({ apiKey: cfg.SPEECHMATICS_API_KEY, baseUrl: cfg.SPEECHMATICS_BASE, operatingPoint: cfg.SPEECHMATICS_OPERATING_POINT, speakerSensitivity: cfg.SPEECHMATICS_SPEAKER_SENSITIVITY });
+    case 'joyviz':
+      // Speechmatics ASR through the OpenAI-shape gateway — word/segment timestamps
+      // + diarization via verbose_json, with speaker_sensitivity honored. ONE
+      // gateway key also covers translate + TTS. Hard overlap mislabels → refine.
+      return makeJoyvizAsr({ apiKey: cfg.JOYVIZ_API_KEY, baseUrl: cfg.JOYVIZ_BASE, model: cfg.JOYVIZ_ASR_MODEL, speakerSensitivity: cfg.JOYVIZ_SPEAKER_SENSITIVITY, ...net });
     // case 'myprovider': return makeMyProviderAsr({...});  // <-- extension example
     default:
-      throw new Error(`unknown ASR_PROVIDER='${cfg.ASR_PROVIDER}' (expected speechmatics|elevenlabs|deepgram|whisper|dashscope|aurixel)`);
+      throw new Error(`unknown ASR_PROVIDER='${cfg.ASR_PROVIDER}' (expected speechmatics|joyviz|elevenlabs|deepgram|whisper|dashscope|aurixel)`);
   }
 }
 
@@ -75,13 +82,21 @@ export function pickTts(cfg) {
     case 'qwen':
       // Qwen3-TTS preset voices (Cherry/Katerina/…) — stable, no cloning.
       return makeQwenTts({ apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE, model: cfg.QWEN_TTS_MODEL, voice: cfg.QWEN_VOICE, ...net });
+    case 'joyviz-vc':
+      // Same qwen3-tts-vc cloning, but via the OpenAI-compatible JoyViz/Aurixel
+      // gateway — ONE gateway key also covers chat-translate. Enroll /audio/voices,
+      // synth /audio/speech. Drift handled by voice-select + pitch-norm as usual.
+      return makeJoyvizTtsVc({ apiKey: cfg.JOYVIZ_API_KEY, baseUrl: cfg.JOYVIZ_BASE, model: cfg.JOYVIZ_TTS_VC_MODEL, presetModel: cfg.JOYVIZ_TTS_MODEL, ...net });
+    case 'joyviz':
+      // Preset voices through the gateway (no cloning).
+      return makeJoyvizTts({ apiKey: cfg.JOYVIZ_API_KEY, baseUrl: cfg.JOYVIZ_BASE, model: cfg.JOYVIZ_TTS_MODEL, voice: cfg.JOYVIZ_VOICE, ...net });
     case 'cosyvoice-vc':
       // CosyVoice v3.5 cloning — DETERMINISTIC synthesis (no per-call drift, unlike
       // qwen-vc). Same DashScope key. Enroll via OSS-url, synthesize via WebSocket.
       return makeCosyVoiceTtsVc({ apiKey: cfg.QWEN_API_KEY, baseUrl: cfg.QWEN_TTS_BASE, model: cfg.COSYVOICE_MODEL, presetModel: cfg.QWEN_TTS_MODEL, sampleRate: cfg.COSYVOICE_SAMPLE_RATE, rate: cfg.COSYVOICE_RATE, ...net });
     // case 'myprovider': return makeMyProviderTts({...});  // <-- extension example
     default:
-      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel|qwen-vc|qwen|cosyvoice-vc)`);
+      throw new Error(`unknown TTS_PROVIDER='${cfg.TTS_PROVIDER}' (expected elevenlabs|aurixel|qwen-vc|qwen|cosyvoice-vc|joyviz-vc|joyviz)`);
   }
 }
 
