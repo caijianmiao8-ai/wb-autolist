@@ -21,7 +21,9 @@ import { makeSpeechmaticsAsr } from './providers/speechmaticsAsr.mjs';
 import { makeAurixelTranslator } from './translate.mjs';
 
 export function pickAsr(cfg) {
-  const net = { timeoutMs: cfg.HTTP_TIMEOUT_MS, retries: cfg.HTTP_RETRIES };
+  // ASR gets its own longer timeout (a long transcription can exceed the chat/TTS
+  // HTTP_TIMEOUT_MS); this is what each provider's `cfg.timeoutMs` resolves to.
+  const net = { timeoutMs: cfg.ASR_TIMEOUT_MS || cfg.HTTP_TIMEOUT_MS, retries: cfg.HTTP_RETRIES };
   switch (cfg.ASR_PROVIDER) {
     case 'elevenlabs':
       return makeElevenLabsAsr({ apiKey: cfg.ELEVENLABS_API_KEY, baseUrl: cfg.EL_ASR_BASE, model: cfg.EL_ASR_MODEL, ...net });

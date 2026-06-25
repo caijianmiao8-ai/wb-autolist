@@ -15,9 +15,9 @@
 // audio duration; translation is identity; TTS synthesizes silent wav clips via
 // ffmpeg. Proves extract/fit/assemble/mux wiring end-to-end for free.
 
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, rename } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
-import { join, basename, dirname } from 'node:path';
+import { join, basename, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
@@ -256,6 +256,10 @@ export async function runPipeline(cfg, args) {
     tts: ttsOpts = {},
     keepOriginalAudio = 0,
     onEvent = () => {},
+    // rm the scratch workDir on SUCCESS (merchant audio stems / clone samples /
+    // transcripts are sensitive). Kept on failure for debugging. Opt-in so the
+    // CLI can keep artifacts by default; the host integration passes true.
+    cleanup = false,
   } = args;
 
   if (!existsSync(input)) throw new Error(`input video not found: ${input}`);
@@ -581,11 +585,24 @@ export async function runPipeline(cfg, args) {
       const eligible = recs.filter((rec) => refSample[rec.speaker]); // preset-voiced keep their single render
       const tasks = [];
       for (const rec of eligible) for (let k = 0; k < K; k++) tasks.push({ rec, cp: join(segDir, `seg${id3(rec.i)}_c${k}.${ext}`), f0: 0, ok: false });
+      let synthFail = 0;
+      let lastErr = null;
       await mapLimit(tasks, CONC, async (task) => {
-        try { await synth(task.rec.text, task.rec.voiceId, task.cp); } catch { return; }
+        try { await synth(task.rec.text, task.rec.voiceId, task.cp); }
+        catch (e) { synthFail++; lastErr = e; return; }
         task.f0 = (await ff.estimateF0(task.cp).catch(() => null)) || 0;
         task.ok = true;
       });
+      // A high candidate-failure rate at the burstiest stage = a gateway
+      // rate-limit/outage storm (per-call retry already exhausted). HARD-FAIL so
+      // the host re-queues, instead of silently shipping a dub built from the
+      // Pass-A single renders (the documented fail-clean contract, INTEGRATION §8).
+      if (tasks.length && synthFail / tasks.length > 0.5) {
+        throw new Error(
+          `voice-select: ${synthFail}/${tasks.length} TTS candidate syntheses failed ` +
+          `(gateway rate-limit/outage?)${lastErr ? ': ' + String(lastErr.message).slice(0, 140) : ''}`
+        );
+      }
       for (const rec of eligible) {
         const cands = tasks.filter((t) => t.rec === rec && t.ok).map((t) => ({ path: t.cp, f0: t.f0 }));
         if (cands.length) manifest.units.push({ i: rec.i, speaker: rec.speaker, candidates: cands });
@@ -602,7 +619,7 @@ export async function runPipeline(cfg, args) {
             const b = best[String(rec.i)];
             if (b && existsSync(b)) { rec.rawClip = b; rec.f0 = await ff.estimateF0(b).catch(() => rec.f0); rec.rawDur = await ff.probeDuration(b); n++; }
           }
-          capture({ stage: 'voice-select', ok: true, ms: 0, warn: `kept best-of-${K} render for ${n} cloned line(s) by voice similarity` });
+          capture({ stage: 'voice-select', ok: true, ms: 0, warn: `kept best-of-${K} render for ${n} cloned line(s) by voice similarity${synthFail ? ` (${synthFail}/${tasks.length} candidate synths failed)` : ''}` });
         } catch (e) {
           capture({ stage: 'voice-select', ok: true, ms: 0, warn: `voice-select skipped (${String(e.message).slice(0, 80)}) — using single renders` });
         }
@@ -752,13 +769,16 @@ export async function runPipeline(cfg, args) {
 
   // 5c) Mix the dub over the M&E background separated up front (bgPath) — keeps
   // the soundscape (clinks/sprays/ambient) instead of a bare voice over silence.
+  // Mux to a sibling temp, verify it, then atomically rename to --out — so --out
+  // is NEVER a half-written/truncated file if the process is killed mid-mux.
+  const partialOut = `${out}.partial.mp4`;
   await stageC('mux', async () => {
-    await ff.muxReplaceAudio(input, muxTrack, out, { keepOriginal: keepOriginalAudio, background: bgPath, bgVolume: cfg.BG_VOLUME, duck: cfg.BG_DUCK });
+    await ff.muxReplaceAudio(input, muxTrack, partialOut, { keepOriginal: keepOriginalAudio, background: bgPath, bgVolume: cfg.BG_VOLUME, duck: cfg.BG_DUCK });
   });
 
   // 6) correctness gate: output duration within ~150ms of source video
   const { outDur, drift } = await stageC('verify', async () => {
-    const outDur = await ff.probeDuration(out);
+    const outDur = await ff.probeDuration(partialOut);
     const drift = Math.abs(outDur - videoDur);
     if (drift > 0.15) {
       // Warn but don't hard-fail — -shortest can legitimately clip a few frames.
@@ -766,8 +786,9 @@ export async function runPipeline(cfg, args) {
     }
     return { outDur, drift };
   });
+  await rename(partialOut, out); // atomic publish: --out is now complete or absent
 
-  return {
+  const result = {
     out,
     workDir,
     videoDur,
@@ -785,4 +806,17 @@ export async function runPipeline(cfg, args) {
     clips: fitClips.map((c) => ({ start: c.start, end: c.end, factor: Number(c.factor?.toFixed(3)), capped: c.capped })),
     events,
   };
+  // On success only (we threw on failure, keeping workDir for debugging), drop the
+  // sensitive scratch dir if the caller opted in. enrolled voice ids stay on the
+  // gateway — returned via speakerVoiceMap so the host can delete them there.
+  // SAFETY: refuse to rm a workDir that contains the input or output (guards a
+  // caller that points --work at a populated/shared dir like the video's folder).
+  if (cleanup) {
+    const wd = resolve(workDir);
+    const holds = (p) => { const d = resolve(dirname(p)); return d === wd || d.startsWith(wd + sep); };
+    if (!holds(input) && !holds(out)) {
+      await rm(wd, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+  return result;
 }

@@ -339,6 +339,10 @@ export function loadConfig(opts = {}) {
     // --- Network ---
     HTTP_TIMEOUT_MS: Number(env('HTTP_TIMEOUT_MS', '120000')),
     HTTP_RETRIES: Number(env('HTTP_RETRIES', '2')),
+    // ASR legitimately needs a longer budget than chat/TTS (a long video's
+    // transcription can exceed 120s). Kept separate so the factory's net override
+    // can't silently downgrade it to HTTP_TIMEOUT_MS.
+    ASR_TIMEOUT_MS: Number(env('ASR_TIMEOUT_MS', '300000')),
 
     // --- Work dir ---
     WORK_ROOT: env('WORK_ROOT') || join(homedir(), '.cache', 'wb-dub'),

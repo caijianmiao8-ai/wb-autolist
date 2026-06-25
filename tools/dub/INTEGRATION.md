@@ -36,7 +36,7 @@ node tools/dub/cli.mjs <输入视频> --out <输出mp4> \
 
 - **环境**:`PATH` 需含 `~/.local/node/bin` 与 `~/.local/bin`(node/ffmpeg/uvx);密钥从工作目录的 `.env.local` 读取(见 §4)。
 - **退出码**:`0` = 成功;`1` = 失败(stderr 打印 `FAILED: <原因>`,并保留中间产物目录用于排查)。
-- **成功判定**:退出码 0 **且** stdout 末尾有 `OUTPUT : <路径>`。
+- **成功判定**:退出码 0 **且** stdout 有机器可读标记行 `OUTPUT=<路径>`(用正则 `/^OUTPUT=(.+)$/` 匹配)。摘要里另有一行人类可读的 `OUTPUT       : <路径>`(含对齐空格,排版可能变动——**勿据其判定**,只解析 `OUTPUT=` 行)。
 - **进度**:stdout 每阶段一行 `  [ok ] <stage>  <ms>ms` 或 `  [ERR] …`;WB 可按阶段名做进度条(阶段清单见 §6)。
 - **产物**:`--out` 指定的 mp4。中间件在 `--work <dir>`(默认系统临时目录)下,成功后可删。
 
@@ -48,6 +48,7 @@ video dur    : 93.203s
 output dur   : 93.200s  (drift 0.003s)
 asr/tts      : aurixel-asr / aurixel-tts-vc
 OUTPUT       : /path/out.ru.mp4
+OUTPUT=/path/out.ru.mp4          ← 机器解析这一行(/^OUTPUT=(.+)$/)
 ```
 
 ### 方式 B:程序内调用(WB 主程序是 Node 时)
@@ -68,6 +69,7 @@ const res = await runPipeline(cfg, {
   translate: { keywords: ['вафельница'], brand: '', tone: 'дружелюбный маркетинговый' },
   tts: {},                                       // 留空 = 每个说话人克隆自己的声音
   keepOriginalAudio: 0,                          // 0=完全替换;0..1=把原声压低垫在底下
+  cleanup: true,                                 // 成功后删 workDir(敏感中间件);失败保留
   onEvent: (ev) => log(ev.stage, ev.ok, ev.ms, ev.warn || ev.error),
 });
 // res: { out, segments, speakers:[…], speakerVoiceMap:{spk:voiceId}, cloned:bool,
@@ -116,6 +118,8 @@ WB 可能会调的开关(都有合理默认,一般不用动):
 | `MIN_CLONE_SEC` | `2` | 低于此秒数的说话人不克隆、回退预制音色 |
 | `RENDER_CANDIDATES` | `4` | 每句多合成几条择优(高=更稳但更慢/更贵) |
 | `TTS_CONCURRENCY` | `6` | 并行合成并发数(tts+fit 提速核心);网关 429 就调低,额度足可调高 |
+| `ASR_TIMEOUT_MS` | `300000` | ASR 单独的超时预算(长视频转写可能超过 chat/TTS 的 `HTTP_TIMEOUT_MS=120000`) |
+| `--cleanup`(子进程)/ `cleanup:true`(runPipeline) | 关 | 成功后**整目录**删除 `workDir`(商家音频/克隆样本/转写属敏感数据);失败时保留供排查。成功后返回的 `res.workDir` 已不存在。**安全**:若 `workDir` 含输入/输出文件则自动跳过删除——勿把 `--work` 指向素材所在目录。 |
 | `--dry-run` | — | 不发任何付费请求,仅验证接线 |
 
 完整开关见 [README.md](README.md)「Key config」。`DUB_DEBUG=1` 打印**脱敏**配置(所有 `*_KEY` 已掩码)。
@@ -196,6 +200,6 @@ extract → separate → asr → diarize-refine → translate → enroll(clone)
 - [ ] 部署机:Node 18+ / ffmpeg / ffprobe / uvx 就位,`PATH` 含 `~/.local/{node/bin,bin}`
 - [ ] `.env.local`:`AURIXEL_API_KEY` + `ASR_PROVIDER=aurixel` + `TTS_PROVIDER=aurixel-vc`
 - [ ] 预热:跑一遍 `--dry-run`(零付费,验接线)再跑一个真样片(下好 demucs/resemblyzer 模型)
-- [ ] 主程序:有界并发队列 + 异步;按退出码/`OUTPUT` 行判成败;失败入重试、留 `workDir`
+- [ ] 主程序:有界并发队列 + 异步;按退出码 + `OUTPUT=` 标记行判成败(正则 `/^OUTPUT=(.+)$/`);失败入重试、留 `workDir`
 - [ ] 监控:记录每片耗时/句数/drift/成败;网关限流时退避
 - [ ] 安全:不打印 key;中间件用后即删

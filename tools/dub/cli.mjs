@@ -111,8 +111,8 @@ async function main() {
   if (a.elastic) overrides.ELASTIC_PLACEMENT = 'true';
   if (a['no-background']) overrides.KEEP_BACKGROUND = 'false';
   if (a['no-duck']) overrides.BG_DUCK = 'false';
-  // qwen (preset) and qwen-vc both return wav — name intermediate clips accordingly.
-  if (overrides.TTS_PROVIDER === 'qwen-vc' || overrides.TTS_PROVIDER === 'qwen' || overrides.TTS_PROVIDER === 'cosyvoice-vc') overrides.OUT_FORMAT = 'wav';
+  // (intermediate clip format is derived from the TTS provider in config.mjs
+  // wavTts — the single source of truth, which also covers aurixel-vc/aurixel.)
   if (a['src-lang']) overrides.SRC_LANG = a['src-lang'];
   if (a['target-lang']) overrides.TARGET_LANG = a['target-lang'];
 
@@ -165,7 +165,7 @@ async function main() {
 
   const t0 = Date.now();
   try {
-    const res = await runPipeline(cfg, { input, out, workDir, mode, dryRun, translate, tts, keepOriginalAudio, onEvent });
+    const res = await runPipeline(cfg, { input, out, workDir, mode, dryRun, translate, tts, keepOriginalAudio, onEvent, cleanup: !!a.cleanup });
     console.log('-- summary --');
     console.log(`segments     : ${res.segments}`);
     if (res.speakers && res.speakers.length >= 1 && res.speakerVoiceMap) {
@@ -176,7 +176,10 @@ async function main() {
     console.log(`output dur   : ${res.outDur.toFixed(3)}s  (drift ${res.drift.toFixed(3)}s)`);
     console.log(`asr/tts      : ${res.asrProvider} / ${res.ttsProvider}`);
     console.log(`total        : ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    console.log(`OUTPUT       : ${res.out}`);
+    console.log(`OUTPUT       : ${res.out}`); // human-readable (padded)
+    // Stable machine-readable success marker — won't drift with cosmetic padding.
+    // Integrators parse THIS line: /^OUTPUT=(.+)$/.
+    console.log(`OUTPUT=${res.out}`);
   } catch (err) {
     console.error('\nFAILED:', err.message);
     console.error(`(intermediate artifacts kept in: ${workDir})`);
