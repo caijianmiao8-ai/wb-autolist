@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Nav } from "./Nav";
 import { SetupWizard } from "./SetupWizard";
+import { EnvBanner } from "./EnvBadge";
 import { api } from "@/lib/api";
 
 /// Client shell + first-run gate: if neither Aurixel key nor WB token is
@@ -10,6 +11,7 @@ import { api } from "@/lib/api";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [firstRun, setFirstRun] = useState(false);
+  const [env, setEnv] = useState({ dryRun: true, sandbox: false });
 
   async function check() {
     // Settings can re-trigger the wizard by setting this flag (it auto-shows only
@@ -23,6 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     try {
       const s = await api.getSettings();
       setFirstRun(rerun || (!s.aurixelKeySet && !s.wbContentTokenSet));
+      setEnv({ dryRun: s.dryRun, sandbox: s.wbSandbox });
     } catch {
       setFirstRun(rerun); // if settings can't load, only show wizard on explicit re-run
     }
@@ -47,12 +50,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (firstRun) return <SetupWizard onDone={doneWizard} />;
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 sm:px-6">
-      <Nav />
-      <main className="flex-1 pb-24 pt-10">{children}</main>
-      <footer className="border-t border-slate-900/[0.06] py-7 text-center text-xs tracking-wide text-slate-400 hairline dark:text-slate-600">
-        WB AutoList · 商品自动化上架工作流
-      </footer>
-    </div>
+    <>
+      <EnvBanner dryRun={env.dryRun} sandbox={env.sandbox} />
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 sm:px-6">
+        <Nav />
+        <main className="flex-1 pb-24 pt-10">{children}</main>
+        <footer className="border-t border-slate-900/[0.06] py-7 text-center text-xs tracking-wide text-slate-400 hairline dark:text-slate-600">
+          WB AutoList · 商品自动化上架工作流
+        </footer>
+      </div>
+    </>
   );
 }
