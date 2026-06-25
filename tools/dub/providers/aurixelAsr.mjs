@@ -1,21 +1,23 @@
-// providers/joyvizAsr.mjs — ASR via the JoyViz/Aurixel OpenAI-compatible gateway.
-// LIVE-VERIFIED 2026-06-18: with response_format=verbose_json the gateway now
-// passes through Speechmatics' rich result — per-segment AND per-word timestamps,
-// plus speaker diarization when the diarize flags are set.
+// providers/aurixelAsr.mjs — ASR via the Aurixel OpenAI-compatible gateway.
+// LIVE-VERIFIED on the production line (conduit-api.aurixel.ai) 2026-06-24: with
+// response_format=verbose_json the gateway passes through Speechmatics' rich
+// result — per-segment AND per-word timestamps, plus speaker diarization when the
+// diarize flags are set.
 //
 //   POST {base}/audio/transcriptions  (multipart)
 //     model=speechmatics-enhanced, response_format=verbose_json, language,
 //     diarize/diarization/speaker_labels=true
 //   -> { duration, language, text, segments:[{id,start,end,text,speaker}], words:[…] }
 //
-// So ONE gateway key can also do ASR (same key as chat-translate + TTS).
+// So ONE Aurixel key does ASR + chat-translate + TTS (clone). This realizes the
+// "reserved aurixel extension point" the dub tool was built around.
 //
-// speaker_sensitivity (LIVE-VERIFIED works via the gateway as of 2026-06-18): LOW
-// (0.3) folds Speechmatics' spurious same-speaker over-split back together so ONE
-// excited presenter isn't cloned as two voices, while still isolating a real 2nd
-// speaker (even a minority child). The gateway honors `speaker_sensitivity` /
-// `sensitivity` (NOT `diarization_sensitivity`). Remaining hard parent/child
-// overlap mislabels are fixed downstream by translate.refineSpeakers (gpt-5.5).
+// speaker_sensitivity (LIVE-VERIFIED honored by the gateway): LOW (0.3) folds
+// Speechmatics' spurious same-speaker over-split back together so ONE excited
+// presenter isn't cloned as two voices, while still isolating a real 2nd speaker
+// (even a minority child). The gateway honors `speaker_sensitivity` / `sensitivity`
+// (NOT `diarization_sensitivity`). Remaining hard parent/child overlap mislabels
+// are fixed downstream by translate.refineSpeakers (gpt-5.5).
 //
 // NOTE: Deepgram through this gateway is still TEXT-ONLY; use a Speechmatics model.
 
@@ -29,8 +31,8 @@ function normSpeaker(s) {
   return Number.isFinite(n) && n > 0 ? `speaker_${n - 1}` : 'speaker_0';
 }
 
-export function makeJoyvizAsr(cfg = {}) {
-  const base = (cfg.baseUrl || 'https://conduit-api.joyviz.ai/v1').replace(/\/$/, '');
+export function makeAurixelAsr(cfg = {}) {
+  const base = (cfg.baseUrl || 'https://conduit-api.aurixel.ai/v1').replace(/\/$/, '');
   const key = cfg.apiKey;
   const model = cfg.model || 'speechmatics-enhanced';
   const speakerSensitivity = cfg.speakerSensitivity ?? 0.3; // low = fewer speakers (avoid over-split)
@@ -38,7 +40,7 @@ export function makeJoyvizAsr(cfg = {}) {
   const retries = cfg.retries ?? 1;
 
   async function transcribe(audioPath, { language = 'en', diarize = true } = {}) {
-    if (!key) throw new Error('JoyViz ASR: gateway API key missing');
+    if (!key) throw new Error('Aurixel ASR: AURIXEL_API_KEY missing');
     const buf = await readFile(audioPath);
     const form = new FormData();
     form.append('file', new Blob([buf], { type: 'audio/wav' }), 'audio.wav');
@@ -60,16 +62,16 @@ export function makeJoyvizAsr(cfg = {}) {
     const res = await fetchWithRetry(
       `${base}/audio/transcriptions`,
       { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form },
-      { timeoutMs, retries, label: 'JoyViz ASR' }
+      { timeoutMs, retries, label: 'Aurixel ASR' }
     );
-    if (!res.ok) throw new Error(await errorText(res, 'JoyViz ASR'));
+    if (!res.ok) throw new Error(await errorText(res, 'Aurixel ASR'));
     const j = await res.json();
     const rawSegs = Array.isArray(j.segments) ? j.segments : null;
     if (!rawSegs || !rawSegs.length) {
       // verbose_json must yield segments; text-only means the gateway regressed to
       // the old lossy STT — fail loudly so ASR is moved back to a timing-capable one.
       throw new Error(
-        `JoyViz ASR: no segments in verbose_json response (gateway returned text-only?) keys=${Object.keys(j).join(',')}`
+        `Aurixel ASR: no segments in verbose_json response (gateway returned text-only?) keys=${Object.keys(j).join(',')}`
       );
     }
     const segments = rawSegs
@@ -80,16 +82,16 @@ export function makeJoyvizAsr(cfg = {}) {
         speaker: normSpeaker(s.speaker),
       }))
       .filter((s) => s.text && Number.isFinite(s.start) && s.end > s.start);
-    if (!segments.length) throw new Error('JoyViz ASR: no usable speech segments');
+    if (!segments.length) throw new Error('Aurixel ASR: no usable speech segments');
     const speakers = new Set(segments.map((s) => s.speaker));
     return {
       text: j.text || segments.map((s) => s.text).join(' '),
       language: j.language || language,
       segments,
       diarizes: speakers.size > 1,
-      raw: { provider: 'joyviz', model, segments: segments.length, speakers: speakers.size },
+      raw: { provider: 'aurixel', model, segments: segments.length, speakers: speakers.size },
     };
   }
 
-  return { kind: 'joyviz-asr', transcribe };
+  return { kind: 'aurixel-asr', transcribe };
 }

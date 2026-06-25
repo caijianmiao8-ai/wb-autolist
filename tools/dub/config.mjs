@@ -94,7 +94,7 @@ export function loadConfig(opts = {}) {
   // these providers return WAV from synthesis → intermediate clips must be .wav
   const ttsProvider = String(env('TTS_PROVIDER', 'qwen-vc')).toLowerCase();
   const wavTts = ttsProvider === 'qwen-vc' || ttsProvider === 'qwen' || ttsProvider === 'cosyvoice-vc'
-    || ttsProvider === 'joyviz-vc' || ttsProvider === 'joyviz';
+    || ttsProvider === 'aurixel-vc' || ttsProvider === 'aurixel';
 
   const cfg = {
     envPath,
@@ -313,35 +313,24 @@ export function loadConfig(opts = {}) {
     // continuous utterance.
     CLONE_REF_GAP: Number(env('CLONE_REF_GAP', '0.6')),
 
-    // --- JoyViz/Aurixel gateway TTS (TTS_PROVIDER=joyviz-vc | joyviz) ---
-    // OpenAI-compatible gateway: ONE key does chat-translate AND TTS+cloning.
-    // Defaults to the chat key/base so a single JOYVIZ_API_KEY covers everything;
-    // STT on this gateway is text-only (no timestamps) so ASR stays elsewhere.
-    JOYVIZ_API_KEY: env('JOYVIZ_API_KEY') || env('AURIXEL_API_KEY'),
-    JOYVIZ_BASE: env('JOYVIZ_BASE') || env('AURIXEL_BASE', 'https://conduit-api.joyviz.ai/v1'),
-    JOYVIZ_TTS_VC_MODEL: env('JOYVIZ_TTS_VC_MODEL', 'qwen3-tts-vc'),
-    JOYVIZ_TTS_MODEL: env('JOYVIZ_TTS_MODEL', 'qwen-tts'),
-    JOYVIZ_VOICE: env('JOYVIZ_VOICE', 'Cherry'),
-    // Gateway ASR (ASR_PROVIDER=joyviz): verbose_json now passes through
-    // Speechmatics' word/segment timestamps + diarization. Use a speechmatics-*
-    // model (deepgram via the gateway is still text-only). Sensitivity isn't
-    // controllable here — diarize-refine cleans up the over-split downstream.
-    JOYVIZ_ASR_MODEL: env('JOYVIZ_ASR_MODEL', 'speechmatics-enhanced'),
-    // Verified: the gateway honors `speaker_sensitivity` (low = fewer speakers,
-    // folds the over-split). Defaults to the same 0.3 as direct Speechmatics.
-    JOYVIZ_SPEAKER_SENSITIVITY: Number(env('JOYVIZ_SPEAKER_SENSITIVITY', env('SPEECHMATICS_SPEAKER_SENSITIVITY', '0.3'))),
-
-    // --- Aurixel audio (stubs; 404 today) ---
-    AURIXEL_AUDIO_BASE:
-      env('AURIXEL_AUDIO_BASE') || env('AURIXEL_BASE', 'https://conduit-api.aurixel.ai/v1'),
-    AURIXEL_ASR_MODEL: env('AURIXEL_ASR_MODEL', 'whisper-1'),
-    AURIXEL_TTS_MODEL: env('AURIXEL_TTS_MODEL', 'tts-1'),
-    AURIXEL_VOICE: env('AURIXEL_VOICE', 'alloy'),
+    // --- Aurixel gateway audio (ASR_PROVIDER=aurixel, TTS_PROVIDER=aurixel-vc|aurixel) ---
+    // OpenAI-compatible production gateway (AURIXEL_BASE): ONE AURIXEL_API_KEY does
+    // chat-translate + ASR + TTS+cloning. LIVE-VERIFIED on conduit-api.aurixel.ai.
+    // ASR: verbose_json passes through Speechmatics word/segment timestamps +
+    // diarization; honors speaker_sensitivity. Use a speechmatics-* model (deepgram
+    // via the gateway is still text-only). VC: qwen3-tts-vc clone (enroll+synth).
+    AURIXEL_ASR_MODEL: env('AURIXEL_ASR_MODEL', 'speechmatics-enhanced'),
+    // The gateway honors `speaker_sensitivity` (low = fewer speakers, folds the
+    // over-split). Defaults to the same 0.3 as direct Speechmatics.
+    AURIXEL_SPEAKER_SENSITIVITY: Number(env('AURIXEL_SPEAKER_SENSITIVITY', env('SPEECHMATICS_SPEAKER_SENSITIVITY', '0.3'))),
+    AURIXEL_TTS_VC_MODEL: env('AURIXEL_TTS_VC_MODEL', 'qwen3-tts-vc'),
+    AURIXEL_TTS_MODEL: env('AURIXEL_TTS_MODEL', 'qwen-tts'),
+    AURIXEL_VOICE: env('AURIXEL_VOICE', 'Cherry'),
 
     // --- ffmpeg / pipeline ---
     FFMPEG_PATH: env('FFMPEG_PATH') || join(homedir(), '.local/bin/ffmpeg'),
     FFPROBE_PATH: env('FFPROBE_PATH') || join(homedir(), '.local/bin/ffprobe'),
-    OUT_FORMAT: env('OUT_FORMAT', wavTts ? 'wav' : 'mp3'), // intermediate TTS audio format (wav for qwen-vc/qwen/cosyvoice-vc)
+    OUT_FORMAT: env('OUT_FORMAT', wavTts ? 'wav' : 'mp3'), // intermediate TTS audio format (wav for qwen-vc/qwen/cosyvoice-vc/aurixel-vc/aurixel)
 
     // --- Network ---
     HTTP_TIMEOUT_MS: Number(env('HTTP_TIMEOUT_MS', '120000')),
@@ -358,8 +347,8 @@ export function loadConfig(opts = {}) {
 export function redactedConfig(cfg) {
   const mask = (v) => (v ? `set(${String(v).slice(0, 3)}…len${String(v).length})` : '<unset>');
   // Mask any value whose KEY NAME looks like a credential, so adding a new
-  // provider key never silently leaks under DUB_DEBUG (only AURIXEL/EL used to be
-  // masked, exposing QWEN/DEEPGRAM/SPEECHMATICS/JOYVIZ in plaintext).
+  // provider key never silently leaks under DUB_DEBUG (a hardcoded allow-list once
+  // masked only AURIXEL/EL, exposing QWEN/DEEPGRAM/SPEECHMATICS in plaintext).
   const isSecret = (k) => /(_KEY|_TOKEN|_SECRET|_PASSWORD)$/i.test(k) || /^(API_KEY|TOKEN|SECRET)$/i.test(k);
   const out = { ...cfg };
   for (const k of Object.keys(out)) {
@@ -382,16 +371,12 @@ export function assertSecrets(cfg, { needAsr = true, needTts = true, needTransla
     missing.push('DEEPGRAM_API_KEY (ASR_PROVIDER=deepgram)');
   if (needAsr && cfg.ASR_PROVIDER === 'speechmatics' && !cfg.SPEECHMATICS_API_KEY)
     missing.push('SPEECHMATICS_API_KEY (ASR_PROVIDER=speechmatics)');
-  if (needAsr && cfg.ASR_PROVIDER === 'joyviz' && !cfg.JOYVIZ_API_KEY)
-    missing.push('JOYVIZ_API_KEY or AURIXEL_API_KEY (ASR_PROVIDER=joyviz)');
   if (needTts && cfg.TTS_PROVIDER === 'elevenlabs' && !cfg.ELEVENLABS_API_KEY)
     missing.push('ELEVENLABS_API_KEY (TTS_PROVIDER=elevenlabs)');
-  if (needTts && cfg.TTS_PROVIDER === 'aurixel' && !cfg.AURIXEL_API_KEY)
-    missing.push('AURIXEL_API_KEY (TTS_PROVIDER=aurixel)');
+  if (needTts && (cfg.TTS_PROVIDER === 'aurixel-vc' || cfg.TTS_PROVIDER === 'aurixel') && !cfg.AURIXEL_API_KEY)
+    missing.push(`AURIXEL_API_KEY (TTS_PROVIDER=${cfg.TTS_PROVIDER})`);
   if (needTts && (cfg.TTS_PROVIDER === 'qwen-vc' || cfg.TTS_PROVIDER === 'qwen' || cfg.TTS_PROVIDER === 'cosyvoice-vc') && !cfg.QWEN_API_KEY)
     missing.push(`QWEN_API_KEY (TTS_PROVIDER=${cfg.TTS_PROVIDER})`);
-  if (needTts && (cfg.TTS_PROVIDER === 'joyviz-vc' || cfg.TTS_PROVIDER === 'joyviz') && !cfg.JOYVIZ_API_KEY)
-    missing.push(`JOYVIZ_API_KEY or AURIXEL_API_KEY (TTS_PROVIDER=${cfg.TTS_PROVIDER})`);
   if (missing.length) {
     throw new Error(
       `Missing required secrets in ${cfg.envPath} (or process.env): ${missing.join(', ')}`

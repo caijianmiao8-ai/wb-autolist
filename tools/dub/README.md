@@ -76,7 +76,7 @@ through Aurixel* below.
 | Provider | Diarization | Timestamps | Notes |
 |---|---|---|---|
 | `speechmatics` *(default)* | ✅ strong | word | cloud direct; `SPEECHMATICS_SPEAKER_SENSITIVITY=0.3` (higher over-splits one speaker into two) |
-| `joyviz` | ✅ strong | word + segment | **same Speechmatics via the OpenAI-shape gateway — ONE key for ASR+translate+TTS.** `verbose_json` passes through timestamps + diarization; honors `JOYVIZ_SPEAKER_SENSITIVITY=0.3`. Live-verified equivalent to direct |
+| `aurixel` | ✅ strong | word + segment | **same Speechmatics via the Aurixel OpenAI-shape gateway — ONE key for ASR+translate+TTS.** `verbose_json` passes through timestamps + diarization; honors `AURIXEL_SPEAKER_SENSITIVITY=0.3`. Live-verified on production equivalent to direct |
 | `whisper` | ❌ | word | **local/offline** (mlx via uvx), zero cost/quota; best for monologue. `WHISPER_MODEL` |
 | `deepgram` | ⚠️ weak on minority | word | cloud, cheap/fast; misses a minority child speaker |
 | `dashscope` (`qwen3-asr-flash`) | ❌ | VAD-approx | great text, no native timestamps |
@@ -88,8 +88,8 @@ ASR results are **cached** per video (`~/.cache/wb-dub/asr`, keyed on size+mtime
 | Provider | Voice | Consistency | Notes |
 |---|---|---|---|
 | `qwen-vc` *(default)* | clones each speaker | per-call random → stabilized by voice-select + pitch-norm | DashScope direct (region key); cross-lingual EN→RU |
-| `joyviz-vc` | clones each speaker | same engine/drift as `qwen-vc` (stabilized the same way) | **same `qwen3-tts-vc`, via the OpenAI-shape gateway — ONE gateway key also does translate.** Enroll `POST /audio/voices`, synth `POST /audio/speech`. Live-verified |
-| `joyviz` | preset (Cherry/Katerina/…) | stable, generic | gateway preset (no cloning) |
+| `aurixel-vc` | clones each speaker | same engine/drift as `qwen-vc` (stabilized the same way) | **same `qwen3-tts-vc`, via the Aurixel OpenAI-shape gateway — ONE gateway key also does ASR + translate.** Enroll `POST /audio/voices`, synth `POST /audio/speech`. Live-verified on production |
+| `aurixel` | preset (Cherry/Katerina/…) | stable, generic | gateway preset (no cloning) |
 | `cosyvoice-vc` | clones | **deterministic** (no drift) | DashScope same key; but RU ~2× slow (`COSYVOICE_RATE`), needs ≥10s ref + OSS-url enroll + WebSocket synth |
 | `qwen` | preset (Cherry/Katerina/…) | stable, generic | no cloning; `--speaker-voices "speaker_0=Katerina"` |
 | `elevenlabs` | preset/IVC | IVC is the cleanest (natural+stable) | key here has no IVC |
@@ -100,28 +100,30 @@ the preset through `qwen3-tts-flash`.
 
 ## Routing everything through the gateway (one key — FULLY LIVE)
 
-One gateway key (`JOYVIZ_API_KEY` / `AURIXEL_API_KEY`) now drives **all three paid
-stages**. The gateway is OpenAI-compatible (`/v1`); every provider takes a `*_BASE`
-+ key from config, so you repoint a stage at the gateway and reuse the one key.
-Verified live against `https://conduit-api.joyviz.ai/v1` on 2026-06-18:
+One Aurixel key (`AURIXEL_API_KEY`) now drives **all three paid stages**. The
+gateway is OpenAI-compatible (`/v1`); every provider takes a `*_BASE` + key from
+config, so you point a stage at the gateway and reuse the one key. Verified live on
+the production line `https://conduit-api.aurixel.ai/v1` on 2026-06-24:
 
 | Stage | How to route through the gateway | Status |
 |---|---|---|
 | **Translate + diarize-refine** | `AURIXEL_BASE`=gateway, `AURIXEL_API_KEY`=gateway key, `TRANSLATE_MODEL=gpt-5.5` | ✅ live (`gpt-5.5` clean; `qwen3-32b` leaks `<think>`, don't use for translate) |
-| **ASR (timestamps + diarization)** | `ASR_PROVIDER=joyviz` (`JOYVIZ_ASR_MODEL=speechmatics-enhanced`) | ✅ live — `verbose_json` passes through Speechmatics' word+segment timestamps AND diarization; honors `speaker_sensitivity` (`JOYVIZ_SPEAKER_SENSITIVITY=0.3` folds the over-split). Equivalent to direct Speechmatics + the same diarize-refine. (Deepgram via the gateway is still text-only — use a `speechmatics-*` model.) |
-| **TTS + per-speaker cloning** | `TTS_PROVIDER=joyviz-vc` | ✅ live (enroll `/audio/voices` → synth `/audio/speech`; same `qwen3-tts-vc`, round-trips back to clean RU) |
-| **TTS preset voices** | `TTS_PROVIDER=joyviz` | ✅ live |
+| **ASR (timestamps + diarization)** | `ASR_PROVIDER=aurixel` (`AURIXEL_ASR_MODEL=speechmatics-enhanced`) | ✅ live — `verbose_json` passes through Speechmatics' word+segment timestamps AND diarization; honors `speaker_sensitivity` (`AURIXEL_SPEAKER_SENSITIVITY=0.3` folds the over-split). Equivalent to direct Speechmatics + the same diarize-refine. (Deepgram via the gateway is still text-only — use a `speechmatics-*` model.) |
+| **TTS + per-speaker cloning** | `TTS_PROVIDER=aurixel-vc` | ✅ live (enroll `/audio/voices` → synth `/audio/speech`; same `qwen3-tts-vc`, round-trips back to clean RU) |
+| **TTS preset voices** | `TTS_PROVIDER=aurixel` | ✅ live |
 
 True single-key setup — ASR + translate + TTS all on the gateway:
 
 ```bash
-# .env.local — ONE key, two lines (JOYVIZ_API_KEY/JOYVIZ_BASE auto-inherit these)
+# .env.local — ONE key (AURIXEL_BASE defaults to the aurixel production line)
 AURIXEL_API_KEY=ck-…
-AURIXEL_BASE=https://conduit-api.joyviz.ai/v1
+AURIXEL_BASE=https://conduit-api.aurixel.ai/v1
+ASR_PROVIDER=aurixel
+TTS_PROVIDER=aurixel-vc
 ```
 ```bash
 node tools/dub/cli.mjs in.mp4 --out out.ru.mp4 \
-  --asr-provider joyviz --tts-provider joyviz-vc
+  --asr-provider aurixel --tts-provider aurixel-vc
 ```
 
 **Local stages stay local** regardless: Demucs (M&E separation), resemblyzer

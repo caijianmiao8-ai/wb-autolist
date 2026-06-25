@@ -11,8 +11,8 @@
 //   --keywords "a,b,c"           RU keywords to weave into the translation
 //   --brand X                    brand name kept verbatim
 //   --tone marketing             marketing tone hint
-//   --asr-provider elevenlabs|aurixel
-//   --tts-provider elevenlabs|aurixel
+//   --asr-provider speechmatics|aurixel|deepgram|whisper|elevenlabs
+//   --tts-provider aurixel-vc|aurixel|qwen-vc|qwen|elevenlabs
 //   --mode segment|whole         timing strategy (default segment)
 //   --keep-original-audio <0..1> duck original under the dub at this gain (default 0 = replace)
 //   --dry-run                    skip ALL paid calls (free wiring test)
@@ -39,9 +39,9 @@ Options:
   --keywords "a,b,c"           RU keywords woven into the translation
   --brand X                    brand kept verbatim
   --tone marketing             marketing tone hint
-  --asr-provider speechmatics|el|deepgram|whisper  ASR (default speechmatics=cloud+diarizes; whisper=offline local)
+  --asr-provider aurixel|speechmatics|deepgram|whisper|el  ASR (aurixel=gateway, one key; speechmatics=direct; whisper=offline local)
   --whisper-model <mlx-id>     local whisper model (default whisper-large-v3-turbo)
-  --tts-provider el|aurixel|qwen-vc  TTS provider (qwen-vc = clone each speaker's real voice)
+  --tts-provider aurixel-vc|qwen-vc|qwen|el  TTS provider (aurixel-vc/qwen-vc = clone each speaker's real voice)
   --min-clone-sec <n>          min clean source audio to clone a speaker (default 6)
   --merge-gap <sec>            merge consecutive same-speaker segs (gap<=sec) into one call (default 0.35)
   --rate <chars/sec>           TTS speaking rate for length budgeting (default 12; raise for faster engines)
