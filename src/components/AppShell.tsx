@@ -12,11 +12,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [firstRun, setFirstRun] = useState(false);
 
   async function check() {
+    // Settings can re-trigger the wizard by setting this flag (it auto-shows only
+    // on a truly fresh install otherwise).
+    let rerun = false;
+    try {
+      rerun = localStorage.getItem("wb:rerunSetup") === "1";
+    } catch {
+      /* ignore */
+    }
     try {
       const s = await api.getSettings();
-      setFirstRun(!s.aurixelKeySet && !s.wbContentTokenSet);
+      setFirstRun(rerun || (!s.aurixelKeySet && !s.wbContentTokenSet));
     } catch {
-      setFirstRun(false); // if settings can't load, don't trap the user in the wizard
+      setFirstRun(rerun); // if settings can't load, only show wizard on explicit re-run
     }
     setReady(true);
   }
@@ -25,9 +33,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     check();
   }, []);
 
+  function doneWizard() {
+    try {
+      localStorage.removeItem("wb:rerunSetup");
+    } catch {
+      /* ignore */
+    }
+    setFirstRun(false);
+  }
+
   // Avoid flashing the app then snapping to the wizard.
   if (!ready) return null;
-  if (firstRun) return <SetupWizard onDone={() => setFirstRun(false)} />;
+  if (firstRun) return <SetupWizard onDone={doneWizard} />;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 sm:px-6">

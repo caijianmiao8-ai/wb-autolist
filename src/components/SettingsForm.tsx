@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes, Ruler } from "lucide-react";
+import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes, Ruler, Wand2 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import type { Warehouse } from "@/lib/types";
@@ -104,6 +104,16 @@ export function SettingsForm() {
     setTimeout(() => setSaved(false), 2500);
   }
 
+  // Re-show the first-run wizard (AppShell reads this flag on load).
+  function rerunWizard() {
+    try {
+      localStorage.setItem("wb:rerunSetup", "1");
+    } catch {
+      /* ignore */
+    }
+    window.location.assign("/");
+  }
+
   return (
     <div className="mx-auto max-w-2xl animate-fade-up">
       <h1 className="mb-1 text-2xl font-semibold tracking-tight">设置</h1>
@@ -111,6 +121,16 @@ export function SettingsForm() {
         密钥仅保存在<b className="text-slate-700 dark:text-slate-300">本机</b>应用数据目录，不随程序上传。
         生成图片/文案时，商品名、关键词等内容会发送到所选 AI 网关（如 Aurixel）进行处理。
       </p>
+
+      <div className="mb-6 flex items-center gap-3 rounded-2xl border border-wb-purple/20 bg-wb-purple/[0.06] px-4 py-3 text-sm">
+        <Wand2 className="h-4 w-4 shrink-0 text-wb-purple" />
+        <span className="flex-1 text-slate-600 dark:text-slate-300">
+          账号与默认值可在<b>初次设置向导</b>里一步步配置;这里随时单独查看 / 修改。
+        </span>
+        <button onClick={rerunWizard} className="btn-ghost shrink-0 px-3 py-1.5 text-xs">
+          重新运行向导
+        </button>
+      </div>
 
       <div className="space-y-5">
         {/* WB */}
@@ -180,9 +200,21 @@ export function SettingsForm() {
               type="checkbox"
               className="h-4 w-4 accent-wb-purple"
               checked={wbSandbox}
-              onChange={(e) => setWbSandbox(e.target.checked)}
+              onChange={(e) => {
+                const next = e.target.checked;
+                // Switching OFF sandbox = operate the REAL store — guard it.
+                if (
+                  !next &&
+                  !window.confirm(
+                    "切换到「正式店铺」?\n\n之后所有上架 / 改价 / 库存操作都会作用于你的真实 Wildberries 店铺,且不可撤销。确认切换?"
+                  )
+                ) {
+                  return;
+                }
+                setWbSandbox(next);
+              }}
             />
-            使用沙盒环境（content-api-sandbox）—— 测试 Token 必须开启
+            使用沙盒环境（content-api-sandbox）—— 测试 Token 必须开启;关闭 = 正式店铺
           </label>
           <p className="mt-3 text-xs text-slate-500">
             在卖家后台「设置 → 访问 API」生成 Token，需勾选 <b>Контент</b> 与 <b>Цены и скидки</b> 两个范围，且非只读。未配置则运行演示模式。
