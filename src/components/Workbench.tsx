@@ -359,30 +359,19 @@ export function Workbench() {
 
   return (
     <div className="animate-fade-up">
-      {/* Hero */}
-      <div className="mb-8 max-w-2xl">
-        <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-white sm:text-[34px]">
-          商品自动化上架工作流
-        </h1>
-        <p className="mt-2.5 text-[15px] leading-relaxed text-slate-500 dark:text-slate-400">
-          输入商品名与关键字，生成主图、宣传图与俄文文案，发布到 Wildberries。
-        </p>
-        {settings && (
-          <div className="mt-3">
-            <EnvBadge dryRun={dryRun} sandbox={sandbox} />
-          </div>
-        )}
+      {/* Hero — compact: title + env badge in one row */}
+      <div className="mb-4 flex items-center gap-3">
+        <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white">单品上架</h1>
+        {settings && <EnvBadge dryRun={dryRun} sandbox={sandbox} />}
       </div>
 
       {dryRun && (
-        <div className="mb-6 flex items-start gap-3 rounded-2xl border border-amber-400/20 bg-amber-500/[0.07] px-4 py-3.5 text-sm text-amber-700 dark:text-amber-200/90">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-          <div className="leading-relaxed">
-            当前为 <b className="font-semibold">演示模式</b>（未配置 Wildberries Token）。流程会完整跑通并生成图片，但不会真实上架。
-            <Link href="/settings" className="ml-1 inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-200 underline decoration-amber-400/40 underline-offset-2 hover:decoration-amber-300">
-              <Settings className="h-3.5 w-3.5" /> 去配置 Token
-            </Link>
-          </div>
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-500/[0.07] px-3 py-2 text-xs text-amber-700 dark:text-amber-200/90">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+          <span>演示模式(未配 WB Token):完整跑通并出图,但不会真实上架。</span>
+          <Link href="/settings" className="ml-auto inline-flex shrink-0 items-center gap-1 font-medium underline">
+            <Settings className="h-3 w-3" /> 去配置
+          </Link>
         </div>
       )}
 
@@ -417,8 +406,8 @@ export function Workbench() {
       <StepBar listing={listing} step={step} />
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(360px,400px)_1fr]">
-        {/* ── 左:输入(始终可见) ── */}
-        <div className="card h-fit p-6">
+        {/* ── 左:输入(始终可见;内部滚动,不撑高整页) ── */}
+        <div className="card p-6 lg:max-h-[calc(100vh-11rem)] lg:overflow-y-auto">
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
             <Tag className="h-4 w-4 text-wb-pink" /> 商品信息
           </div>
@@ -666,8 +655,8 @@ export function Workbench() {
           )}
         </div>
 
-        {/* ── 右:实时预览(始终在视野内) ── */}
-        <div className="space-y-4">
+        {/* ── 右:实时预览(内部滚动,不撑高整页) ── */}
+        <div className="space-y-4 lg:max-h-[calc(100vh-11rem)] lg:overflow-y-auto lg:pr-1">
           {!listing && step !== "generating" && (
             <div className="card flex min-h-[320px] flex-col items-center justify-center p-8 text-center">
               <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-slate-900/[0.04] dark:bg-white/5">
@@ -743,7 +732,7 @@ function StepBar({ listing, step }: { listing: Listing | null; step: Step }) {
   const cur = !listing ? 1 : step === "publishing" || step === "done" ? 3 : 2;
   const steps = ["输入", "预览", "发布"];
   return (
-    <div className="mb-8 flex items-center justify-center">
+    <div className="mb-5 flex items-center justify-center">
       {steps.map((s, i) => {
         const n = i + 1;
         const done = n < cur;

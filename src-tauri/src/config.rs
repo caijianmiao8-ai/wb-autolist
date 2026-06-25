@@ -285,30 +285,17 @@ fn strip_secrets_from_file(file: &Path, accounts: &[&str]) {
 }
 
 pub fn get_config(paths: &Paths) -> AppConfig {
+    // Secrets live in the per-user app-data config.json (env can override). The app
+    // ships UNSIGNED, so the OS keychain re-prompts on every rebuild/update (its ACL
+    // is keyed to a stable code signature we don't have) — that gave 3-4 password
+    // prompts per launch for zero security gain. App-data storage = no prompts,
+    // works identically across builds. config.json is per-user + gitignored.
     let mut cfg = AppConfig::default();
     apply_env(&mut cfg);
     apply_file(&mut cfg, &paths.config());
-    // Secrets live in the OS keychain — overlay them, migrating any legacy
-    // plaintext from config.json/env on first run, then strip ONLY the cleartext
-    // we successfully moved (per-field, so a partial migration loses nothing).
-    let mut to_strip: Vec<&'static str> = vec![];
-    let mut errored: Vec<&'static str> = vec![];
-    resolve_secret(&mut cfg.wb_content_token, "wbContentToken", &mut to_strip, &mut errored);
-    resolve_secret(&mut cfg.wb_prices_token, "wbPricesToken", &mut to_strip, &mut errored);
-    resolve_secret(&mut cfg.aurixel_api_key, "aurixelApiKey", &mut to_strip, &mut errored);
-    resolve_secret(&mut cfg.openai_api_key, "openaiApiKey", &mut to_strip, &mut errored);
-    resolve_secret(&mut cfg.pollinations_token, "pollinationsToken", &mut to_strip, &mut errored);
-    if !to_strip.is_empty() {
-        // serialized with save_config; strip_secrets_from_file only writes if a
-        // cleartext key is actually present, so this is a no-op once clean.
-        let _g = config_lock().lock().unwrap_or_else(|e| e.into_inner());
-        strip_secrets_from_file(&paths.config(), &to_strip);
-    }
-    // Gate on the CONTENT token specifically — it drives dry-run + the cache
-    // namespace. A failed read there must not look like "no token configured".
-    cfg.kc_error = errored.contains(&"wbContentToken");
-    // Defensive: tokens often arrive with trailing whitespace/newline from a
-    // paste, which corrupts the Authorization header. Strip it.
+    cfg.kc_error = false;
+    // Defensive: pasted tokens often carry a trailing space/newline that would
+    // corrupt the Authorization header.
     cfg.wb_content_token = cfg.wb_content_token.trim().to_string();
     cfg.wb_prices_token = cfg.wb_prices_token.trim().to_string();
     cfg.aurixel_api_key = cfg.aurixel_api_key.trim().to_string();
@@ -327,20 +314,14 @@ pub fn save_config(paths: &Paths, patch: &Value) -> AppConfig {
     if let Some(p) = patch.as_object() {
         for (k, v) in p {
             if SECRET_KEYS.contains(&k.as_str()) {
-                // Secrets → OS keychain, never plaintext json. Only drop the
-                // cleartext from json once it's safely in the keychain; if the
-                // keychain is unavailable, keep plaintext so we never lose it.
+                // Secrets → per-user app-data config.json (trimmed). No keychain:
+                // the app is unsigned, so keychain ACLs re-prompt every rebuild for
+                // no real gain. Empty value clears the secret.
                 match v.as_str().map(|s| s.trim()) {
                     Some(s) if !s.is_empty() => {
-                        if kc_set(k, s) {
-                            obj.remove(k);
-                        } else {
-                            obj.insert(k.clone(), Value::String(s.to_string()));
-                        }
+                        obj.insert(k.clone(), Value::String(s.to_string()));
                     }
-                    // explicit empty value = clear the secret everywhere
                     _ => {
-                        kc_del(k);
                         obj.remove(k);
                     }
                 }
