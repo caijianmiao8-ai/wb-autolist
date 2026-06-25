@@ -466,29 +466,14 @@ export function Workbench() {
             </div>
           )}
 
-          <div className="mb-1.5 grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">到手价（按店铺币种）</label>
-              <input
-                type="number"
-                className="input"
-                value={price}
-                min={1}
-                onChange={(e) => setPrice(Number(e.target.value))}
-              />
-            </div>
-            <div>
-              <label className="label">折扣 (%)</label>
-              <input
-                type="number"
-                className="input"
-                value={discount}
-                min={0}
-                max={99}
-                onChange={(e) => setDiscount(Math.max(0, Math.min(99, Number(e.target.value) || 0)))}
-              />
-            </div>
-          </div>
+          <label className="label">售价（到手价 · 按店铺币种）</label>
+          <input
+            type="number"
+            className="input mb-1.5"
+            value={price}
+            min={1}
+            onChange={(e) => setPrice(Number(e.target.value))}
+          />
           {price > 0 && (
             <p
               className={clsx(
@@ -504,6 +489,16 @@ export function Workbench() {
 
           {showAdvanced && (
             <>
+              <label className="label">折扣 (%)</label>
+              <input
+                type="number"
+                className="input mb-4"
+                value={discount}
+                min={0}
+                max={99}
+                onChange={(e) => setDiscount(Math.max(0, Math.min(99, Number(e.target.value) || 0)))}
+              />
+
               <label className="label">品牌（可选）</label>
               <input
                 className="input mb-4"
@@ -541,58 +536,77 @@ export function Workbench() {
             </>
           )}
 
-          <label className="label">产品图（可选，上传则保留真实产品）</label>
-          <div className="mb-4 flex flex-wrap gap-2">
-            {basePhotos.map((p, i) => (
-              <div key={i} className="relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p} alt="" className="h-14 w-14 rounded-lg border border-slate-900/10 dark:border-white/10 object-cover" />
+          <label className="label">素材（都可选）</label>
+          <div className="mb-4 grid gap-3 sm:grid-cols-2">
+            {/* 参考产品图 → 喂 AI */}
+            <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
+                <ImageIcon className="h-3.5 w-3.5 text-wb-purple" /> 参考产品图
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {basePhotos.map((p, i) => (
+                  <div key={i} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p} alt="" className="h-12 w-12 rounded-lg border border-slate-900/10 object-cover dark:border-white/10" />
+                    <button
+                      type="button"
+                      onClick={() => setBasePhotos((a) => a.filter((_, idx) => idx !== i))}
+                      className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-rose-500 text-[10px] text-white"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
                 <button
                   type="button"
-                  onClick={() => setBasePhotos((a) => a.filter((_, idx) => idx !== i))}
-                  className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-rose-500 text-[10px] text-white"
+                  onClick={() => photoRef.current?.click()}
+                  className="grid h-12 w-12 place-items-center rounded-lg border border-dashed border-slate-900/15 text-slate-400 transition hover:border-wb-purple/50 hover:text-wb-purple dark:border-white/15"
                 >
-                  ×
+                  <Plus className="h-4 w-4" />
                 </button>
+                <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={onPhotos} />
               </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => photoRef.current?.click()}
-              className="grid h-14 w-14 place-items-center rounded-lg border border-dashed border-slate-900/15 dark:border-white/15 text-slate-500 dark:text-slate-400 hover:border-slate-900/30 dark:hover:border-white/30 hover:text-slate-800 dark:hover:text-slate-200"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-            <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={onPhotos} />
-          </div>
-
-          <label className="label">产品视频（可选 · 英文 → 自动配俄语）</label>
-          {videoPath ? (
-            <div className="mb-4 flex items-center gap-2 rounded-lg border border-slate-900/10 bg-slate-900/[0.03] px-3 py-2 text-xs dark:border-white/10 dark:bg-white/[0.03]">
-              <Video className="h-4 w-4 shrink-0 text-wb-pink" />
-              <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-300">
-                {videoPath.split(/[\\/]/).pop()}
-              </span>
-              <button
-                type="button"
-                onClick={() => setVideoPath(null)}
-                className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              <p className="mt-2 text-[11px] leading-snug text-slate-400">
+                你的真实产品图。AI 据此出主图/详情图;<b>留空则全自动生成</b>。
+              </p>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={async () => {
-                const p = await api.dubPickVideo().catch(() => null);
-                if (p) setVideoPath(p);
-              }}
-              className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-900/15 py-3 text-xs text-slate-500 transition hover:border-wb-pink/50 hover:text-wb-pink dark:border-white/15"
-            >
-              <Video className="h-4 w-4" /> 选择英文产品视频
-            </button>
-          )}
+
+            {/* 英文产品视频 → 配俄语 */}
+            <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
+                <Video className="h-3.5 w-3.5 text-wb-pink" /> 产品视频 · 英文
+              </div>
+              {videoPath ? (
+                <div className="flex items-center gap-2 rounded-lg border border-slate-900/10 bg-white px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
+                  <Video className="h-4 w-4 shrink-0 text-wb-pink" />
+                  <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-300">
+                    {videoPath.split(/[\\/]/).pop()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setVideoPath(null)}
+                    className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const p = await api.dubPickVideo().catch(() => null);
+                    if (p) setVideoPath(p);
+                  }}
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-900/15 text-xs text-slate-400 transition hover:border-wb-pink/50 hover:text-wb-pink dark:border-white/15"
+                >
+                  <Plus className="h-4 w-4" /> 选择视频
+                </button>
+              )}
+              <p className="mt-2 text-[11px] leading-snug text-slate-400">
+                你的英文产品视频。生成时<b>自动配成俄语</b>,随卡片上架。
+              </p>
+            </div>
+          </div>
 
           {showAdvanced && (
             <>
@@ -637,13 +651,16 @@ export function Workbench() {
             onClick={() => setShowAdvanced((s) => !s)}
             className="mb-4 flex w-full items-center justify-between border-t border-slate-900/[0.06] pt-3 text-xs text-slate-500 hover:text-slate-700 dark:border-white/[0.06] dark:hover:text-slate-300"
           >
-            高级选项（品牌 / 包裹尺寸 / 提示词 / 图片数量）
+            高级选项（折扣 / 品牌 / 包裹 / 提示词 / 图片数量）
             <span>{showAdvanced ? "收起 ▲" : "展开 ▼"}</span>
           </button>
 
           <button className="btn-primary w-full" onClick={handleGenerate}>
             <Sparkles className="h-4 w-4" /> 一键生成
           </button>
+          <p className="mt-2 text-center text-[11px] text-slate-400">
+            生成俄语图文 + 配图{videoPath ? "、并把视频配成俄语" : ""} · 消耗你的 Aurixel 余额
+          </p>
 
           {error && (
             <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{error}</p>
