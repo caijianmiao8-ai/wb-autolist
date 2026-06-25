@@ -20,6 +20,7 @@ import {
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "@/lib/api";
+import { EnvBadge } from "./EnvBadge";
 import type { Listing, StageLog } from "@/lib/types";
 
 type Step = "input" | "generating" | "preview" | "publishing" | "done";
@@ -366,18 +367,10 @@ export function Workbench() {
         <p className="mt-2.5 text-[15px] leading-relaxed text-slate-500 dark:text-slate-400">
           输入商品名与关键字，生成主图、宣传图与俄文文案，发布到 Wildberries。
         </p>
-        {settings && !dryRun && (
-          <span
-            className={clsx(
-              "mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-              live
-                ? "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300"
-                : "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300"
-            )}
-          >
-            <span className={clsx("h-1.5 w-1.5 rounded-full", live ? "bg-rose-500" : "bg-amber-500")} />
-            {live ? "线上真实店铺 — 上架会进入真实店铺" : "沙盒测试环境 — 不影响真实店铺"}
-          </span>
+        {settings && (
+          <div className="mt-3">
+            <EnvBadge dryRun={dryRun} sandbox={sandbox} />
+          </div>
         )}
       </div>
 
@@ -421,9 +414,12 @@ export function Workbench() {
           </div>
         )}
 
-      <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
-        {/* ── Input ── */}
-        <div className="card h-fit p-6">
+      <StepBar listing={listing} step={step} />
+
+      <div className="mx-auto max-w-3xl space-y-6">
+        {/* ── STEP 1: 输入 ── */}
+        {!listing && step !== "generating" && (
+        <div className="card p-6">
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
             <Tag className="h-4 w-4 text-wb-pink" /> 商品信息
           </div>
@@ -434,7 +430,6 @@ export function Workbench() {
             placeholder="如：无线蓝牙耳机 / Беспроводные наушники"
             value={productName}
             onChange={(e) => setProductName(e.target.value)}
-            disabled={step === "generating" || step === "publishing"}
           />
 
           <label className="label">关键字</label>
@@ -646,34 +641,30 @@ export function Workbench() {
             <span>{showAdvanced ? "收起 ▲" : "展开 ▼"}</span>
           </button>
 
-          <button
-            className="btn-primary w-full"
-            onClick={handleGenerate}
-            disabled={step === "generating" || step === "publishing"}
-          >
-            {step === "generating" ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> 生成中…
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" /> 一键生成
-              </>
-            )}
+          <button className="btn-primary w-full" onClick={handleGenerate}>
+            <Sparkles className="h-4 w-4" /> 一键生成
           </button>
 
           {error && (
             <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{error}</p>
           )}
         </div>
+        )}
 
-        {/* ── Preview / Result ── */}
-        <div className="space-y-6">
-          {step === "input" && !listing && <EmptyState />}
-          {step === "generating" && <GeneratingState msg={genMsg} />}
+        {/* ── 生成中 ── */}
+        {step === "generating" && <GeneratingState msg={genMsg} />}
 
-          {listing && (
+        {/* ── STEP 2/3: 预览 / 发布 ── */}
+        {listing && (
             <>
+              {step !== "publishing" && step !== "done" && (
+                <button
+                  onClick={reset}
+                  className="text-xs text-slate-500 transition hover:text-slate-800 dark:hover:text-slate-200"
+                >
+                  ← 重新开始
+                </button>
+              )}
               <ImagesPanel listing={listing} onRegenerate={doRegenerate} regenLoading={regenLoading} />
               <CopyPanel key={listing.id} listing={listing} onUpdate={setListing} />
               {videoPath && (
@@ -716,23 +707,48 @@ export function Workbench() {
               )}
             </>
           )}
-        </div>
       </div>
     </div>
   );
 }
 
-function EmptyState() {
+function StepBar({ listing, step }: { listing: Listing | null; step: Step }) {
+  const cur = !listing ? 1 : step === "publishing" || step === "done" ? 3 : 2;
+  const steps = ["输入", "预览", "发布"];
   return (
-    <div className="card flex min-h-[360px] flex-col items-center justify-center p-8 text-center">
-      <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-slate-900/[0.04] dark:bg-white/5">
-        <ImageIcon className="h-8 w-8 text-slate-500" />
-      </div>
-      <p className="text-sm text-slate-500 dark:text-slate-400">
-        填写左侧商品信息，点击「一键生成」
-        <br />
-        将生成主图、宣传图与俄文 listing 文案
-      </p>
+    <div className="mb-8 flex items-center justify-center">
+      {steps.map((s, i) => {
+        const n = i + 1;
+        const done = n < cur;
+        const act = n === cur;
+        return (
+          <div key={s} className="flex items-center">
+            <div
+              className={clsx(
+                "grid h-7 w-7 place-items-center rounded-full text-xs font-medium transition-all",
+                act
+                  ? "bg-gradient-to-br from-wb-pink to-wb-purple text-white shadow-sm"
+                  : done
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                    : "border border-slate-900/10 text-slate-400 dark:border-white/10"
+              )}
+            >
+              {done ? <CheckCircle2 className="h-4 w-4" /> : n}
+            </div>
+            <span
+              className={clsx(
+                "ml-1.5 text-xs",
+                act ? "font-medium text-slate-900 dark:text-white" : "text-slate-400"
+              )}
+            >
+              {s}
+            </span>
+            {i < steps.length - 1 && (
+              <div className="mx-3 h-px w-8 bg-slate-900/10 dark:bg-white/10" />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
