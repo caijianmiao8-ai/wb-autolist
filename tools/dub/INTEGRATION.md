@@ -115,6 +115,7 @@ WB 可能会调的开关(都有合理默认,一般不用动):
 | `--no-background` | 关 | 关掉则不回填背景(纯人声) |
 | `MIN_CLONE_SEC` | `2` | 低于此秒数的说话人不克隆、回退预制音色 |
 | `RENDER_CANDIDATES` | `4` | 每句多合成几条择优(高=更稳但更慢/更贵) |
+| `TTS_CONCURRENCY` | `6` | 并行合成并发数(tts+fit 提速核心);网关 429 就调低,额度足可调高 |
 | `--dry-run` | — | 不发任何付费请求,仅验证接线 |
 
 完整开关见 [README.md](README.md)「Key config」。`DUB_DEBUG=1` 打印**脱敏**配置(所有 `*_KEY` 已掩码)。
@@ -143,7 +144,7 @@ extract → separate → asr → diarize-refine → translate → enroll(clone)
 → voice-select → iso-fit → tts+fit → assemble → gate-silence → mux → verify
 ```
 
-- **耗时**:93s 视频在生产线约 **6–13 分钟**(瓶颈 = `separate` demucs ~20–40s + `tts+fit` 择优合成,与时长/句数成正比)。属**重任务**,务必异步队列处理,不要卡在上传请求里。
+- **耗时**:93s 视频在生产线约 **2.5–3 分钟**(并行合成 + demucs 与 ASR/翻译并发后;瓶颈剩 `translate` gpt-5.5 ~55s + `tts+fit` 择优合成 ~60s,与时长/句数成正比)。仍属**重任务**,务必异步队列处理,不要卡在上传请求里。`TTS_CONCURRENCY`(默认 6)可在网关额度允许下调高再榨一点。
 - **计费**(付费 = 走网关的调用):`asr`(1 次)+ `translate`/`diarize-refine`(gpt-5.5)+ `enroll`(每说话人 1 次)+ `voice-select`(≈ 句数 × `RENDER_CANDIDATES` 次 TTS 合成)。`tts+fit` 是大头。
 - **缓存**:ASR 结果按 `视频size+mtime+provider+设置` 缓存于 `~/.cache/wb-dub/asr`,**同片重跑不重转写/不重计费**。其余阶段不缓存。
 - **幂等**:同输入 + 同配置,结构性结果稳定(分轨/归属/对齐/漂移一致);仅合成 f0(±~15Hz,被 pitch-norm 锁在参考音高 ±10% 内,音色仍分得开)与翻译措辞(同义不同词)有界变化。重试安全。

@@ -139,6 +139,7 @@ available as `--asr-provider whisper` for fully-offline monologue ASR.)
 | `DIARIZE_REFINE` | on | gpt-5.5 role+pitch+context speaker correction (multi-speaker only) |
 | `VOICE_SELECT` | on | best-of-K render selection by voice similarity |
 | `RENDER_CANDIDATES` | `4` | candidates per cloned line (more = steadier, slower) |
+| `TTS_CONCURRENCY` | `6` | parallel TTS synth lanes — `tts+fit` was the bottleneck; bounded for the gateway rate limit (lower on 429s, raise if tolerated) |
 | `PITCH_NORMALIZE` / `PITCH_MAX_SHIFT` | on / `0.10` | shift each clip toward the reference f0 |
 | `CLONE_REF_GAP` / `CLONE_NOISE_TOL` | `0.6` / `12` | single-condition reference window selection |
 | `MIN_CLONE_SEC` / `MAX_CLONE_SEC` | `2` / `12` | clone-able window bounds (short → preset fallback) |

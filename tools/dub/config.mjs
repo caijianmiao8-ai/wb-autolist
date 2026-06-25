@@ -164,6 +164,10 @@ export function loadConfig(opts = {}) {
     // run (the tool normally runs once). Needs resemblyzer via uvx.
     VOICE_SELECT: String(env('VOICE_SELECT', 'true')).toLowerCase() !== 'false',
     RENDER_CANDIDATES: Number(env('RENDER_CANDIDATES', '4')),
+    // Parallel TTS synthesis lanes (tts+fit is ~60-80% of wall time and was serial).
+    // Bounded to respect the gateway rate limit; lower if you hit 429s, raise if the
+    // gateway tolerates it. 6 ≈ halved the 93s-video runtime in testing.
+    TTS_CONCURRENCY: Number(env('TTS_CONCURRENCY', '6')),
     PITCH_NORMALIZE: String(env('PITCH_NORMALIZE', 'true')).toLowerCase() !== 'false',
     PITCH_MAX_SHIFT: Number(env('PITCH_MAX_SHIFT', '0.10')), // a bit wider so a drifted clone can be pulled back to its TRUE reference pitch (keeps speakers distinct)
     // Re-roll: a clip whose pitch lands > PITCH_REROLL_THRESH off the speaker's

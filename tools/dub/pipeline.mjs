@@ -33,6 +33,28 @@ function now() {
   return Date.now();
 }
 
+/**
+ * Run `fn` over `items` with at most `limit` in flight at once, preserving input
+ * order in the result. TTS synthesis is the pipeline's dominant cost and each call
+ * is an independent network request to its own output file — running them with
+ * bounded concurrency (instead of one-at-a-time) is the single biggest speedup.
+ * Bounded (not unbounded Promise.all) to respect the gateway's rate limit; the
+ * provider's own retry/backoff still covers an occasional 429.
+ */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) break;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(lanes);
+  return out;
+}
+
 /** Structured stage logger. Emits {stage, ok, ms, ...}. */
 function makeLogger(onEvent) {
   return async function stage(name, fn) {
@@ -262,21 +284,27 @@ export async function runPipeline(cfg, args) {
     return { videoDur };
   });
 
-  // 1b) Separate stems ONCE (Demucs): vocals (clean speech, for clone references)
-  // + background (M&E, for the final mix). Run early so cloning uses clean vocals.
-  // Graceful: on any failure, fall back to no-background + cloning from raw audio.
+  // 1b) Separate stems (Demucs): vocals (clean speech, for clone references) +
+  // background (M&E, for the final mix). KICK OFF NOW but DON'T block — demucs is
+  // local CPU (~40s) and its output is only needed at enroll(clone)/mix, so it runs
+  // CONCURRENTLY with ASR + diarize-refine + translate (network, ~90s) and its wall
+  // cost is hidden. Awaited just before the TTS section. Graceful: on failure, fall
+  // back to raw audio (clone source) + no background.
   let bgPath = null, vocalsPath = null;
   const needStems = !dryRun && (cfg.KEEP_BACKGROUND || (makeTts(cfg).supportsCloning));
+  let stemsPromise = Promise.resolve();
   if (needStems) {
-    await stageC('separate', async () => {
+    const tSep = now();
+    stemsPromise = (async () => {
       try {
         const stems = await ff.separateBackground(input, workDir, { uvx: cfg.DEMUCS_UVX });
         bgPath = cfg.KEEP_BACKGROUND ? stems.background : null;
         vocalsPath = stems.vocals;
+        capture({ stage: 'separate', ok: true, ms: now() - tSep });
       } catch (e) {
-        capture({ stage: 'separate', ok: true, ms: 0, warn: `stem separation skipped (${e.message}) — raw audio + no background` });
+        capture({ stage: 'separate', ok: true, ms: now() - tSep, warn: `stem separation skipped (${e.message}) — raw audio + no background` });
       }
-    });
+    })();
   }
 
   // 2) ASR -> segments
@@ -392,6 +420,12 @@ export async function runPipeline(cfg, args) {
     pool: cfg.SECONDARY_VOICE_POOL || [],
   });
 
+  // Demucs was kicked off right after extract; its output (clone vocals + mix
+  // background) is needed from here on, so sync up now. By this point ASR + refine
+  // + translate have run, so demucs is almost always already done — this await is
+  // effectively free and is what hides the ~40s separation cost.
+  await stemsPromise;
+
   // 4) TTS each RU segment (per-speaker voice) + time-fit to its slot
   const tts = dryRun ? null : makeTts(cfg);
 
@@ -461,9 +495,8 @@ export async function runPipeline(cfg, args) {
     // Everything up front so we can compute each speaker's REAL speaking rate and
     // median pitch before correcting either — you can't normalize toward a target
     // you haven't measured yet.
-    const recs = [];
-    for (let i = 0; i < units.length; i++) {
-      const seg = units[i];
+    const CONC = Math.max(1, cfg.TTS_CONCURRENCY || 6); // bounded parallel synth lanes
+    const recs = units.map((seg, i) => {
       // Harden timing: a provider could hand back a non-numeric start/end; never
       // let NaN reach atempo/adelay (which silently corrupts the whole mix).
       const segStart = Number.isFinite(seg.start) ? Math.max(seg.start, 0) : 0;
@@ -475,18 +508,15 @@ export async function runPipeline(cfg, args) {
       const gapTarget = Math.max(nextStart - segStart, 0.3); // span + following pause
       const speaker = seg.speaker ?? '_';
       const voiceId = (cloneMap && cloneMap[speaker]) || speakerVoice.map[speaker] || ttsOpts.voiceId;
-
-      const rec = { i, segStart, segEnd, span, gapTarget, rawClip, f0: null, speaker, voiceId, text: seg.text, chars: (seg.text || '').length };
-      if (dryRun) {
-        await silentWav(ff, span, rawClip);
-        rec.rawDur = span;
-      } else {
-        const r = await synth(seg.text, voiceId, rawClip);
-        rec.rawDur = r.durationSec != null ? r.durationSec : await ff.probeDuration(rawClip);
-        if (cfg.PITCH_NORMALIZE) rec.f0 = await ff.estimateF0(rawClip).catch(() => null);
-      }
-      recs.push(rec);
-    }
+      return { i, segStart, segEnd, span, gapTarget, rawClip, f0: null, speaker, voiceId, text: seg.text, chars: (seg.text || '').length };
+    });
+    // Pass A synth, CONC-at-a-time (was one-at-a-time — the pipeline's main bottleneck).
+    await mapLimit(recs, CONC, async (rec) => {
+      if (dryRun) { await silentWav(ff, rec.span, rec.rawClip); rec.rawDur = rec.span; return; }
+      const r = await synth(rec.text, rec.voiceId, rec.rawClip);
+      rec.rawDur = r.durationSec != null ? r.durationSec : await ff.probeDuration(rec.rawClip);
+      if (cfg.PITCH_NORMALIZE) rec.f0 = await ff.estimateF0(rec.rawClip).catch(() => null);
+    });
 
     // Measured speaking rate (chars/sec) per speaker — adapts the isochrony budget
     // to THIS cloned voice/language instead of a fixed guess (works on any video).
@@ -546,15 +576,18 @@ export async function runPipeline(cfg, args) {
       const K = Math.max(2, cfg.RENDER_CANDIDATES);
       const manifest = { refs: {}, refF0: {}, units: [] };
       for (const [spk, p] of Object.entries(refSample)) { manifest.refs[spk] = p; if (refF0[spk]) manifest.refF0[spk] = refF0[spk]; }
-      for (const rec of recs) {
-        if (!refSample[rec.speaker]) continue; // preset-voiced (no clone ref) — keep its single render
-        const cands = [];
-        for (let k = 0; k < K; k++) {
-          const cp = join(segDir, `seg${id3(rec.i)}_c${k}.${ext}`);
-          try { await synth(rec.text, rec.voiceId, cp); } catch { continue; }
-          const f = await ff.estimateF0(cp).catch(() => null);
-          cands.push({ path: cp, f0: f || 0 });
-        }
+      // Flatten (cloned line × K candidates) into ONE bounded-parallel pool — these
+      // are ~2/3 of all synth calls and were the slowest part when run serially.
+      const eligible = recs.filter((rec) => refSample[rec.speaker]); // preset-voiced keep their single render
+      const tasks = [];
+      for (const rec of eligible) for (let k = 0; k < K; k++) tasks.push({ rec, cp: join(segDir, `seg${id3(rec.i)}_c${k}.${ext}`), f0: 0, ok: false });
+      await mapLimit(tasks, CONC, async (task) => {
+        try { await synth(task.rec.text, task.rec.voiceId, task.cp); } catch { return; }
+        task.f0 = (await ff.estimateF0(task.cp).catch(() => null)) || 0;
+        task.ok = true;
+      });
+      for (const rec of eligible) {
+        const cands = tasks.filter((t) => t.rec === rec && t.ok).map((t) => ({ path: t.cp, f0: t.f0 }));
         if (cands.length) manifest.units.push({ i: rec.i, speaker: rec.speaker, candidates: cands });
       }
       if (manifest.units.length) {
