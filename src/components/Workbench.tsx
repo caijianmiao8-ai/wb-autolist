@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Settings,
   RefreshCw,
+  Video,
 } from "lucide-react";
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
@@ -51,6 +52,8 @@ export function Workbench() {
   const [height, setHeight] = useState(5);
   const [weight, setWeight] = useState(0.3);
   const [basePhotos, setBasePhotos] = useState<string[]>([]);
+  // English product video to dub into Russian and attach to the card (optional).
+  const [videoPath, setVideoPath] = useState<string | null>(null);
   const [customPrompt, setCustomPrompt] = useState("");
   const [imageCount, setImageCount] = useState(3);
   const [mainOnly, setMainOnly] = useState(false);
@@ -561,6 +564,34 @@ export function Workbench() {
             <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={onPhotos} />
           </div>
 
+          <label className="label">产品视频（可选 · 英文 → 自动配俄语）</label>
+          {videoPath ? (
+            <div className="mb-4 flex items-center gap-2 rounded-lg border border-slate-900/10 bg-slate-900/[0.03] px-3 py-2 text-xs dark:border-white/10 dark:bg-white/[0.03]">
+              <Video className="h-4 w-4 shrink-0 text-wb-pink" />
+              <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-300">
+                {videoPath.split(/[\\/]/).pop()}
+              </span>
+              <button
+                type="button"
+                onClick={() => setVideoPath(null)}
+                className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={async () => {
+                const p = await api.dubPickVideo().catch(() => null);
+                if (p) setVideoPath(p);
+              }}
+              className="mb-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-900/15 py-3 text-xs text-slate-500 transition hover:border-wb-pink/50 hover:text-wb-pink dark:border-white/15"
+            >
+              <Video className="h-4 w-4" /> 选择英文产品视频
+            </button>
+          )}
+
           <label className="label">自定义提示词（可选）</label>
           <textarea
             className="input mb-4"
@@ -625,6 +656,9 @@ export function Workbench() {
             <>
               <ImagesPanel listing={listing} onRegenerate={doRegenerate} regenLoading={regenLoading} />
               <CopyPanel key={listing.id} listing={listing} onUpdate={setListing} />
+              {videoPath && (
+                <VideoPanel listing={listing} videoPath={videoPath} onUpdate={setListing} />
+              )}
 
               {/* main-first: generate the remaining images on approval */}
               {listing.partial && (
@@ -776,6 +810,10 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
   const [eBullets, setEBullets] = useState("");
   const [savingCopy, setSavingCopy] = useState(false);
   const [copyErr, setCopyErr] = useState<string | null>(null);
+  // Bilingual view: 俄(发布用) / 中(参考) / 双语. Chinese is reference-only.
+  const [lang, setLang] = useState<"ru" | "zh" | "both">("both");
+  const showRu = lang !== "zh";
+  const showZh = lang !== "ru";
   if (!copy) return null;
 
   function startEdit() {
@@ -808,16 +846,33 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
           <Sparkles className="h-4 w-4 text-wb-pink" /> 文案（俄文 listing）
         </div>
         {!editing ? (
-          // editing only makes sense for an unpublished draft — once a card is
-          // live, local copy edits would NOT reach WB and would mislead.
-          !listing.nmID ? (
-            <button
-              className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-              onClick={startEdit}
-            >
-              编辑
-            </button>
-          ) : null
+          <div className="flex items-center gap-2">
+            <div className="flex gap-0.5 rounded-lg border border-slate-900/[0.08] bg-slate-900/[0.03] p-0.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
+              {(["ru", "zh", "both"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setLang(m)}
+                  className={clsx(
+                    "rounded-md px-2 py-0.5 text-[11px] font-medium transition",
+                    lang === m
+                      ? "bg-white text-slate-900 shadow-sm dark:bg-white/[0.12] dark:text-white"
+                      : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                  )}
+                >
+                  {m === "ru" ? "俄" : m === "zh" ? "中" : "双语"}
+                </button>
+              ))}
+            </div>
+            {/* edit only on an unpublished draft — live edits wouldn't reach WB */}
+            {!listing.nmID && (
+              <button
+                className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                onClick={startEdit}
+              >
+                编辑
+              </button>
+            )}
+          </div>
         ) : (
           <div className="flex items-center gap-3 text-xs">
             <button
@@ -873,22 +928,43 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
       <div className="space-y-3 text-sm">
         <div>
           <span className="label">标题（{copy.title.length}/60）</span>
-          <p className="rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-slate-900 dark:text-slate-100">{copy.title}</p>
+          {showRu && (
+            <p className="rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-slate-900 dark:text-slate-100">{copy.title}</p>
+          )}
+          {showZh && copy.titleZh && (
+            <p className={clsx("text-slate-500 dark:text-slate-400", showRu ? "mt-1 px-3 text-xs" : "rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-slate-700 dark:text-slate-300")}>
+              {copy.titleZh}
+            </p>
+          )}
         </div>
         <div>
           <span className="label">描述</span>
-          <p className="max-h-32 overflow-auto rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 leading-relaxed text-slate-700 dark:text-slate-300">
-            {copy.description}
-          </p>
+          {showRu && (
+            <p className="max-h-32 overflow-auto rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 leading-relaxed text-slate-700 dark:text-slate-300">
+              {copy.description}
+            </p>
+          )}
+          {showZh && copy.descriptionZh && (
+            <p className={clsx("max-h-32 overflow-auto leading-relaxed text-slate-500 dark:text-slate-400", showRu ? "mt-1 px-3 text-xs" : "rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-slate-700 dark:text-slate-300")}>
+              {copy.descriptionZh}
+            </p>
+          )}
         </div>
         {copy.bullets.length > 0 && (
           <div>
             <span className="label">卖点</span>
-            <ul className="space-y-1">
+            <ul className="space-y-1.5">
               {copy.bullets.map((b, i) => (
                 <li key={i} className="flex items-start gap-2 text-slate-700 dark:text-slate-300">
                   <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  {b}
+                  <span>
+                    {showRu && <span>{b}</span>}
+                    {showZh && copy.bulletsZh?.[i] && (
+                      <span className={clsx("block text-slate-500 dark:text-slate-400", showRu ? "mt-0.5 text-xs" : "")}>
+                        {copy.bulletsZh[i]}
+                      </span>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -918,6 +994,80 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
         )}
       </div>
       )}
+    </div>
+  );
+}
+
+function VideoPanel({
+  listing,
+  videoPath,
+  onUpdate,
+}: {
+  listing: Listing;
+  videoPath: string;
+  onUpdate: (l: Listing) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const done = !!listing.videoRu;
+
+  async function dub() {
+    setBusy(true);
+    setErr(null);
+    setStage("准备…");
+    let un: (() => void) | null = null;
+    try {
+      un = await listen<{ stage: string }>("dub:progress", (e) => setStage(e.payload.stage));
+      const out = await api.dubStart({ inputPath: videoPath, quality: "standard", voiceMode: "clone" });
+      onUpdate(await api.setListingVideo(listing.id, out));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "配音失败");
+    } finally {
+      un?.();
+      setBusy(false);
+      setStage("");
+    }
+  }
+
+  async function reDub() {
+    onUpdate(await api.setListingVideo(listing.id, ""));
+  }
+
+  return (
+    <div className="card p-6">
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+        <Video className="h-4 w-4 text-wb-pink" /> 产品视频
+        {done && (
+          <span className="chip border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="h-3 w-3" /> 已配俄语
+          </span>
+        )}
+      </div>
+      <div className="mb-3 truncate text-xs text-slate-500 dark:text-slate-400">
+        {videoPath.split(/[\\/]/).pop()}
+      </div>
+      {done ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-emerald-700 dark:text-emerald-300">
+            俄语配音已生成,发布时随卡片一起上传到 WB。
+          </span>
+          <button className="btn-ghost px-3 py-1.5 text-xs" onClick={reDub}>
+            <RefreshCw className="h-3.5 w-3.5" /> 重配
+          </button>
+        </div>
+      ) : busy ? (
+        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin text-wb-pink" /> 配音中…
+          <span className="text-xs text-slate-400">{stage}</span>
+        </div>
+      ) : (
+        <button className="btn-primary" onClick={dub} disabled={!!listing.nmID}>
+          <Video className="h-4 w-4" /> 配成俄语
+        </button>
+      )}
+      {err && <p className="mt-2 break-words text-xs text-rose-600 dark:text-rose-400">{err}</p>}
+      <p className="mt-2 text-[11px] text-slate-400">把英文视频配成俄语 · 消耗你的 Aurixel 余额 · ~1–2 分钟</p>
     </div>
   );
 }
