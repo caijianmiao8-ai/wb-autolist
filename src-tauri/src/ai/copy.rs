@@ -67,9 +67,12 @@ fn copy_schema() -> Value {
             "brand": { "type": "string", "description": "Короткое название бренда (латиница)" },
             "keywords": { "type": "array", "items": { "type": "string" }, "description": "8-15 поисковых ключевых слов на русском" },
             "categoryHint": { "type": "string", "description": "Точное название категории/предмета WB на русском (например: 'Платья', 'Наушники')" },
-            "imagePrompt": { "type": "string", "description": "MUST be in ENGLISH. A rich, detailed prompt for a professional studio e-commerce product photo of THIS specific product. 1-3 sentences, never empty." }
+            "imagePrompt": { "type": "string", "description": "MUST be in ENGLISH. A rich, detailed prompt for a professional studio e-commerce product photo of THIS specific product. 1-3 sentences, never empty." },
+            "titleZh": { "type": "string", "description": "中文翻译:title 的简体中文对照(给中文卖家参考用,不发布)" },
+            "descriptionZh": { "type": "string", "description": "中文翻译:description 的简体中文对照(给中文卖家参考用,不发布)" },
+            "bulletsZh": { "type": "array", "items": { "type": "string" }, "description": "中文翻译:bullets 每条的简体中文对照,顺序与 bullets 一一对应" }
         },
-        "required": ["title","description","bullets","brand","keywords","categoryHint","imagePrompt"]
+        "required": ["title","description","bullets","brand","keywords","categoryHint","imagePrompt","titleZh","descriptionZh","bulletsZh"]
     })
 }
 
@@ -81,7 +84,8 @@ fn prompt(product_name: &str, keywords: &[String], brand: Option<&str>) -> Strin
     p.push_str("bullets (массив 4-6 преимуществ), brand (латиница), keywords (массив 8-15 ключевых слов на русском), ");
     p.push_str("categoryHint (точное название категории/предмета Wildberries на русском, напр. \"Наушники\", \"Платья\"), ");
     p.push_str("imagePrompt (detailed ENGLISH prompt for a professional studio product photo).\n");
-    p.push_str("ВАЖНО: title, description, bullets, keywords, categoryHint — СТРОГО на русском языке. Переведи на русский ЛЮБЫЕ иностранные слова (в т.ч. китайские); НЕ оставляй китайские иероглифы.\n\n");
+    p.push_str("ВАЖНО: title, description, bullets, keywords, categoryHint — СТРОГО на русском языке. Переведи на русский ЛЮБЫЕ иностранные слова (в т.ч. китайские); НЕ оставляй китайские иероглифы.\n");
+    p.push_str("ДОПОЛНИТЕЛЬНО верни titleZh, descriptionZh, bulletsZh — это перевод title/description/bullets на УПРОЩЁННЫЙ КИТАЙСКИЙ (简体中文) для справки китайского продавца (НЕ публикуется). bulletsZh должен соответствовать bullets по порядку и количеству.\n\n");
     p.push_str(&format!("Товар (может быть на любом языке): {}\n", product_name));
     p.push_str(&format!("Ключевые слова: {}\n", keywords.join(", ")));
     if let Some(b) = brand {
@@ -250,6 +254,10 @@ fn normalize(c: &Value, brand_in: Option<&str>) -> ProductCopy {
             }
         });
     let brand: String = brand.chars().take(50).collect();
+    // Chinese reference fields — keep as-is (they SHOULD be Chinese); reference
+    // only, never published to WB.
+    let mut bullets_zh = arr_field(c, "bulletsZh");
+    bullets_zh.truncate(6);
     ProductCopy {
         title: clamp_len(&str_field(c, "title"), 60),
         description: clamp_len(&str_field(c, "description"), 2000),
@@ -258,6 +266,9 @@ fn normalize(c: &Value, brand_in: Option<&str>) -> ProductCopy {
         keywords,
         category_hint: str_field(c, "categoryHint"),
         image_prompt: Some(str_field(c, "imagePrompt")),
+        title_zh: clamp_len(&str_field(c, "titleZh"), 120),
+        description_zh: clamp_len(&str_field(c, "descriptionZh"), 2000),
+        bullets_zh,
     }
 }
 
@@ -289,6 +300,13 @@ fn template_copy(product_name: &str, keywords: &[String], brand: Option<&str>) -
         name,
         if kw.is_empty() { String::new() } else { format!(", {}", kw.join(", ")) }
     );
+    // Chinese reference for the no-AI fallback (input name is usually Chinese).
+    let mut bullets_zh = vec![format!("高品质 — {}", name)];
+    bullets_zh.extend(kw.iter().take(4).map(|k| format!("卖点:{}", k)));
+    bullets_zh.push("Wildberries 快速配送".to_string());
+    bullets_zh.truncate(6);
+    let description_zh = format!("{} —— 注重品质之选。{}兼具实用与设计感,Wildberries 快速送达。", name,
+        if kw.is_empty() { String::new() } else { format!("主要特点:{}。", kw.join("、")) });
     ProductCopy {
         title,
         description: clamp_len(&description, 2000),
@@ -297,5 +315,8 @@ fn template_copy(product_name: &str, keywords: &[String], brand: Option<&str>) -
         keywords: if kw.is_empty() { vec![name.to_string()] } else { kw },
         category_hint: name.to_string(),
         image_prompt: Some(image_prompt),
+        title_zh: clamp_len(name, 120),
+        description_zh: clamp_len(&description_zh, 2000),
+        bullets_zh,
     }
 }

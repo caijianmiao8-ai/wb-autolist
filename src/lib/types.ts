@@ -13,6 +13,10 @@ export interface ProductCopy {
   categoryHint: string;
   /** English prompt actually used to generate the product image */
   imagePrompt?: string;
+  /** Chinese reference translations (REFERENCE ONLY — never published to WB). */
+  titleZh?: string;
+  descriptionZh?: string;
+  bulletsZh?: string[];
 }
 
 export interface GeneratedImage {
@@ -78,6 +82,8 @@ export interface Listing {
   partial?: boolean;
   /** total images requested (for the "generate the rest" step) */
   requestedImages?: number;
+  /** Absolute path to the Russian-dubbed video, attached as the card's video on publish. */
+  videoRu?: string;
 }
 
 export interface ListingInput {
@@ -173,4 +179,53 @@ export interface SyncResult {
   count: number;
   message: string;
   pricesCooldownRemaining: number;
+}
+
+/** First-run wizard: result of a "测试连接" probe. */
+export interface ConnTest {
+  ok: boolean;
+  detail: string;
+  warehouses: Warehouse[];
+}
+
+// ── EN→RU 视频配音 ──
+
+/** Runtime health check for the dubbing pipeline (drives the 自检条). */
+export interface DubPreflight {
+  node: boolean;
+  ffmpeg: boolean;
+  ffprobe: boolean;
+  /** optional: Demucs background-separation + best-of-K voice select */
+  uvx: boolean;
+  aurixelKey: boolean;
+  cliFound: boolean;
+  /** all required pieces present → 开始配音 enabled */
+  ready: boolean;
+  nodePath: string;
+  cliPath: string;
+}
+
+export interface DubOptions {
+  inputPath: string;
+  outPath?: string;
+  brand?: string;
+  keywords?: string;
+  tone?: string;
+  voiceMode?: "clone" | "preset";
+  presetVoice?: string;
+  quality?: "fast" | "standard" | "high";
+  keepBackground?: boolean;
+  gateSilence?: boolean;
+  diarize?: boolean;
+  /** 0..1 — duck the original audio under the dub (0 = full replace) */
+  keepOriginalAudio?: number;
+}
+
+/** One pipeline stage event streamed from the CLI via `dub:progress`. */
+export interface DubProgress {
+  stage: string;
+  ok: boolean;
+  ms: number;
+  warn?: string;
+  error?: string;
 }

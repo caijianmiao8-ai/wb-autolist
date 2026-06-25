@@ -2,6 +2,9 @@
 // fetch('/api/*') calls. Tauri maps camelCase JS arg keys to snake_case params.
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ConnTest,
+  DubOptions,
+  DubPreflight,
   ImageTemplates,
   Listing,
   ListingInput,
@@ -87,6 +90,9 @@ export const api = {
   /** Edit the draft's title/description/bullets before publishing. */
   updateCopy: (id: string, title: string, description: string, bullets: string[]) =>
     invoke<Listing>("update_copy", { id, title, description, bullets }),
+  /** Attach (or clear with "") the dubbed RU video path on a draft. */
+  setListingVideo: (id: string, path: string) =>
+    invoke<Listing>("set_listing_video", { id, path }),
   publish: (id: string) => invoke<Listing>("publish", { id }),
   listListings: () => invoke<Listing[]>("list_listings"),
   getListing: (id: string) => invoke<Listing | null>("get_listing", { id }),
@@ -106,6 +112,11 @@ export const api = {
   // ── Management panel (local-first: read DB, sync on demand) ──
   /** Seller's FBS warehouses, live (used by Settings). */
   listWarehouses: () => invoke<Warehouse[]>("list_warehouses"),
+  /** First-run wizard: validate an Aurixel key. */
+  testAurixel: (key: string) => invoke<ConnTest>("test_aurixel", { key }),
+  /** First-run wizard: validate a WB token (+ return its FBS warehouses). */
+  testWb: (token: string, sandbox: boolean) =>
+    invoke<ConnTest>("test_wb", { token, sandbox }),
   /** Read the whole panel from the local DB — instant, no network. */
   dbListCards: (warehouseId: number | null) =>
     invoke<ManageView>("db_list_cards", { warehouseId }),
@@ -126,4 +137,19 @@ export const api = {
     invoke<void>("set_card_price", { nmId, price, discount }),
   /** Move WB cards to trash by nmID (recoverable 30 days). */
   trashCards: (nmIds: number[]) => invoke<void>("trash_cards", { nmIds }),
+
+  // ── EN→RU 视频配音 ──
+  /** Check node/ffmpeg/uvx + Aurixel key — drives the preflight 自检条. */
+  dubPreflight: () => invoke<DubPreflight>("dub_preflight"),
+  /** Native open-file dialog → absolute video path (null if cancelled). */
+  dubPickVideo: () => invoke<string | null>("dub_pick_video"),
+  /** Start a dub job. Resolves with the output mp4 path; also streams
+   * `dub:progress` events + a final `dub:done`. */
+  dubStart: (options: DubOptions) => invoke<string>("dub_start", { options }),
+  /** Cancel the running dub job (true if one was running). */
+  dubCancel: () => invoke<boolean>("dub_cancel"),
+  /** Open a local file with the OS default app. */
+  openPath: (path: string) => invoke<void>("open_path", { path }),
+  /** Reveal a local file in the OS file manager. */
+  revealPath: (path: string) => invoke<void>("reveal_path", { path }),
 };

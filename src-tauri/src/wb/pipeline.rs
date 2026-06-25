@@ -13,7 +13,7 @@ use crate::wb::cards::{find_card_by_vendor_code, upload_cards, wait_for_card};
 use crate::wb::categories::{get_characteristics, get_colors, get_tnved, resolve_subject};
 use crate::wb::client::WbCtx;
 use crate::wb::marketplace::set_stocks;
-use crate::wb::media::upload_media_bytes;
+use crate::wb::media::{upload_media_bytes, upload_video_bytes};
 use crate::wb::prices::upload_price_task;
 use crate::wb::types::{WbCharacteristic, WbColor};
 use anyhow::{anyhow, Result};
@@ -408,6 +408,23 @@ async fn run_pipeline(
         }
     }
 
+    // ── Step 5b: video (Russian dub) — non-fatal, independent WB video lane ──
+    if let Some(vp) = listing.video_ru.as_ref().filter(|p| !p.trim().is_empty()) {
+        match std::fs::read(vp) {
+            Ok(bytes) => {
+                let fname = std::path::Path::new(vp)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "video.mp4".into());
+                match upload_video_bytes(state, &ctx, created.nm_id, bytes, &fname).await {
+                    Ok(_) => log(logs, "media", true, "已上传俄语配音视频", on),
+                    Err(e) => log(logs, "media", false, &format!("视频上传失败：{}", e), on),
+                }
+            }
+            Err(e) => log(logs, "media", false, &format!("读取视频失败 {}: {}", vp, e), on),
+        }
+    }
+
     // ── Step 6: price (submit once, no polling) ──
     // WB's discounts-prices API is rate-limited HARD (≈1 req/min per seller).
     // So we ONLY submit the price/discount task and let WB process it async —
@@ -552,6 +569,19 @@ async fn resume_existing(
                 Err(e) => log(logs, "media", false, &format!("第 {} 张图上传失败：{}", slot, e), on),
             },
             Err(e) => log(logs, "media", false, &format!("读取图片失败 {}: {}", file, e), on),
+        }
+    }
+    // Re-upload the Russian dub video too, if any (non-fatal).
+    if let Some(vp) = listing.video_ru.as_ref().filter(|p| !p.trim().is_empty()) {
+        if let Ok(bytes) = std::fs::read(vp) {
+            let fname = std::path::Path::new(vp)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "video.mp4".into());
+            match upload_video_bytes(state, &ctx, nm, bytes, &fname).await {
+                Ok(_) => log(logs, "media", true, "已上传俄语配音视频", on),
+                Err(e) => log(logs, "media", false, &format!("视频上传失败：{}", e), on),
+            }
         }
     }
     match upload_price_task(

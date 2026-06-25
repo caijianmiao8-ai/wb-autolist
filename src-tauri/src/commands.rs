@@ -258,6 +258,22 @@ pub async fn update_copy(
     Ok(hydrate(&st.paths, updated))
 }
 
+/// Attach (or clear) the Russian-dubbed video path on a draft, so publish uploads
+/// it as the card's video. Called by the single-flow after dubbing completes.
+#[tauri::command]
+pub fn set_listing_video(
+    state: State<Arc<AppState>>,
+    id: String,
+    path: String,
+) -> Result<Listing, String> {
+    let p = path.trim().to_string();
+    let updated = store::update_listing(&state.paths, &id, |l| {
+        l.video_ru = if p.is_empty() { None } else { Some(p.clone()) };
+    })
+    .ok_or("未找到该商品")?;
+    Ok(hydrate(&state.paths, updated))
+}
+
 #[tauri::command]
 pub fn list_listings(state: State<Arc<AppState>>) -> Vec<Listing> {
     store::list_listings(&state.paths)
@@ -512,6 +528,72 @@ pub async fn list_warehouses(state: State<'_, Arc<AppState>>) -> Result<Vec<Ware
         sandbox: cfg.wb_sandbox,
     };
     mp_list_warehouses(&st, &ctx).await.map_err(|e| e.to_string())
+}
+
+/// First-run wizard: result of a "测试连接" probe.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnTest {
+    pub ok: bool,
+    pub detail: String,
+    #[serde(default)]
+    pub warehouses: Vec<Warehouse>,
+}
+
+/// Validate an Aurixel key (GET /v1/models). Used by the first-run wizard.
+#[tauri::command]
+pub async fn test_aurixel(state: State<'_, Arc<AppState>>, key: String) -> Result<ConnTest, String> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Ok(ConnTest { ok: false, detail: "请填写 Aurixel Key".into(), warehouses: vec![] });
+    }
+    let res = state
+        .http
+        .get("https://conduit-api.aurixel.ai/v1/models")
+        .header("Authorization", format!("Bearer {}", key))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await;
+    Ok(match res {
+        Ok(r) if r.status().is_success() => {
+            let n = r
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|v| v.get("data").and_then(|d| d.as_array()).map(|a| a.len()))
+                .unwrap_or(0);
+            ConnTest { ok: true, detail: format!("已连接 · 可用模型 {} 个", n), warehouses: vec![] }
+        }
+        Ok(r) => ConnTest { ok: false, detail: format!("Key 无效(HTTP {})", r.status().as_u16()), warehouses: vec![] },
+        Err(e) => ConnTest { ok: false, detail: format!("连接失败:{}", e), warehouses: vec![] },
+    })
+}
+
+/// Validate a WB token + return the seller's FBS warehouses (feeds the wizard's
+/// default-warehouse step). A working marketplace call implies a usable token.
+#[tauri::command]
+pub async fn test_wb(
+    state: State<'_, Arc<AppState>>,
+    token: String,
+    sandbox: bool,
+) -> Result<ConnTest, String> {
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Ok(ConnTest { ok: false, detail: "请填写 WB Token".into(), warehouses: vec![] });
+    }
+    let st = state.inner().clone();
+    let ctx = WbCtx { token, sandbox };
+    Ok(match mp_list_warehouses(&st, &ctx).await {
+        Ok(whs) => ConnTest { ok: true, detail: format!("已连接 · {} 个仓库", whs.len()), warehouses: whs },
+        Err(e) => {
+            let msg = e.to_string();
+            ConnTest {
+                ok: false,
+                detail: format!("Token 无效或权限不足:{}", msg.chars().take(80).collect::<String>()),
+                warehouses: vec![],
+            }
+        }
+    })
 }
 
 /// Read the whole panel from the LOCAL DB — instant, offline, no rate-limit

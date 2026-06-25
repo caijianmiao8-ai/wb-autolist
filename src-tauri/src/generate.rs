@@ -302,6 +302,9 @@ pub async fn generate_listing(
             keywords: copy.keywords.clone(),
             category_hint: copy.category_hint.clone(),
             image_prompt: Some(core_prompt),
+            title_zh: copy.title_zh.clone(),
+            description_zh: copy.description_zh.clone(),
+            bullets_zh: copy.bullets_zh.clone(),
         }),
         images,
         subject_id: None,
@@ -319,5 +322,6 @@ pub async fn generate_listing(
         error: None,
         partial: now_count < full_count,
         requested_images: full_count as u32,
+        video_ru: None, // set later by the single-flow when a video is dubbed
     })
 }

@@ -16,6 +16,15 @@ pub struct ProductCopy {
     pub category_hint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_prompt: Option<String>,
+    /// Chinese reference translations of the Russian copy — REFERENCE ONLY, never
+    /// sent to WB. Lets the (Chinese) seller verify what the published Russian
+    /// actually says. Default-empty so older listings.json still deserializes.
+    #[serde(default)]
+    pub title_zh: String,
+    #[serde(default)]
+    pub description_zh: String,
+    #[serde(default)]
+    pub bullets_zh: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +118,10 @@ pub struct Listing {
     /// total images the user asked for (so generate_rest knows the full plan).
     #[serde(default)]
     pub requested_images: u32,
+    /// Absolute path to the Russian-dubbed product video (from the dub pipeline),
+    /// attached as the card's video on publish. None = no video for this card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_ru: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

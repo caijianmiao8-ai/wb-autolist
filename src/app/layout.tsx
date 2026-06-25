@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Nav } from "@/components/Nav";
+import { AppShell } from "@/components/AppShell";
 
 export const metadata: Metadata = {
   title: "WB AutoList · Wildberries 自动化上架",
@@ -22,13 +22,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
       <body>
-        <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 sm:px-6">
-          <Nav />
-          <main className="flex-1 pb-24 pt-10">{children}</main>
-          <footer className="border-t border-slate-900/[0.06] py-7 text-center text-xs tracking-wide text-slate-400 hairline dark:text-slate-600">
-            WB AutoList · 商品自动化上架工作流
-          </footer>
-        </div>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

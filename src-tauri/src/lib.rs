@@ -2,6 +2,7 @@ mod ai;
 mod commands;
 mod config;
 mod db;
+mod dub;
 #[cfg(test)]
 mod e2e;
 mod generate;
@@ -21,6 +22,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Per-user writable data dir (the app bundle is read-only).
             let dir = app
@@ -44,6 +46,7 @@ pub fn run() {
             commands::regenerate_image,
             commands::generate_rest,
             commands::update_copy,
+            commands::set_listing_video,
             commands::publish,
             commands::list_listings,
             commands::get_listing,
@@ -55,6 +58,8 @@ pub fn run() {
             commands::enqueue_jobs,
             commands::clear_jobs,
             commands::list_warehouses,
+            commands::test_aurixel,
+            commands::test_wb,
             commands::db_list_cards,
             commands::sync_products,
             commands::sync_warehouses,
@@ -63,6 +68,12 @@ pub fn run() {
             commands::set_card_stock,
             commands::set_card_price,
             commands::trash_cards,
+            dub::dub_preflight,
+            dub::dub_pick_video,
+            dub::dub_start,
+            dub::dub_cancel,
+            dub::open_path,
+            dub::reveal_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
