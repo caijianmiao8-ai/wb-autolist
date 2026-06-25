@@ -22,6 +22,8 @@ export interface GeneratedImage {
   prompt: string;
   width: number;
   height: number;
+  /** template archetype that produced it (for single-image regenerate) */
+  templateKind?: string;
 }
 
 export type ListingStage =
@@ -51,6 +53,11 @@ export interface Listing {
   price: number; // RUB
   discount: number; // %
   brand: string;
+  // package dims (cm) + gross weight (kg) — WB bills logistics/storage on these
+  length?: number;
+  width?: number;
+  height?: number;
+  weight?: number;
   // generated
   copy: ProductCopy | null;
   images: GeneratedImage[];
@@ -67,6 +74,10 @@ export interface Listing {
   sandbox: boolean;
   logs: StageLog[];
   error: string | null;
+  /** true = only the main image is generated; rest pending via generateRest */
+  partial?: boolean;
+  /** total images requested (for the "generate the rest" step) */
+  requestedImages?: number;
 }
 
 export interface ListingInput {
@@ -75,4 +86,91 @@ export interface ListingInput {
   price: number;
   discount: number;
   brand?: string;
+}
+
+// ── Editable image-prompt templates ──
+
+export interface ImageTemplate {
+  kind: string;
+  slot: string; // "main" | "promo" | "gallery"
+  label: string;
+  body: string; // parametric prompt with {PLACEHOLDER} tokens
+  textMode: string; // "model" | "overlay"
+  enabled: boolean;
+}
+
+export interface ImageTemplates {
+  version: number;
+  rotation: string[];
+  templates: ImageTemplate[];
+}
+
+// ── Management panel (live WB state) ──
+
+export interface Warehouse {
+  id: number;
+  name: string;
+  officeId: number;
+  cargoType: number;
+  deliveryType: number;
+}
+
+export type ManagedStatus =
+  | "live"
+  | "no_price"
+  | "price_unknown"
+  | "no_stock"
+  | "rejected"
+  | "ok";
+
+export interface ManagedCard {
+  nmID: number;
+  vendorCode: string;
+  subjectName: string;
+  brand: string;
+  title: string;
+  photo: string | null;
+  skus: string[];
+  price: number | null;
+  discountedPrice: number | null;
+  discount: number | null;
+  currency: string | null;
+  /** stock on the selected warehouse; null = no warehouse selected */
+  stock: number | null;
+  characteristics: number;
+  status: ManagedStatus;
+  statusNote: string;
+}
+
+/** Freshness of one synced data type. */
+export interface MetaRow {
+  lastSyncAt: number; // epoch seconds, 0 = never
+  status: string; // "ok" | "error" | ""
+  detail: string;
+  cooldownUntil: number; // epoch seconds
+}
+
+export interface SyncStatus {
+  products: MetaRow;
+  prices: MetaRow;
+  stocks: MetaRow;
+  warehouses: MetaRow;
+  /** seconds until prices can be synced again (0 = ready) */
+  pricesCooldownRemaining: number;
+  nowEpoch: number;
+}
+
+/** Everything the panel needs — read entirely from the local DB. */
+export interface ManageView {
+  cards: ManagedCard[];
+  warehouses: Warehouse[];
+  sync: SyncStatus;
+  warehouseId: number | null;
+}
+
+export interface SyncResult {
+  ok: boolean;
+  count: number;
+  message: string;
+  pricesCooldownRemaining: number;
 }

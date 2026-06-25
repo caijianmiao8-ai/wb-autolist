@@ -7,7 +7,18 @@
     "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   --accent: 203 17 171; /* wb magenta */
   --accent-2: 127 63 191; /* violet */
+  /* light (default) surfaces */
+  --bg: 247 248 251;
+  --card: 255 255 255;
+  --inset: 244 246 250; /* secondary / inset surface */
+  --line: 15 23 42; /* border + divider base, used at low alpha */
+}
+
+[data-theme="dark"] {
   --bg: 9 8 15;
+  --card: 22 19 34;
+  --inset: 16 14 26;
+  --line: 255 255 255;
 }
 
 * {
@@ -22,12 +33,12 @@ body {
 }
 
 body {
-  @apply text-slate-200;
+  @apply text-slate-700 dark:text-slate-200;
   background-color: rgb(var(--bg));
   /* one calm, wide glow — restrained, not busy */
   background-image: radial-gradient(
     120% 80% at 50% -20%,
-    rgba(var(--accent-2), 0.14),
+    rgba(var(--accent-2), 0.1),
     transparent 60%
   );
   background-attachment: fixed;
@@ -35,8 +46,8 @@ body {
   letter-spacing: -0.011em;
 }
 
-/* fine grain for tactile "质感" */
-body::after {
+/* fine grain for tactile "质感" — dark theme only (would be dark specks on light) */
+[data-theme="dark"] body::after {
   content: "";
   position: fixed;
   inset: 0;
@@ -61,20 +72,25 @@ h3 {
 /* refined thin scrollbar */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.22) transparent;
+  scrollbar-color: rgba(100, 116, 139, 0.3) transparent;
 }
 *::-webkit-scrollbar {
   width: 7px;
   height: 7px;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(100, 116, 139, 0.28);
   border-radius: 9999px;
 }
 
 @layer components {
   .card {
-    @apply relative rounded-[20px] border border-white/[0.07] bg-white/[0.025] backdrop-blur-xl;
+    @apply relative rounded-[20px] border border-slate-900/[0.08] bg-white shadow-sm dark:border-white/[0.07] dark:bg-white/[0.025] dark:backdrop-blur-xl;
+    box-shadow:
+      0 1px 2px 0 rgba(15, 23, 42, 0.04),
+      0 18px 50px -28px rgba(15, 23, 42, 0.18);
+  }
+  [data-theme="dark"] .card {
     box-shadow:
       0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
       0 24px 60px -28px rgba(0, 0, 0, 0.7);
@@ -92,27 +108,27 @@ h3 {
     );
     box-shadow:
       0 1px 0 0 rgba(255, 255, 255, 0.22) inset,
-      0 10px 30px -10px rgba(var(--accent), 0.55);
+      0 10px 30px -10px rgba(var(--accent), 0.45);
   }
   .btn-primary:hover:not(:disabled) {
     filter: brightness(1.07);
     transform: translateY(-1px);
     box-shadow:
       0 1px 0 0 rgba(255, 255, 255, 0.25) inset,
-      0 14px 38px -10px rgba(var(--accent), 0.7);
+      0 14px 38px -10px rgba(var(--accent), 0.6);
   }
   .btn-primary:active:not(:disabled) {
     transform: translateY(0);
   }
   .btn-ghost {
-    @apply btn border border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-white/[0.16] hover:bg-white/[0.06] hover:text-white;
+    @apply btn border border-slate-900/[0.1] bg-slate-900/[0.03] text-slate-600 hover:border-slate-900/[0.18] hover:bg-slate-900/[0.06] hover:text-slate-900 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300 dark:hover:border-white/[0.16] dark:hover:bg-white/[0.06] dark:hover:text-white;
   }
 
   .input {
-    @apply w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition;
+    @apply w-full rounded-xl border border-slate-900/[0.12] bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-100 dark:placeholder:text-slate-500;
   }
   .input:focus {
-    @apply border-transparent bg-white/[0.05];
+    @apply border-transparent;
     box-shadow: 0 0 0 2px rgba(var(--accent), 0.4);
   }
   select.input {
@@ -121,20 +137,35 @@ h3 {
     background-position: right 0.85rem center;
     padding-right: 2.5rem;
   }
+  /* Fix the white-on-white dropdown: force option colors per theme.
+     (Windows WebView2 renders the native <option> popup using these.) */
+  select.input option {
+    background-color: #ffffff;
+    color: #0f172a;
+  }
+  [data-theme="dark"] select.input option {
+    background-color: #161322;
+    color: #f1f5f9;
+  }
 
   .label {
-    @apply mb-1.5 block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500;
+    @apply mb-1.5 block text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 dark:text-slate-500;
   }
   .chip {
-    @apply inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-xs text-slate-300;
+    @apply inline-flex items-center gap-1 rounded-full border border-slate-900/[0.08] bg-slate-900/[0.04] px-2.5 py-1 text-xs text-slate-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-slate-300;
   }
   .hairline {
-    @apply border-white/[0.06];
+    @apply border-slate-900/[0.08] dark:border-white/[0.06];
+  }
+
+  /* Semantic surface/text helpers used across components for inset blocks. */
+  .inset {
+    @apply bg-slate-900/[0.04] dark:bg-white/[0.05];
   }
 }
 
 .skeleton {
-  @apply relative overflow-hidden rounded-xl bg-white/[0.04];
+  @apply relative overflow-hidden rounded-xl bg-slate-900/[0.06] dark:bg-white/[0.04];
 }
 .skeleton::after {
   @apply absolute inset-0 -translate-x-full;
@@ -142,10 +173,18 @@ h3 {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.06),
+    rgba(148, 163, 184, 0.18),
     transparent
   );
   animation: shimmer 1.8s infinite;
+}
+[data-theme="dark"] .skeleton::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.06),
+    transparent
+  );
 }
 
 @keyframes shimmer {

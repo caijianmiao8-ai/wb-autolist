@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Check, Loader2, KeyRound, ImageIcon, Globe, ShieldAlert } from "lucide-react";
+import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes, Ruler } from "lucide-react";
+import clsx from "clsx";
+import { api } from "@/lib/api";
+import type { Warehouse } from "@/lib/types";
 
 interface Redacted {
   authEnabled: boolean;
   wbContentTokenSet: boolean;
   wbPricesTokenSet: boolean;
+  wbTokenExpiresInDays: number | null;
+  wbPricesTokenExpiresInDays: number | null;
   wbSandbox: boolean;
   imageProvider: string;
   openaiKeySet: boolean;
@@ -14,6 +19,13 @@ interface Redacted {
   aurixelChatModel: string;
   pollinationsTokenSet: boolean;
   publicBaseUrl: string;
+  defaultWarehouseId: number;
+  defaultStock: number;
+  autoStock: boolean;
+  defaultLength: number;
+  defaultWidth: number;
+  defaultHeight: number;
+  defaultWeight: number;
 }
 
 export function SettingsForm() {
@@ -30,41 +42,57 @@ export function SettingsForm() {
   const [aurixelApiKey, setAurixelApiKey] = useState("");
   const [aurixelChatModel, setAurixelChatModel] = useState("gpt-5.5");
   const [pollinationsToken, setPollinationsToken] = useState("");
-  const [publicBaseUrl, setPublicBaseUrl] = useState("");
+  const [autoStock, setAutoStock] = useState(false);
+  const [defaultStock, setDefaultStock] = useState(99);
+  const [defaultWarehouseId, setDefaultWarehouseId] = useState(0);
+  const [defaultLength, setDefaultLength] = useState(20);
+  const [defaultWidth, setDefaultWidth] = useState(15);
+  const [defaultHeight, setDefaultHeight] = useState(5);
+  const [defaultWeight, setDefaultWeight] = useState(0.3);
+  const [warehouses, setWarehouses] = useState<Warehouse[] | null>(null);
 
   useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((d: Redacted) => {
-        setRedacted(d);
-        setImageProvider(d.imageProvider || "pollinations");
-        setPublicBaseUrl(d.publicBaseUrl || "");
-        setWbSandbox(!!d.wbSandbox);
-        setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
-      });
+    api.getSettings().then((d) => {
+      setRedacted(d);
+      setImageProvider(d.imageProvider || "pollinations");
+      setWbSandbox(!!d.wbSandbox);
+      setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
+      setAutoStock(d.autoStock ?? false);
+      setDefaultStock(d.defaultStock ?? 99);
+      setDefaultWarehouseId(d.defaultWarehouseId ?? 0);
+      setDefaultLength(d.defaultLength ?? 20);
+      setDefaultWidth(d.defaultWidth ?? 15);
+      setDefaultHeight(d.defaultHeight ?? 5);
+      setDefaultWeight(d.defaultWeight ?? 0.3);
+    });
+    // FBS warehouses need the Маркетплейс scope — failure just leaves the picker empty.
+    api.listWarehouses().then(setWarehouses).catch(() => setWarehouses([]));
   }, []);
 
   async function save() {
     setSaving(true);
     setSaved(false);
-    const patch: Record<string, string | boolean> = {
+    const patch: Record<string, string | boolean | number> = {
       imageProvider,
-      publicBaseUrl,
       wbSandbox,
+      autoStock,
+      defaultStock,
+      defaultWarehouseId,
+      defaultLength,
+      defaultWidth,
+      defaultHeight,
+      defaultWeight,
     };
-    if (wbContentToken) patch.wbContentToken = wbContentToken;
-    if (wbPricesToken) patch.wbPricesToken = wbPricesToken;
-    if (openaiApiKey) patch.openaiApiKey = openaiApiKey;
-    if (aurixelApiKey) patch.aurixelApiKey = aurixelApiKey;
+    // trim — pasted tokens often carry a trailing space/newline that would
+    // corrupt the Authorization header.
+    if (wbContentToken.trim()) patch.wbContentToken = wbContentToken.trim();
+    if (wbPricesToken.trim()) patch.wbPricesToken = wbPricesToken.trim();
+    if (openaiApiKey.trim()) patch.openaiApiKey = openaiApiKey.trim();
+    if (aurixelApiKey.trim()) patch.aurixelApiKey = aurixelApiKey.trim();
     if (aurixelChatModel) patch.aurixelChatModel = aurixelChatModel;
-    if (pollinationsToken) patch.pollinationsToken = pollinationsToken;
+    if (pollinationsToken.trim()) patch.pollinationsToken = pollinationsToken.trim();
 
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    const d = await res.json();
+    const d = await api.saveSettings(patch);
     setRedacted(d);
     setWbContentToken("");
     setWbPricesToken("");
@@ -79,28 +107,38 @@ export function SettingsForm() {
   return (
     <div className="mx-auto max-w-2xl animate-fade-up">
       <h1 className="mb-1 text-2xl font-semibold tracking-tight">设置</h1>
-      <p className="mb-6 text-sm text-slate-400">
-        密钥建议通过环境变量(<code className="text-slate-300">.env.local</code>)注入；此处保存的非密钥项写入服务端 <code className="text-slate-300">data/config.json</code>。
+      <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
+        密钥仅保存在<b className="text-slate-700 dark:text-slate-300">本机</b>应用数据目录，不随程序上传。
+        生成图片/文案时，商品名、关键词等内容会发送到所选 AI 网关（如 Aurixel）进行处理。
       </p>
-
-      {redacted && !redacted.authEnabled && (
-        <div className="mb-6 flex items-start gap-3 rounded-2xl border border-rose-400/25 bg-rose-500/[0.07] px-4 py-3.5 text-sm text-rose-200/90">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
-          <div className="leading-relaxed">
-            <b className="font-semibold">未设置访问密码</b>，应用当前对任何能访问到地址的人开放。仅限本机/内网使用；<b>公网部署前务必设置 <code className="text-rose-100">APP_PASSWORD</code> 环境变量</b>（设置后全站需登录）。
-          </div>
-        </div>
-      )}
 
       <div className="space-y-5">
         {/* WB */}
         <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-200">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
             <KeyRound className="h-4 w-4 text-wb-pink" /> Wildberries Token
           </div>
           <label className="label">
             内容(Контент) Token {redacted?.wbContentTokenSet && (
-              <span className="ml-1 text-emerald-400">已配置</span>
+              <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>
+            )}
+            {redacted?.wbContentTokenSet && redacted.wbTokenExpiresInDays != null && (
+              <span
+                className={clsx(
+                  "ml-1",
+                  redacted.wbTokenExpiresInDays < 0
+                    ? "text-rose-600 dark:text-rose-400"
+                    : redacted.wbTokenExpiresInDays <= 14
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-slate-400"
+                )}
+              >
+                {redacted.wbTokenExpiresInDays < 0
+                  ? "· 已过期，请到 WB 后台重新生成"
+                  : redacted.wbTokenExpiresInDays === 0
+                  ? "· 今天内到期"
+                  : `· 有效期剩 ${redacted.wbTokenExpiresInDays} 天`}
+              </span>
             )}
           </label>
           <input
@@ -112,7 +150,23 @@ export function SettingsForm() {
           />
           <label className="label">
             价格(Цены) Token（可选，留空复用上面的 Token）
-            {redacted?.wbPricesTokenSet && <span className="ml-1 text-emerald-400">已配置</span>}
+            {redacted?.wbPricesTokenSet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
+            {redacted?.wbPricesTokenSet && redacted.wbPricesTokenExpiresInDays != null && (
+              <span
+                className={clsx(
+                  "ml-1",
+                  redacted.wbPricesTokenExpiresInDays < 0
+                    ? "text-rose-600 dark:text-rose-400"
+                    : redacted.wbPricesTokenExpiresInDays <= 14
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-slate-400"
+                )}
+              >
+                {redacted.wbPricesTokenExpiresInDays < 0
+                  ? "· 已过期"
+                  : `· 剩 ${redacted.wbPricesTokenExpiresInDays} 天`}
+              </span>
+            )}
           </label>
           <input
             type="password"
@@ -121,7 +175,7 @@ export function SettingsForm() {
             value={wbPricesToken}
             onChange={(e) => setWbPricesToken(e.target.value)}
           />
-          <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-slate-200">
+          <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-slate-800 dark:text-slate-200">
             <input
               type="checkbox"
               className="h-4 w-4 accent-wb-purple"
@@ -137,7 +191,7 @@ export function SettingsForm() {
 
         {/* Image */}
         <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-200">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
             <ImageIcon className="h-4 w-4 text-wb-pink" /> 文生图
           </div>
           <label className="label">提供方</label>
@@ -153,7 +207,7 @@ export function SettingsForm() {
           {imageProvider === "aurixel" && (
             <>
               <label className="label">
-                Aurixel API Key {redacted?.aurixelKeySet && <span className="ml-1 text-emerald-400">已配置</span>}
+                Aurixel API Key {redacted?.aurixelKeySet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
               </label>
               <input
                 type="password"
@@ -182,7 +236,7 @@ export function SettingsForm() {
           {imageProvider === "openai" && (
             <>
               <label className="label">
-                OpenAI API Key {redacted?.openaiKeySet && <span className="ml-1 text-emerald-400">已配置</span>}
+                OpenAI API Key {redacted?.openaiKeySet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
               </label>
               <input
                 type="password"
@@ -197,7 +251,7 @@ export function SettingsForm() {
             <>
               <label className="label">
                 Pollinations Token（可选，解除限流/水印）
-                {redacted?.pollinationsTokenSet && <span className="ml-1 text-emerald-400">已配置</span>}
+                {redacted?.pollinationsTokenSet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
               </label>
               <input
                 type="password"
@@ -213,21 +267,92 @@ export function SettingsForm() {
           )}
         </section>
 
-        {/* Public URL */}
+        {/* Stock (FBS) */}
         <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-200">
-            <Globe className="h-4 w-4 text-wb-pink" /> 公网地址（可选）
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+            <Boxes className="h-4 w-4 text-wb-pink" /> 库存（FBS）
           </div>
-          <label className="label">PUBLIC_BASE_URL</label>
-          <input
-            className="input"
-            placeholder="https://your-app.vercel.app"
-            value={publicBaseUrl}
-            onChange={(e) => setPublicBaseUrl(e.target.value)}
-          />
+          <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-800 dark:text-slate-200">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-wb-purple"
+              checked={autoStock}
+              onChange={(e) => setAutoStock(e.target.checked)}
+            />
+            <span>
+              上架后<b>自动设库存</b>
+              <span className="mt-0.5 block text-xs text-slate-500">
+                建卡成功后，按下面的仓库与数量自动设库存——商品在审核+定价后才能真正可售。
+              </span>
+            </span>
+          </label>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">默认仓库</label>
+              <select
+                className="input"
+                value={defaultWarehouseId || ""}
+                onChange={(e) => setDefaultWarehouseId(Number(e.target.value) || 0)}
+              >
+                <option value="">（不自动设库存）</option>
+                {warehouses?.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}（{w.id}）
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">默认库存数量</label>
+              <input
+                type="number"
+                min={0}
+                className="input"
+                value={defaultStock}
+                onChange={(e) => setDefaultStock(Math.max(0, Number(e.target.value) || 0))}
+              />
+            </div>
+          </div>
           <p className="mt-3 text-xs text-slate-500">
-            部署后填写，供 WB 通过公网 URL 拉取图片。本地默认用字节直传，无需填写。
+            {warehouses === null
+              ? "正在读取仓库…"
+              : warehouses.length === 0
+              ? "未读取到仓库（Token 需含「Маркетплейс」范围）。可在「商品管理」里逐个设库存。"
+              : "也可在「商品管理」里对单个商品补货 / 下架。"}
           </p>
+        </section>
+
+        {/* Default package dimensions / weight */}
+        <section className="card p-6">
+          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+            <Ruler className="h-4 w-4 text-wb-pink" /> 默认包裹尺寸 / 重量
+          </div>
+          <p className="mb-3 text-xs text-slate-500">
+            生成新商品时预填这组数值（可在工作台逐个改）。WB 按包裹体积/重量计物流与仓储费、入库时复测，请按真实填写。
+          </p>
+          <div className="grid grid-cols-4 gap-3">
+            {(
+              [
+                ["长 (cm)", defaultLength, setDefaultLength, 1],
+                ["宽 (cm)", defaultWidth, setDefaultWidth, 1],
+                ["高 (cm)", defaultHeight, setDefaultHeight, 1],
+                ["重 (kg)", defaultWeight, setDefaultWeight, 0.1],
+              ] as const
+            ).map(([lab, val, setter, step]) => (
+              <div key={lab}>
+                <label className="label">{lab}</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={step}
+                  className="input"
+                  value={val}
+                  onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+                />
+              </div>
+            ))}
+          </div>
         </section>
 
         <button className="btn-primary w-full" onClick={save} disabled={saving}>

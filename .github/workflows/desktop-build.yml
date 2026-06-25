@@ -1,12 +1,17 @@
 name: Build desktop apps
 
-# Builds the Electron desktop installers on native runners (the ONLY reliable
-# way to get a working Windows build — native `sharp` + signing need Windows).
+# Builds the Tauri desktop installers on native runners.
+#   macOS  → .dmg (Apple Silicon, arm64)
+#   Windows → .exe (NSIS) + .msi
 # Trigger: push a tag like v1.0.0, or run manually from the Actions tab.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+
+# tauri-action creates a GitHub Release on tag builds — needs write access.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -14,15 +19,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            target: "--mac" # dmg, arm64 (Apple Silicon)
-            artifact: "*.dmg"
+          - platform: macos-latest
+            target: aarch64-apple-darwin
             name: macos
-          - os: windows-latest
-            target: "--win" # nsis installer, x64
-            artifact: "*.exe"
+          - platform: windows-latest
+            target: ""
             name: windows
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,22 +33,46 @@ jobs:
         with:
           node-version: 20
 
-      # installs platform-correct native deps (e.g. win32-x64 sharp on Windows)
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
       - run: npm ci
 
-      # next build + copy static + strip dev data (cross-platform node script)
-      - run: npm run desktop:prep
-
-      - name: Build desktop installer
-        run: npx electron-builder ${{ matrix.target }} --publish never
+      # tauri-action runs the tauri.conf beforeBuildCommand (npm run fe:build),
+      # compiles the Rust binary, and bundles the platform installer.
+      # On a tag push it also creates/updates a GitHub Release and attaches the
+      # installers — a real download page (no GitHub login / artifact expiry,
+      # unlike upload-artifact). On manual runs (no tag) it just builds.
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
         env:
-          # no code-signing on CI by default; add certs as secrets later:
-          #   macOS: CSC_LINK / CSC_KEY_PASSWORD + APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
-          #   Windows: WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: WB AutoList ${{ github.ref_name }}
+          releaseBody: |
+            未签名安装包 — 首次打开会被系统拦截，请按安装指引放行：
+            https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALL.md
 
+            - Windows: SmartScreen 弹窗 → 更多信息 → 仍要运行
+            - macOS: 右键 → 打开（或 系统设置 → 隐私与安全性 → 仍要打开）
+          releaseDraft: false
+          prerelease: false
+
+      # Always keep artifacts too (handy for manual/dev builds that aren't tagged).
       - uses: actions/upload-artifact@v4
         with:
           name: wb-autolist-${{ matrix.name }}
-          path: dist-desktop/${{ matrix.artifact }}
+          path: |
+            src-tauri/target/**/release/bundle/dmg/*.dmg
+            src-tauri/target/**/release/bundle/nsis/*.exe
+            src-tauri/target/**/release/bundle/msi/*.msi
           if-no-files-found: error

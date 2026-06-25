@@ -1,0 +1,52 @@
+[package]
+name = "wb-autolist"
+version = "1.0.1"
+description = "Wildberries 商品自动化上架"
+authors = ["WB AutoList"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "wb_autolist_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "gzip"] }
+chrono = "0.4"
+rand = "0.8"
+hex = "0.4"
+unicode-normalization = "0.1"
+anyhow = "1"
+thiserror = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+resvg = "0.44"
+calamine = "0.26"
+urlencoding = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# OS-native secret store for tokens/keys (replaces plaintext in config.json).
+# Per-target backend so each platform uses its own keychain.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
+
+# release: smaller binary
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

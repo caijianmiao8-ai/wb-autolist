@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WB AutoList",
+  "version": "1.0.1",
+  "identifier": "com.wbautolist.app",
+  "build": {
+    "frontendDist": "../out",
+    "devUrl": "http://localhost:3100",
+    "beforeDevCommand": "npm run fe:dev",
+    "beforeBuildCommand": "npm run fe:build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "WB AutoList",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "backgroundColor": "#09080f"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "macOS": {
+      "signingIdentity": "-"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
