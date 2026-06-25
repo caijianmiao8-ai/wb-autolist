@@ -416,10 +416,9 @@ export function Workbench() {
 
       <StepBar listing={listing} step={step} />
 
-      <div className="mx-auto max-w-3xl space-y-6">
-        {/* ── STEP 1: 输入 ── */}
-        {!listing && step !== "generating" && (
-        <div className="card p-6">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(360px,400px)_1fr]">
+        {/* ── 左:输入(始终可见) ── */}
+        <div className="card h-fit p-6">
           <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
             <Tag className="h-4 w-4 text-wb-pink" /> 商品信息
           </div>
@@ -666,13 +665,23 @@ export function Workbench() {
             <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{error}</p>
           )}
         </div>
-        )}
 
-        {/* ── 生成中 ── */}
-        {step === "generating" && <GeneratingState msg={genMsg} />}
-
-        {/* ── STEP 2/3: 预览 / 发布 ── */}
-        {listing && (
+        {/* ── 右:实时预览(始终在视野内) ── */}
+        <div className="space-y-4">
+          {!listing && step !== "generating" && (
+            <div className="card flex min-h-[320px] flex-col items-center justify-center p-8 text-center">
+              <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-slate-900/[0.04] dark:bg-white/5">
+                <ImageIcon className="h-7 w-7 text-slate-400" />
+              </div>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                填好左侧 → 点「一键生成」
+                <br />
+                这里出主图 / 详情图 + 俄文文案(带中文对照)
+              </p>
+            </div>
+          )}
+          {step === "generating" && <GeneratingState msg={genMsg} />}
+          {listing && (
             <>
               {step !== "publishing" && step !== "done" && (
                 <button
@@ -724,6 +733,7 @@ export function Workbench() {
               )}
             </>
           )}
+        </div>
       </div>
     </div>
   );

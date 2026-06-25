@@ -54,7 +54,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <EnvBanner dryRun={env.dryRun} sandbox={env.sandbox} />
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 sm:px-6">
         <Nav />
-        <main className="flex-1 pb-24 pt-10">{children}</main>
+        <main className="flex-1 pb-10 pt-6">{children}</main>
         <footer className="border-t border-slate-900/[0.06] py-7 text-center text-xs tracking-wide text-slate-400 hairline dark:text-slate-600">
           WB AutoList · 商品自动化上架工作流
         </footer>
