@@ -54,6 +54,9 @@ export function Workbench() {
   const [basePhotos, setBasePhotos] = useState<string[]>([]);
   // English product video to dub into Russian and attach to the card (optional).
   const [videoPath, setVideoPath] = useState<string | null>(null);
+  // Collapse power-user fields (brand/dims/prompt/count/main-first) by default —
+  // a plain seller only needs name + keywords + price + photos/video.
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [imageCount, setImageCount] = useState(3);
   const [mainOnly, setMainOnly] = useState(false);
@@ -504,40 +507,44 @@ export function Workbench() {
             </p>
           )}
 
-          <label className="label">品牌（可选）</label>
-          <input
-            className="input mb-4"
-            placeholder="留空则自动生成"
-            value={brand}
-            onChange={(e) => setBrand(e.target.value)}
-          />
+          {showAdvanced && (
+            <>
+              <label className="label">品牌（可选）</label>
+              <input
+                className="input mb-4"
+                placeholder="留空则自动生成"
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+              />
 
-          <label className="label">包裹尺寸 / 重量（按真实填写）</label>
-          <div className="mb-1 grid grid-cols-4 gap-2">
-            {([
-              ["长", length, setLength, 1, "cm"],
-              ["宽", width, setWidth, 1, "cm"],
-              ["高", height, setHeight, 1, "cm"],
-              ["重", weight, setWeight, 0.1, "kg"],
-            ] as const).map(([lab, val, setter, step, unit]) => (
-              <div key={lab}>
-                <input
-                  type="number"
-                  min={step}
-                  step={step}
-                  className="input text-center"
-                  value={val}
-                  onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
-                />
-                <span className="mt-0.5 block text-center text-[10px] text-slate-400">
-                  {lab} {unit}
-                </span>
+              <label className="label">包裹尺寸 / 重量（按真实填写）</label>
+              <div className="mb-1 grid grid-cols-4 gap-2">
+                {([
+                  ["长", length, setLength, 1, "cm"],
+                  ["宽", width, setWidth, 1, "cm"],
+                  ["高", height, setHeight, 1, "cm"],
+                  ["重", weight, setWeight, 0.1, "kg"],
+                ] as const).map(([lab, val, setter, step, unit]) => (
+                  <div key={lab}>
+                    <input
+                      type="number"
+                      min={step}
+                      step={step}
+                      className="input text-center"
+                      value={val}
+                      onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                    <span className="mt-0.5 block text-center text-[10px] text-slate-400">
+                      {lab} {unit}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <p className="mb-4 text-xs text-slate-500">
-            WB 按包裹体积/重量计物流与仓储费，并在入库时复测——填错会被多收费甚至罚款。可在「设置」改默认值。
-          </p>
+              <p className="mb-4 text-xs text-slate-500">
+                WB 按包裹体积/重量计物流与仓储费，并在入库时复测——填错会被多收费甚至罚款。默认用「设置」里的值。
+              </p>
+            </>
+          )}
 
           <label className="label">产品图（可选，上传则保留真实产品）</label>
           <div className="mb-4 flex flex-wrap gap-2">
@@ -592,39 +599,52 @@ export function Workbench() {
             </button>
           )}
 
-          <label className="label">自定义提示词（可选）</label>
-          <textarea
-            className="input mb-4"
-            rows={2}
-            placeholder="如：极简风、青绿配色、突出 304 不锈钢"
-            value={customPrompt}
-            onChange={(e) => setCustomPrompt(e.target.value)}
-          />
+          {showAdvanced && (
+            <>
+              <label className="label">自定义提示词（可选）</label>
+              <textarea
+                className="input mb-4"
+                rows={2}
+                placeholder="如：极简风、青绿配色、突出 304 不锈钢"
+                value={customPrompt}
+                onChange={(e) => setCustomPrompt(e.target.value)}
+              />
 
-          <label className="label">生成图片数量（1–12）</label>
-          <input
-            type="number"
-            className="input mb-1.5"
-            min={1}
-            max={12}
-            value={imageCount}
-            onChange={(e) => setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 3)))}
-          />
-          <p className="mb-2 text-xs text-slate-500">
-            预计 ~{imageCount} 张 × 约 2.5 分钟 ≈ <b>{Math.ceil(imageCount * 2.5)} 分钟</b>（逐张生成，可在「设置」改模板风格）
-          </p>
-          <label className="mb-5 flex cursor-pointer items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 accent-wb-purple"
-              checked={mainOnly}
-              onChange={(e) => setMainOnly(e.target.checked)}
-            />
-            <span>
-              先只出主图
-              <span className="mt-0.5 block text-xs text-slate-500">确认满意后再出其余，省出图额度</span>
-            </span>
-          </label>
+              <label className="label">生成图片数量（1–12）</label>
+              <input
+                type="number"
+                className="input mb-1.5"
+                min={1}
+                max={12}
+                value={imageCount}
+                onChange={(e) => setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 3)))}
+              />
+              <p className="mb-2 text-xs text-slate-500">
+                预计 ~{imageCount} 张 × 约 2.5 分钟 ≈ <b>{Math.ceil(imageCount * 2.5)} 分钟</b>（逐张生成，可在「设置」改模板风格）
+              </p>
+              <label className="mb-5 flex cursor-pointer items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-wb-purple"
+                  checked={mainOnly}
+                  onChange={(e) => setMainOnly(e.target.checked)}
+                />
+                <span>
+                  先只出主图
+                  <span className="mt-0.5 block text-xs text-slate-500">确认满意后再出其余，省出图额度</span>
+                </span>
+              </label>
+            </>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((s) => !s)}
+            className="mb-4 flex w-full items-center justify-between border-t border-slate-900/[0.06] pt-3 text-xs text-slate-500 hover:text-slate-700 dark:border-white/[0.06] dark:hover:text-slate-300"
+          >
+            高级选项（品牌 / 包裹尺寸 / 提示词 / 图片数量）
+            <span>{showAdvanced ? "收起 ▲" : "展开 ▼"}</span>
+          </button>
 
           <button
             className="btn-primary w-full"
@@ -1015,9 +1035,18 @@ function VideoPanel({
   async function dub() {
     setBusy(true);
     setErr(null);
-    setStage("准备…");
+    setStage("自检…");
     let un: (() => void) | null = null;
     try {
+      const pf = await api.dubPreflight();
+      if (!pf.ready) {
+        const miss: string[] = [];
+        if (!pf.node) miss.push("Node 运行时");
+        if (!pf.ffmpeg || !pf.ffprobe) miss.push("FFmpeg");
+        if (!pf.aurixelKey) miss.push("Aurixel 密钥(去设置填)");
+        if (!pf.cliFound) miss.push("配音脚本");
+        throw new Error("运行环境未就绪:缺 " + miss.join("、"));
+      }
       un = await listen<{ stage: string }>("dub:progress", (e) => setStage(e.payload.stage));
       const out = await api.dubStart({ inputPath: videoPath, quality: "standard", voiceMode: "clone" });
       onUpdate(await api.setListingVideo(listing.id, out));

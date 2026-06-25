@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Sparkles, Settings, History, Layers, Boxes, AudioLines, Sun, Moon } from "lucide-react";
+import { Sparkles, Settings, History, Layers, Boxes, Sun, Moon } from "lucide-react";
 import clsx from "clsx";
 
 const links = [
   { href: "/", label: "工作台", icon: Sparkles },
   { href: "/batch", label: "批量上架", icon: Layers },
   { href: "/manage", label: "商品管理", icon: Boxes },
-  { href: "/dub", label: "视频配音", icon: AudioLines },
   { href: "/history", label: "上架记录", icon: History },
   { href: "/settings", label: "设置", icon: Settings },
 ];
