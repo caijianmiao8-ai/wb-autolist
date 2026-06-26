@@ -1,0 +1,72 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Bilingual preview: generated Russian listing copy and video script shown with Chinese reference translation, with a language toggle.</h2>
+<style>
+  .bl{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .bl *{box-sizing:border-box;}
+  .bl-seg{display:flex;gap:3px;background:var(--ins);border:1px solid rgba(15,23,42,.08);border-radius:9px;padding:3px;}
+  .bl-seg button{border:none;background:transparent;border-radius:7px;padding:5px 14px;font-size:12px;color:var(--mut);cursor:pointer;}
+  .bl-seg button.on{background:#fff;color:var(--ink);font-weight:500;box-shadow:0 1px 2px rgba(15,23,42,.08);}
+  .ru{font-size:12.5px;color:#0f172a;line-height:1.5;}
+  .zh{font-size:11.5px;color:#64748b;line-height:1.5;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;overflow:hidden;max-width:560px;margin:0 auto;" class="bl">
+  <div style="padding:11px 14px;border-bottom:1px solid rgba(15,23,42,.08);background:#fff;display:flex;align-items:center;gap:10px;">
+    <span style="font-size:13px;font-weight:500;color:var(--ink);"><i class="ti ti-eye" style="color:var(--pk)"></i> 预览 · 文案 & 视频台词</span>
+    <div class="bl-seg" style="margin-left:auto;">
+      <button data-l="ru" onclick="blSet('ru')">俄语</button>
+      <button data-l="zh" onclick="blSet('zh')">中文</button>
+      <button data-l="both" class="on" onclick="blSet('both')">双语</button>
+    </div>
+  </div>
+
+  <div style="padding:14px;">
+    <!-- copy -->
+    <div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:12px 14px;margin-bottom:12px;">
+      <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin-bottom:4px;">标题</div>
+      <div id="t-ru" class="ru" style="font-weight:500;">Беспроводные наушники Pro — глубокий бас, 30 ч</div>
+      <div id="t-zh" class="zh" style="margin-top:2px;">无线耳机 Pro —— 深沉低音,30 小时续航</div>
+
+      <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:12px 0 4px;">描述</div>
+      <div id="d-ru" class="ru">Кристально чистый звук и мощный бас. До 30 часов работы, быстрая зарядка за 10 минут, защита IPX5 от брызг.</div>
+      <div id="d-zh" class="zh" style="margin-top:3px;">水晶般清澈的音质与强劲低音。续航长达 30 小时,充电 10 分钟即可用,IPX5 防泼溅。</div>
+
+      <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:12px 0 6px;">卖点</div>
+      <div id="b-wrap" style="display:flex;flex-direction:column;gap:7px;"></div>
+    </div>
+
+    <!-- video script -->
+    <div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:12px 14px;">
+      <div style="font-size:12px;font-weight:500;color:#0f172a;margin-bottom:9px;display:flex;align-items:center;gap:6px;"><i class="ti ti-video" style="color:#CB11AB"></i> 视频台词对照 <span style="font-size:10px;color:#0F6E56;background:#E1F5EE;border:1px solid #9FE1CB;border-radius:999px;padding:1px 7px;">俄配 ✓</span></div>
+      <div id="v-wrap" style="display:flex;flex-direction:column;gap:9px;"></div>
+      <div style="font-size:10px;color:#CB11AB;margin-top:10px;cursor:pointer;"><i class="ti ti-download"></i> 导出双语字幕 (.srt)</div>
+    </div>
+
+    <div style="font-size:10.5px;color:#94a3b8;text-align:center;margin-top:11px;"><i class="ti ti-info-circle"></i> 中文仅供你参考核对,<b>不会发给 WB</b>;发布的是俄语内容。</div>
+  </div>
+</div>
+</div>
+<script>
+(function(){
+  var bullets=[['30 часов автономной работы','30 小时超长续航'],['Bluetooth 5.3 — стабильное соединение','蓝牙 5.3,连接稳定'],['Защита от брызг IPX5','IPX5 防泼溅']];
+  var script=[['0:00','Познакомьтесь с наушниками Pro.','为你介绍 Pro 耳机。'],['0:03','Глубокий бас и чистый звук.','深沉低音,纯净音质。'],['0:06','До 30 часов без подзарядки.','一次充电用上 30 小时。']];
+  function render(mode){
+    document.querySelectorAll('.bl-seg button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-l')===mode);});
+    var showRu=mode!=='zh', showZh=mode!=='ru';
+    ['t','d'].forEach(function(p){ document.getElementById(p+'-ru').style.display=showRu?'block':'none'; document.getElementById(p+'-zh').style.display=showZh?'block':'none'; });
+    document.getElementById('b-wrap').innerHTML=bullets.map(function(x){
+      var s='<div style="display:flex;gap:7px;align-items:flex-start;"><i class="ti ti-check" style="color:#0F6E56;font-size:13px;margin-top:2px;"></i><div>';
+      if(showRu) s+='<div class="ru">'+x[0]+'</div>';
+      if(showZh) s+='<div class="zh">'+x[1]+'</div>';
+      return s+'</div></div>';
+    }).join('');
+    document.getElementById('v-wrap').innerHTML=script.map(function(x){
+      var s='<div style="display:flex;gap:9px;"><span style="font-size:10.5px;color:#94a3b8;font-variant-numeric:tabular-nums;padding-top:1px;min-width:26px;">'+x[0]+'</span><div>';
+      if(showRu) s+='<div class="ru">'+x[1]+'</div>';
+      if(showZh) s+='<div class="zh">'+x[2]+'</div>';
+      return s+'</div></div>';
+    }).join('');
+  }
+  window.blSet=render;
+  render('both');
+})();
+</script>

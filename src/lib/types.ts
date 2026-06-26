@@ -84,6 +84,10 @@ export interface Listing {
   requestedImages?: number;
   /** Absolute path to the Russian-dubbed video, attached as the card's video on publish. */
   videoRu?: string;
+  /** User-confirmed WB characteristics [{id, value}] (用户值优先, AI 兜底). */
+  characteristics?: { id: number; value: unknown }[];
+  /** User-set TNVED customs code; empty = auto-resolved. */
+  tnved?: string;
 }
 
 export interface ListingInput {
@@ -92,6 +96,8 @@ export interface ListingInput {
   price: number;
   discount: number;
   brand?: string;
+  /** Matched real product photos (data URLs) → img2img base; empty = text-to-image. */
+  basePhotos?: string[];
 }
 
 // ── Editable image-prompt templates ──
@@ -186,6 +192,50 @@ export interface ConnTest {
   ok: boolean;
   detail: string;
   warehouses: Warehouse[];
+}
+
+// ── 批量「关联素材文件夹」──
+
+/** One image/video file found in a linked media folder. */
+export interface MediaFile {
+  name: string; // file name with extension
+  stem: string; // name without extension (for 商品名/货号 matching)
+  path: string; // absolute path
+  ext: string; // lowercase, no dot
+  kind: "image" | "video";
+}
+
+// ── WB 类目 / 特征字典(发布「全部商品参数」)──
+
+export interface WbSubject {
+  subjectID: number;
+  subjectName: string;
+  parentID?: number;
+  parentName?: string;
+}
+
+export interface WbCharacteristic {
+  charcID: number;
+  name: string;
+  required: boolean;
+  unitName: string;
+  maxCount: number;
+  popular: boolean;
+  /** 4 = number; otherwise text / dictionary. */
+  charcType: number;
+  subjectName?: string;
+  subjectID?: number;
+}
+
+export interface WbColor {
+  name: string;
+  parentName?: string;
+}
+
+/** Aurixel gateway balance for the configured key. */
+export interface AurixelBalance {
+  usd: number;
+  rmb: number;
 }
 
 // ── EN→RU 视频配音 ──

@@ -50,12 +50,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (firstRun) return <SetupWizard onDone={doneWizard} />;
 
   return (
-    <>
+    // Fixed-height app frame: the window never scrolls. The EnvBanner + Nav are
+    // pinned; only <main> scrolls. A page that wants a one-screen, no-scroll
+    // layout (the Workbench) renders `h-full` and scrolls its own panels
+    // internally; taller legacy pages just scroll within <main> as before.
+    <div className="flex h-screen flex-col overflow-hidden">
       <EnvBanner dryRun={env.dryRun} sandbox={env.sandbox} />
-      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 sm:px-6">
+      <div className="mx-auto flex w-full min-h-0 max-w-7xl flex-1 flex-col px-4 sm:px-6">
         <Nav />
-        <main className="flex-1 pb-6 pt-5">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto pb-5 pt-3">{children}</main>
       </div>
-    </>
+    </div>
   );
 }

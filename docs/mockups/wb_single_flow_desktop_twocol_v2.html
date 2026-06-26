@@ -1,0 +1,118 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 12px;">
+<h2 class="sr-only">Desktop-width two-column single-product workbench mockup designed to fit one screen without page scrolling.</h2>
+<style>
+  .v2{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .v2 *{box-sizing:border-box;}
+  .v2-in{width:100%;border:1px solid var(--ln);background:#fff;border-radius:8px;padding:6px 9px;font-size:11px;color:var(--ink);}
+  .v2-lbl{font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);margin:0 0 3px;font-weight:500;}
+  .v2-prime{color:#fff;background-image:linear-gradient(135deg,var(--pk),var(--pk2));border:none;border-radius:9px;padding:8px;font-size:11.5px;font-weight:500;width:100%;cursor:pointer;}
+  .v2-chip{display:inline-flex;align-items:center;gap:3px;font-size:9.5px;padding:1px 7px;border-radius:999px;border:1px solid var(--ln);background:rgba(15,23,42,.03);color:var(--ink2);}
+  .ru{font-size:10.5px;color:#0f172a;line-height:1.35;}
+  .zh{font-size:9.5px;color:#64748b;line-height:1.35;}
+</style>
+
+<div style="font-size:10.5px;color:var(--color-text-secondary);margin:0 0 8px;display:flex;gap:10px;flex-wrap:wrap;">
+  <span><b>桌面 1280 宽</b> · 整页不滚动</span><span>·</span><span>左:表单固定</span><span>·</span><span>右:预览,仅「描述」框内部滚动</span>
+</div>
+
+<div class="v2" style="background:#F7F8FB;border:1px solid var(--ln);border-radius:12px;overflow:hidden;">
+  <!-- nav -->
+  <div style="display:flex;align-items:center;gap:8px;padding:7px 11px;border-bottom:1px solid var(--ln);background:#fff;">
+    <span style="font-size:11.5px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:4px;"><i class="ti ti-bolt" style="color:var(--pk)"></i>WB AutoList</span>
+    <div style="display:flex;gap:1px;margin-left:4px;">
+      <span style="font-size:10px;color:var(--ink);font-weight:500;background:rgba(15,23,42,.06);border-radius:6px;padding:3px 7px;">工作台</span>
+      <span style="font-size:10px;color:var(--mut);padding:3px 7px;">批量</span>
+      <span style="font-size:10px;color:var(--mut);padding:3px 7px;">商品管理</span>
+      <span style="font-size:10px;color:var(--mut);padding:3px 7px;">记录</span>
+      <span style="font-size:10px;color:var(--mut);padding:3px 7px;">设置</span>
+    </div>
+    <span class="v2-chip" style="margin-left:auto;color:#854F0B;background:#FAEEDA;border-color:#FAC775;"><i class="ti ti-flask"></i> 沙盒</span>
+  </div>
+
+  <!-- step bar -->
+  <div style="display:flex;align-items:center;justify-content:center;gap:6px;padding:8px;border-bottom:1px solid rgba(15,23,42,.05);">
+    <span style="display:flex;align-items:center;gap:4px;"><span style="width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,var(--pk),var(--pk2));color:#fff;font-size:9px;display:inline-flex;align-items:center;justify-content:center;">1</span><span style="font-size:10px;color:var(--ink);font-weight:500;">输入</span></span>
+    <span style="width:22px;height:1px;background:var(--ln);"></span>
+    <span style="display:flex;align-items:center;gap:4px;"><span style="width:18px;height:18px;border-radius:50%;background:#fff;border:1px solid var(--ln);color:#94a3b8;font-size:9px;display:inline-flex;align-items:center;justify-content:center;">2</span><span style="font-size:10px;color:#94a3b8;">预览</span></span>
+    <span style="width:22px;height:1px;background:var(--ln);"></span>
+    <span style="display:flex;align-items:center;gap:4px;"><span style="width:18px;height:18px;border-radius:50%;background:#fff;border:1px solid var(--ln);color:#94a3b8;font-size:9px;display:inline-flex;align-items:center;justify-content:center;">3</span><span style="font-size:10px;color:#94a3b8;">发布</span></span>
+  </div>
+
+  <!-- TWO COLUMNS, fixed height, no page scroll -->
+  <div style="display:grid;grid-template-columns:40% 60%;height:430px;">
+    <!-- LEFT: form -->
+    <div style="border-right:1px solid var(--ln);padding:11px;overflow:hidden;display:flex;flex-direction:column;gap:8px;background:#fff;">
+      <div><p class="v2-lbl">商品名 *</p><input class="v2-in" value="无线蓝牙耳机" /></div>
+      <div><p class="v2-lbl">关键词</p><input class="v2-in" placeholder="наушники, bluetooth" />
+        <div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap;"><span class="v2-chip">наушники</span><span class="v2-chip">bluetooth</span></div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+        <div><p class="v2-lbl">售价 ₽</p><input class="v2-in" value="1990" /></div>
+        <div><p class="v2-lbl">折扣 %</p><input class="v2-in" value="0" /></div>
+      </div>
+      <div><p class="v2-lbl">素材(可选)</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+          <div style="border:1px dashed rgba(127,63,191,.4);border-radius:8px;padding:8px 6px;text-align:center;background:#EEEDFE;">
+            <i class="ti ti-photo" style="color:#7F3FBF;font-size:15px;"></i>
+            <div style="font-size:9px;color:#3C3489;font-weight:500;margin-top:2px;">参考产品图</div>
+            <div style="font-size:8px;color:#534AB7;margin-top:1px;line-height:1.3;">AI 据此出图<br>留空全自动</div>
+          </div>
+          <div style="border:1px dashed rgba(203,17,171,.4);border-radius:8px;padding:8px 6px;text-align:center;background:#FBEAF0;">
+            <i class="ti ti-video" style="color:#CB11AB;font-size:15px;"></i>
+            <div style="font-size:9px;color:#993556;font-weight:500;margin-top:2px;">英文视频</div>
+            <div style="font-size:8px;color:#b5547d;margin-top:1px;line-height:1.3;">自动配俄语<br>随卡上架</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(15,23,42,.06);padding-top:7px;font-size:10px;color:var(--mut);cursor:pointer;">
+        高级选项(品牌/包裹/提示词/数量)<span>展开 ▾</span>
+      </div>
+      <div style="margin-top:auto;">
+        <button class="v2-prime"><i class="ti ti-sparkles"></i> 一键生成</button>
+        <div style="font-size:8.5px;color:#94a3b8;text-align:center;margin-top:5px;">生成俄语图文+配图 · 消耗 Aurixel 余额</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: live preview -->
+    <div style="padding:11px;overflow:hidden;display:flex;flex-direction:column;gap:8px;">
+      <!-- images compact row -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;"><span class="v2-lbl" style="margin:0;">图片 · 可单张重生成</span></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;">
+          <div style="aspect-ratio:3/4;border-radius:6px;background:#1e3a5f;"></div>
+          <div style="aspect-ratio:3/4;border-radius:6px;background:#3b2a5f;"></div>
+          <div style="aspect-ratio:3/4;border-radius:6px;background:#5f3a2a;"></div>
+          <div style="aspect-ratio:3/4;border-radius:6px;background:#2a5f4a;"></div>
+        </div>
+      </div>
+      <!-- copy box: internal scroll -->
+      <div style="border:1px solid var(--ln);border-radius:8px;background:#fff;display:flex;flex-direction:column;min-height:0;flex:1;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px solid rgba(15,23,42,.06);">
+          <span style="font-size:10px;font-weight:500;color:var(--ink);">文案</span>
+          <div style="display:flex;gap:2px;background:var(--ins);border:1px solid var(--ln);border-radius:7px;padding:2px;"><span style="font-size:9px;padding:2px 7px;color:var(--mut);">俄</span><span style="font-size:9px;padding:2px 7px;color:var(--mut);">中</span><span style="font-size:9px;padding:2px 7px;background:#fff;border-radius:5px;color:var(--ink);font-weight:500;">双语</span></div>
+        </div>
+        <div style="padding:8px;overflow-y:auto;font-size:10px;">
+          <div class="ru" style="font-weight:500;">Беспроводные наушники Pro — глубокий бас, 30 ч</div>
+          <div class="zh" style="margin-bottom:5px;">无线耳机 Pro —— 深沉低音,30 小时续航</div>
+          <div class="ru">Кристально чистый звук, мощный бас, быстрая зарядка, защита IPX5.</div>
+          <div class="zh" style="margin-bottom:5px;">水晶般清澈音质,强劲低音,快速充电,IPX5 防护。</div>
+          <div class="ru">✓ 30 часов автономной работы</div>
+          <div class="zh">✓ 30 小时超长续航</div>
+          <div class="ru">✓ Bluetooth 5.3</div>
+          <div class="zh">✓ 蓝牙 5.3,连接稳定</div>
+        </div>
+      </div>
+      <!-- video + publish row -->
+      <div style="display:flex;gap:7px;align-items:stretch;">
+        <div style="flex:1;border:1px solid #9FE1CB;border-radius:8px;background:#E1F5EE;display:flex;align-items:center;gap:5px;padding:6px 8px;">
+          <i class="ti ti-video" style="color:#0F6E56;font-size:14px;"></i>
+          <span style="font-size:9.5px;color:#0F6E56;">视频已配俄语 ✓</span>
+        </div>
+        <button class="v2-prime" style="width:auto;padding:8px 16px;"><i class="ti ti-arrow-right"></i> 下一步:发布</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div style="font-size:10px;color:var(--color-text-tertiary);margin-top:8px;line-height:1.6;">
+  关键:窗口高度固定一屏,<b>整页不出现滚动条</b>;只有右侧「文案」框在内容长时自己滚。输入(左)和结果(右)始终同屏可见,编辑文案不用离开视野。真机 1280 宽两栏会更宽松。
+</div>
+</div>

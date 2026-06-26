@@ -228,9 +228,19 @@ async fn run_pipeline(
     } else {
         listing.product_name.clone()
     };
-    let subject = resolve_subject(state, &ctx, &hint)
-        .await?
-        .ok_or_else(|| anyhow!("未能匹配 WB 类目（hint: {}）", copy.category_hint))?;
+    // User-confirmed category (from the「全部商品参数」editor) wins; else AI-resolve.
+    let subject = if let Some(sid) = listing.subject_id {
+        crate::wb::types::WbSubject {
+            subject_id: sid,
+            subject_name: listing.subject_name.clone().unwrap_or_default(),
+            parent_id: 0,
+            parent_name: String::new(),
+        }
+    } else {
+        resolve_subject(state, &ctx, &hint)
+            .await?
+            .ok_or_else(|| anyhow!("未能匹配 WB 类目（hint: {}）", copy.category_hint))?
+    };
     result.subject_id = Some(subject.subject_id);
     result.subject_name = Some(subject.subject_name.clone());
     log(
@@ -247,12 +257,38 @@ async fn run_pipeline(
     // ── Step 2: characteristics (AI-filled) + colors + tnved ──
     let charcs = get_characteristics(state, &ctx, subject.subject_id).await?;
     let colors = get_colors(state, &ctx).await.unwrap_or_default();
-    let tnved = get_tnved(state, &ctx, subject.subject_id, None)
-        .await
-        .unwrap_or(None);
-    let characteristics =
+    let tnved = if !listing.tnved.is_empty() {
+        Some(listing.tnved.clone())
+    } else {
+        get_tnved(state, &ctx, subject.subject_id, None)
+            .await
+            .unwrap_or(None)
+    };
+    let mut characteristics =
         build_characteristics(state, cfg, listing, copy, &subject.subject_name, &charcs, &colors, &tnved)
             .await;
+    // 用户在「全部商品参数」里填的值优先覆盖,AI 兜底其余。空 = 不变(真实发布不受影响)。
+    if !listing.characteristics.is_empty() {
+        use std::collections::HashSet;
+        let mut seen: HashSet<i64> = HashSet::new();
+        let mut merged: Vec<Value> = Vec::new();
+        for uc in &listing.characteristics {
+            if let Some(id) = uc.get("id").and_then(|v| v.as_i64()) {
+                seen.insert(id);
+            }
+            merged.push(uc.clone());
+        }
+        for c in characteristics.into_iter() {
+            let keep = c
+                .get("id")
+                .and_then(|v| v.as_i64())
+                .map_or(true, |id| !seen.contains(&id));
+            if keep {
+                merged.push(c);
+            }
+        }
+        characteristics = merged;
+    }
     log(
         logs,
         "creating",

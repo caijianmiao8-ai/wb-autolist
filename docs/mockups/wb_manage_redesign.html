@@ -1,0 +1,73 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Redesigned product management screen: plain-language status, single refresh, strong unlist confirmation, technical IDs hidden in details.</h2>
+<style>
+  .mg{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .mg *{box-sizing:border-box;}
+  .mg-btn{border:1px solid var(--ln);background:#fff;border-radius:9px;padding:6px 11px;font-size:11.5px;color:var(--ink2);cursor:pointer;}
+  .mg-chip{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 8px;border-radius:999px;}
+  .ru{font-size:12.5px;color:#0f172a;font-weight:500;line-height:1.3;}
+  .zh{font-size:10.5px;color:#64748b;line-height:1.3;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;overflow:hidden;" class="mg">
+  <div style="padding:12px 14px;border-bottom:1px solid rgba(15,23,42,.08);background:#fff;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:15px;font-weight:500;color:var(--ink);">商品管理</span>
+      <span class="mg-chip" style="color:#854F0B;background:#FAEEDA;border:1px solid #FAC775;"><i class="ti ti-flask"></i> 沙盒</span>
+      <button class="mg-btn" style="margin-left:auto;"><i class="ti ti-refresh"></i> 刷新</button>
+      <button class="mg-btn"><i class="ti ti-building-warehouse"></i> 当前仓库:Коледино ▾</button>
+    </div>
+    <div style="font-size:11.5px;color:var(--mut);margin-top:7px;">共 3 商品 · <b style="color:#0F6E56;">2 可售</b> / <b style="color:#854F0B;">1 待处理</b> · 上次更新 2 分钟前</div>
+  </div>
+
+  <div style="padding:12px;display:flex;flex-direction:column;gap:10px;">
+    <!-- card 1 ok -->
+    <div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:11px;display:flex;gap:11px;">
+      <div style="width:48px;height:48px;border-radius:8px;background:#1e3a5f;flex-shrink:0;"></div>
+      <div style="flex:1;min-width:0;">
+        <div class="ru">Беспроводные наушники Pro</div>
+        <div class="zh">无线耳机 Pro</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap;">
+          <span class="mg-chip" style="color:#0F6E56;background:#E1F5EE;">● 可售</span>
+          <span style="font-size:11.5px;color:#334155;">原价 1990 → <b>到手 1290 ₽</b></span>
+          <span style="font-size:11.5px;color:#334155;">库存 120</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;">
+        <div style="display:flex;gap:5px;"><button class="mg-btn">改价</button><button class="mg-btn">库存</button><button class="mg-btn" onclick="mgUnlist(this)" style="color:#993556;">下架</button></div>
+        <span onclick="mgDet(this)" style="font-size:10.5px;color:#94a3b8;cursor:pointer;">详情 ▾</span>
+      </div>
+    </div>
+
+    <!-- card 2 待定价 -->
+    <div style="background:#fff;border:1px solid #FAC775;border-radius:11px;padding:11px;display:flex;gap:11px;">
+      <div style="width:48px;height:48px;border-radius:8px;background:#3b2a5f;flex-shrink:0;"></div>
+      <div style="flex:1;min-width:0;">
+        <div class="ru">Наушники Air</div>
+        <div class="zh">降噪耳机 Air</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap;">
+          <span class="mg-chip" style="color:#854F0B;background:#FAEEDA;">● 待定价</span>
+          <span style="font-size:11px;color:#854F0B;">新卡需先过 WB 审核才能定价(通常 24h 内)</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;">
+        <button class="mg-btn" style="opacity:.5;cursor:not-allowed;">改价</button>
+        <span style="font-size:10px;color:#94a3b8;">Wildberries 限制改价频率<br>约 40 秒后可再改</span>
+      </div>
+    </div>
+
+    <!-- inline strong unlist confirm (revealed by 下架) -->
+    <div id="mg-confirm" style="display:none;background:#fff;border:1.5px solid #F09595;border-radius:11px;padding:13px;">
+      <div style="font-size:13px;font-weight:500;color:#A32D2D;display:flex;align-items:center;gap:6px;"><i class="ti ti-alert-triangle"></i> 下架「Беспроводные наушники Pro」?</div>
+      <div style="font-size:11.5px;color:#334155;line-height:1.7;margin-top:8px;">· 会从<b>沙盒</b>店铺下架,买家将<b>无法搜索 / 购买</b>。<br>· 补货后需<b>重新设置库存</b>才能恢复销售。</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:11px;"><button class="mg-btn" onclick="document.getElementById('mg-confirm').style.display='none'">取消</button><button style="border:none;background:#A32D2D;color:#fff;border-radius:9px;padding:6px 14px;font-size:12px;cursor:pointer;">确认下架</button></div>
+    </div>
+
+    <!-- detail expand (technical IDs) -->
+    <div id="mg-det" style="display:none;background:#F4F6FA;border-radius:9px;padding:9px 12px;font-size:10.5px;color:#64748b;font-family:monospace;">nmID 330643 · vendorCode WB-A1B2 · 31 项特征 · barcode 2000000012345</div>
+  </div>
+</div>
+</div>
+<script>
+  window.mgUnlist=function(){document.getElementById('mg-confirm').style.display='block';};
+  window.mgDet=function(){var d=document.getElementById('mg-det');d.style.display=d.style.display==='none'?'block':'none';};
+</script>

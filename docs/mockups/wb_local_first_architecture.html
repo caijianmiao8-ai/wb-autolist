@@ -1,0 +1,57 @@
+<svg viewBox="0 0 680 560" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>WB 本地优先架构</title>
+<desc>分层架构：Wildberries 云通过限流感知网关，经同步引擎与写出站队列读写本地 SQLite；界面只读本地库。</desc>
+<defs>
+<marker id="ah" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6.5,3 L0,6 Z" fill="var(--color-text-secondary)"/></marker>
+<marker id="ah2" markerWidth="9" markerHeight="9" refX="0.5" refY="3" orient="auto"><path d="M6.5,0 L0,3 L6.5,6 Z" fill="var(--color-text-secondary)"/></marker>
+</defs>
+
+<text x="24" y="26" class="ts" text-anchor="start">Wildberries 云 — 异步 · 最终一致 · 令牌桶限流（跨三域）</text>
+<rect x="24" y="38" width="200" height="58" rx="12" class="c-amber"/>
+<text x="124" y="65" class="t" text-anchor="middle">内容域</text>
+<text x="124" y="84" class="ts" text-anchor="middle">100 次/分钟</text>
+<rect x="240" y="38" width="200" height="58" rx="12" class="c-amber"/>
+<text x="340" y="65" class="t" text-anchor="middle">价格域</text>
+<text x="340" y="84" class="ts" text-anchor="middle">10次/6秒 · 小桶（读写共用）</text>
+<rect x="456" y="38" width="200" height="58" rx="12" class="c-amber"/>
+<text x="556" y="65" class="t" text-anchor="middle">库存域</text>
+<text x="556" y="84" class="ts" text-anchor="middle">300 次/分钟</text>
+
+<line x1="340" y1="96" x2="340" y2="140" stroke="var(--color-text-secondary)" stroke-width="1.5" marker-start="url(#ah2)" marker-end="url(#ah)"/>
+<text x="350" y="122" class="ts" text-anchor="start">读 X-Ratelimit 头</text>
+
+<rect x="24" y="140" width="632" height="52" rx="12" class="c-blue"/>
+<text x="340" y="162" class="t" text-anchor="middle">WB 网关 — 唯一出口</text>
+<text x="340" y="182" class="ts" text-anchor="middle">按域配额 · 串行 · 429 按 Retry-After 退避</text>
+
+<line x1="176" y1="192" x2="176" y2="232" stroke="var(--color-text-secondary)" stroke-width="1.5" marker-start="url(#ah2)" marker-end="url(#ah)"/>
+<line x1="504" y1="192" x2="504" y2="232" stroke="var(--color-text-secondary)" stroke-width="1.5" marker-start="url(#ah2)" marker-end="url(#ah)"/>
+
+<rect x="24" y="232" width="304" height="62" rx="12" class="c-blue"/>
+<text x="176" y="260" class="t" text-anchor="middle">同步引擎</text>
+<text x="176" y="280" class="ts" text-anchor="middle">拉取 WB → 本地库 · 手动触发</text>
+<rect x="352" y="232" width="304" height="62" rx="12" class="c-blue"/>
+<text x="504" y="260" class="t" text-anchor="middle">写出站队列</text>
+<text x="504" y="280" class="ts" text-anchor="middle">建卡/改价/库存/删卡 · 排队重试</text>
+
+<line x1="176" y1="294" x2="176" y2="332" stroke="var(--color-text-secondary)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="186" y="317" class="ts" text-anchor="start">写入</text>
+<line x1="504" y1="332" x2="504" y2="294" stroke="var(--color-text-secondary)" stroke-width="1.5" marker-start="url(#ah2)" marker-end="url(#ah)"/>
+<text x="514" y="317" class="ts" text-anchor="start">取任务 / 回写</text>
+
+<rect x="24" y="332" width="632" height="58" rx="12" class="c-blue"/>
+<text x="340" y="359" class="t" text-anchor="middle">本地 SQLite — 真相源</text>
+<text x="340" y="379" class="ts" text-anchor="middle">商品 · 价格 · 库存 · 出站队列 · 新鲜度时间戳</text>
+
+<line x1="340" y1="390" x2="340" y2="430" stroke="var(--color-text-secondary)" stroke-width="1.5" marker-start="url(#ah2)" marker-end="url(#ah)"/>
+<text x="350" y="414" class="ts" text-anchor="start">只读 / 入队</text>
+
+<rect x="24" y="430" width="632" height="56" rx="12" class="c-blue"/>
+<text x="340" y="456" class="t" text-anchor="middle">界面 — 只读本地库</text>
+<text x="340" y="475" class="ts" text-anchor="middle">秒开 · 离线 · 显示新鲜度 + 待办 · 写操作入队</text>
+
+<rect x="24" y="502" width="14" height="14" rx="3" class="c-amber"/>
+<text x="44" y="513" class="ts" text-anchor="start">WB 云（异步·限流）</text>
+<rect x="270" y="502" width="14" height="14" rx="3" class="c-blue"/>
+<text x="290" y="513" class="ts" text-anchor="start">本地优先（秒开·离线·我们掌控）</text>
+</svg>

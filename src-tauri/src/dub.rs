@@ -219,6 +219,20 @@ pub async fn dub_pick_video(app: AppHandle) -> Result<Option<String>, String> {
         .map(|pb| pb.to_string_lossy().to_string()))
 }
 
+/// Native folder picker → absolute dir path (used by 批量「关联素材文件夹」).
+#[tauri::command]
+pub async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = oneshot::channel();
+    app.dialog().file().pick_folder(move |p| {
+        let _ = tx.send(p);
+    });
+    let picked = rx.await.map_err(|e| e.to_string())?;
+    Ok(picked
+        .and_then(|fp| fp.into_path().ok())
+        .map(|pb| pb.to_string_lossy().to_string()))
+}
+
 /// 解析 CLI 的进度行 `  [ok ] stage   234ms  [WARN …]` → JSON 事件。非进度行返回 None。
 fn parse_stage(line: &str) -> Option<Value> {
     let t = line.trim_start();

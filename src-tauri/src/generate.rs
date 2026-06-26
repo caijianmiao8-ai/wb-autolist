@@ -323,5 +323,7 @@ pub async fn generate_listing(
         partial: now_count < full_count,
         requested_images: full_count as u32,
         video_ru: None, // set later by the single-flow when a video is dubbed
+        characteristics: vec![], // user-edited via「全部商品参数」; empty = AI auto-fill
+        tnved: String::new(),
     })
 }

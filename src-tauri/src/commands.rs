@@ -20,8 +20,10 @@ use crate::wb::client::{wb_fetch, WbCtx, WbReq};
 use crate::wb::marketplace::{
     list_warehouses as mp_list_warehouses, read_stocks, set_stocks, Warehouse,
 };
+use crate::wb::categories::{get_characteristics, get_colors, get_tnved};
 use crate::wb::pipeline::publish_listing;
 use crate::wb::prices::{read_all_prices, upload_price_task};
+use crate::wb::types::{WbCharacteristic, WbColor, WbSubject};
 use base64::Engine;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -274,6 +276,33 @@ pub fn set_listing_video(
     Ok(hydrate(&state.paths, updated))
 }
 
+/// Save user-edited 全部商品参数 onto a draft: category override + confirmed
+/// characteristics ([{id,value}]) + TNVED. publish uses these (用户值优先).
+#[tauri::command]
+pub fn update_params(
+    state: State<Arc<AppState>>,
+    id: String,
+    subject_id: Option<i64>,
+    subject_name: Option<String>,
+    characteristics: Vec<Value>,
+    tnved: Option<String>,
+) -> Result<Listing, String> {
+    let updated = store::update_listing(&state.paths, &id, |l| {
+        if let Some(sid) = subject_id {
+            l.subject_id = Some(sid);
+        }
+        if let Some(sn) = &subject_name {
+            l.subject_name = Some(sn.clone());
+        }
+        l.characteristics = characteristics.clone();
+        if let Some(t) = &tnved {
+            l.tnved = t.trim().to_string();
+        }
+    })
+    .ok_or("未找到该商品")?;
+    Ok(hydrate(&state.paths, updated))
+}
+
 #[tauri::command]
 pub fn list_listings(state: State<Arc<AppState>>) -> Vec<Listing> {
     store::list_listings(&state.paths)
@@ -326,6 +355,174 @@ pub async fn clear_jobs(
 ) -> Result<Vec<BatchJob>, String> {
     let st = state.inner().clone();
     Ok(queue::clear_jobs(&st, &which).await)
+}
+
+/// Batch review grid: the generated (hydrated) Listing for every job that has
+/// produced one — so the frontend renders bilingual cards without N round-trips.
+#[tauri::command]
+pub async fn list_job_listings(state: State<'_, Arc<AppState>>) -> Result<Vec<Listing>, String> {
+    let st = state.inner().clone();
+    let jobs = queue::list_jobs(&st).await;
+    let mut out = Vec::new();
+    for j in jobs {
+        if let Some(id) = j.listing_id {
+            if let Some(l) = store::get_listing(&st.paths, &id) {
+                out.push(hydrate(&st.paths, l));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// One media file found in a "关联素材文件夹" — classified image/video by ext.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaFile {
+    pub name: String,  // file name without directory
+    pub stem: String,  // name without extension (for 商品名/货号 matching)
+    pub path: String,  // absolute path
+    pub ext: String,   // lowercase, no dot
+    pub kind: String,  // "image" | "video"
+}
+
+const IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp"];
+const VID_EXTS: &[&str] = &["mp4", "mov", "mkv", "webm", "avi", "m4v"];
+
+/// List the image/video files in a folder (non-recursive). No new deps/permissions —
+/// plain std::fs; the user picks the folder via `pick_folder`.
+#[tauri::command]
+pub fn list_media_files(dir: String) -> Result<Vec<MediaFile>, String> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(|e| format!("读取文件夹失败: {e}"))? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if name.starts_with('.') {
+            continue; // skip hidden / .DS_Store
+        }
+        let ext = path
+            .extension()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let kind = if IMG_EXTS.contains(&ext.as_str()) {
+            "image"
+        } else if VID_EXTS.contains(&ext.as_str()) {
+            "video"
+        } else {
+            continue;
+        };
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        out.push(MediaFile {
+            name,
+            stem,
+            path: path.to_string_lossy().to_string(),
+            ext,
+            kind: kind.to_string(),
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Read a local image file into a data URL (the webview can't read disk bytes).
+/// Used to feed a matched product photo into ListingInput.base_photos. Capped to
+/// keep the IPC payload sane.
+#[tauri::command]
+pub fn read_file_b64(path: String) -> Result<String, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| format!("读取失败: {e}"))?;
+    if meta.len() > 20 * 1024 * 1024 {
+        return Err("图片过大(>20MB),请压缩后再用".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取失败: {e}"))?;
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/jpeg",
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{b64}"))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WB 类目 / 特征字典 —— 供工作台「全部商品参数」编辑(发布全参数)。读侧,content 域。
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn content_ctx(cfg: &AppConfig) -> WbCtx {
+    WbCtx {
+        token: cfg.wb_content_token.clone(),
+        sandbox: cfg.wb_sandbox,
+    }
+}
+
+/// Search WB subjects (categories) by free text — lets the user override the
+/// AI-picked category before publish.
+#[tauri::command]
+pub async fn search_subjects(
+    state: State<'_, Arc<AppState>>,
+    name: String,
+) -> Result<Vec<WbSubject>, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let ctx = content_ctx(&cfg);
+    crate::wb::categories::search_subjects(&st, &ctx, &name, 30)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Full characteristics dictionary for a subject (id/name/required/charcType/…).
+#[tauri::command]
+pub async fn subject_characteristics(
+    state: State<'_, Arc<AppState>>,
+    subject_id: i64,
+) -> Result<Vec<WbCharacteristic>, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let ctx = content_ctx(&cfg);
+    get_characteristics(&st, &ctx, subject_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// WB color directory (for the «цвет» characteristic dropdown).
+#[tauri::command]
+pub async fn wb_colors(state: State<'_, Arc<AppState>>) -> Result<Vec<WbColor>, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let ctx = content_ctx(&cfg);
+    get_colors(&st, &ctx).await.map_err(|e| e.to_string())
+}
+
+/// Resolve a TNVED (customs) code for a subject; optional search refines it.
+#[tauri::command]
+pub async fn wb_tnved(
+    state: State<'_, Arc<AppState>>,
+    subject_id: i64,
+    search: Option<String>,
+) -> Result<Option<String>, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let ctx = content_ctx(&cfg);
+    get_tnved(&st, &ctx, subject_id, search.as_deref())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -566,6 +763,39 @@ pub async fn test_aurixel(state: State<'_, Arc<AppState>>, key: String) -> Resul
         }
         Ok(r) => ConnTest { ok: false, detail: format!("Key 无效(HTTP {})", r.status().as_u16()), warehouses: vec![] },
         Err(e) => ConnTest { ok: false, detail: format!("连接失败:{}", e), warehouses: vec![] },
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AurixelBalance {
+    pub usd: f64,
+    pub rmb: f64,
+}
+
+/// Read the configured Aurixel key's balance (GET /v1/balance on the gateway).
+#[tauri::command]
+pub async fn aurixel_balance(state: State<'_, Arc<AppState>>) -> Result<AurixelBalance, String> {
+    let cfg = get_config(&state.paths);
+    let key = cfg.aurixel_api_key.trim().to_string();
+    if key.is_empty() {
+        return Err("未配置 Aurixel Key".into());
+    }
+    let r = state
+        .http
+        .get("https://conduit-api.aurixel.ai/v1/balance")
+        .header("Authorization", format!("Bearer {}", key))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("连接失败:{}", e))?;
+    if !r.status().is_success() {
+        return Err(format!("余额查询失败 (HTTP {})", r.status().as_u16()));
+    }
+    let v: Value = r.json().await.map_err(|e| e.to_string())?;
+    Ok(AurixelBalance {
+        usd: v.get("cash_balance_usd").and_then(|x| x.as_f64()).unwrap_or(0.0),
+        rmb: v.get("cash_balance_rmb").and_then(|x| x.as_f64()).unwrap_or(0.0),
     })
 }
 

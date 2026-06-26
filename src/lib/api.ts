@@ -2,6 +2,7 @@
 // fetch('/api/*') calls. Tauri maps camelCase JS arg keys to snake_case params.
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AurixelBalance,
   ConnTest,
   DubOptions,
   DubPreflight,
@@ -9,6 +10,10 @@ import type {
   Listing,
   ListingInput,
   ManageView,
+  MediaFile,
+  WbCharacteristic,
+  WbColor,
+  WbSubject,
   SyncResult,
   Warehouse,
 } from "./types";
@@ -50,6 +55,8 @@ export interface Job {
   autoPublish: boolean;
   status: "pending" | "generating" | "publishing" | "done" | "error";
   nmID: number | null;
+  /** id of the Listing this job generated (for the bilingual review grid). */
+  listingId: string | null;
   sandbox: boolean;
   error: string | null;
 }
@@ -93,6 +100,23 @@ export const api = {
   /** Attach (or clear with "") the dubbed RU video path on a draft. */
   setListingVideo: (id: string, path: string) =>
     invoke<Listing>("set_listing_video", { id, path }),
+  /** Save user-edited 全部商品参数 (category override + characteristics + TNVED). */
+  updateParams: (
+    id: string,
+    params: {
+      subjectId?: number;
+      subjectName?: string;
+      characteristics: { id: number; value: unknown }[];
+      tnved?: string;
+    }
+  ) =>
+    invoke<Listing>("update_params", {
+      id,
+      subjectId: params.subjectId,
+      subjectName: params.subjectName,
+      characteristics: params.characteristics,
+      tnved: params.tnved,
+    }),
   publish: (id: string) => invoke<Listing>("publish", { id }),
   listListings: () => invoke<Listing[]>("list_listings"),
   getListing: (id: string) => invoke<Listing | null>("get_listing", { id }),
@@ -108,12 +132,34 @@ export const api = {
   enqueueJobs: (rows: ListingInput[], autoPublish: boolean) =>
     invoke<Job[]>("enqueue_jobs", { rows, autoPublish }),
   clearJobs: (which: "finished" | "all") => invoke<Job[]>("clear_jobs", { which }),
+  /** Batch review grid: the generated listings for all jobs (hydrated). */
+  listJobListings: () => invoke<Listing[]>("list_job_listings"),
+  /** Native folder picker → absolute dir path (批量「关联素材文件夹」). */
+  pickFolder: () => invoke<string | null>("pick_folder"),
+  /** List image/video files in a folder (non-recursive). */
+  listMediaFiles: (dir: string) => invoke<MediaFile[]>("list_media_files", { dir }),
+  /** Read a local image into a data URL (for base_photos). */
+  readFileB64: (path: string) => invoke<string>("read_file_b64", { path }),
+
+  // ── WB 类目 / 特征字典(发布「全部商品参数」)──
+  /** Search WB categories by free text (override the AI-picked one). */
+  searchSubjects: (name: string) => invoke<WbSubject[]>("search_subjects", { name }),
+  /** Full characteristics dictionary for a subject. */
+  subjectCharacteristics: (subjectId: number) =>
+    invoke<WbCharacteristic[]>("subject_characteristics", { subjectId }),
+  /** WB color directory (цвет dropdown). */
+  wbColors: () => invoke<WbColor[]>("wb_colors"),
+  /** Resolve a TNVED customs code for a subject. */
+  wbTnved: (subjectId: number, search?: string) =>
+    invoke<string | null>("wb_tnved", { subjectId, search }),
 
   // ── Management panel (local-first: read DB, sync on demand) ──
   /** Seller's FBS warehouses, live (used by Settings). */
   listWarehouses: () => invoke<Warehouse[]>("list_warehouses"),
   /** First-run wizard: validate an Aurixel key. */
   testAurixel: (key: string) => invoke<ConnTest>("test_aurixel", { key }),
+  /** Read the configured Aurixel key's balance (¥ / $). */
+  aurixelBalance: () => invoke<AurixelBalance>("aurixel_balance"),
   /** First-run wizard: validate a WB token (+ return its FBS warehouses). */
   testWb: (token: string, sandbox: boolean) =>
     invoke<ConnTest>("test_wb", { token, sandbox }),

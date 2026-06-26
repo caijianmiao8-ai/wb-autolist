@@ -2,9 +2,9 @@
 //! Wildberries Content API response shapes (subset). Field names follow WB's
 //! exact casing (subjectID, charcID, nmID …).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WbSubject {
     #[serde(rename = "subjectID")]
     pub subject_id: i64,
@@ -16,7 +16,7 @@ pub struct WbSubject {
     pub parent_name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WbCharacteristic {
     #[serde(rename = "charcID")]
     pub charc_id: i64,
@@ -37,7 +37,7 @@ pub struct WbCharacteristic {
     pub charc_type: i64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WbColor {
     pub name: String,
     #[serde(default, rename = "parentName")]

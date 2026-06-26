@@ -1,0 +1,76 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Publish step: clean defaults with per-field edit, plus an expandable advanced panel exposing full Wildberries characteristics, variants, and customs code.</h2>
+<style>
+  .pv{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .pv *{box-sizing:border-box;}
+  .pv-prime{color:#fff;background-image:linear-gradient(135deg,var(--pk),var(--pk2));border:none;border-radius:11px;padding:11px 16px;font-size:13px;font-weight:500;cursor:pointer;width:100%;}
+  .pv-in{border:1px solid var(--ln);background:#fff;border-radius:8px;padding:6px 9px;font-size:12px;color:var(--ink);}
+  .pv-edit{font-size:11px;color:#64748b;cursor:pointer;border:1px solid var(--ln);border-radius:7px;padding:2px 8px;background:#fff;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;overflow:hidden;max-width:560px;margin:0 auto;" class="pv">
+  <div style="padding:11px 14px;border-bottom:1px solid rgba(15,23,42,.08);background:#fff;font-size:13px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:6px;">
+    <span style="background:linear-gradient(135deg,#CB11AB,#7F3FBF);color:#fff;border-radius:6px;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;">3</span> 发布
+    <span style="margin-left:auto;font-size:10.5px;color:#854F0B;background:#FAEEDA;border:1px solid #FAC775;border-radius:999px;padding:2px 8px;"><i class="ti ti-flask"></i> 沙盒</span>
+  </div>
+
+  <div style="padding:14px;">
+    <div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:2px 14px;" id="pv-rows"></div>
+
+    <!-- advanced toggle -->
+    <button onclick="pvTog()" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:11px 14px;margin-top:10px;cursor:pointer;">
+      <span style="font-size:12.5px;color:#334155;display:flex;align-items:center;gap:7px;"><i class="ti ti-adjustments-alt" style="color:#7F3FBF"></i> 高级 · 全部商品参数 <span style="font-size:10.5px;color:#94a3b8;">(默认按推荐值,可选)</span></span>
+      <i class="ti ti-chevron-down" id="pv-chev" style="color:#94a3b8;"></i>
+    </button>
+    <div id="pv-adv" style="display:none;"></div>
+
+    <button class="pv-prime" style="margin-top:12px;"><i class="ti ti-rocket"></i> 确认上架到 Wildberries</button>
+  </div>
+</div>
+</div>
+<script>
+(function(){
+  function row(k,v,note){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(15,23,42,.06);">'
+      +'<span style="font-size:12px;color:#64748b;">'+k+'</span>'
+      +'<span style="display:flex;align-items:center;gap:8px;"><span style="font-size:12.5px;color:#0f172a;">'+v+'</span>'+(note||'<button class="pv-edit">✎ 改</button>')+'</span></div>';
+  }
+  document.getElementById('pv-rows').innerHTML=
+     row('售价(到手价)','1990 ₽')
+    +row('库存数量','120 件')
+    +row('发货仓库','Коледино(默认)')
+    +row('包裹尺寸/重量','20×15×5cm · 0.3kg(默认)')
+    +row('类目','Наушники(AI 选)')
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;"><span style="font-size:12px;color:#64748b;">媒体</span><span style="font-size:12.5px;color:#0f172a;">3 图 + 1 俄语视频 <span style="color:#0F6E56;font-size:11px;">✓ 含俄配</span></span></div>';
+
+  var adv='<div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:12px 14px;margin-top:8px;">'
+    +'<div style="font-size:11px;color:#64748b;margin-bottom:9px;">商品特征(характеристики)· 该类目共 31 项,必填已自动补</div>'
+    // characteristics rows
+    +charRow('品牌','NoName')
+    +charRow('Цвет(颜色)','Чёрный')
+    +charRow('Материал(材质)','Пластик')
+    +charRow('Тип подключения(连接)','Bluetooth')
+    +'<div style="font-size:11px;color:#CB11AB;cursor:pointer;margin:8px 0 4px;">+ 展开其余 27 项 ▾</div>'
+    // variants
+    +'<div style="border-top:1px solid rgba(15,23,42,.08);margin-top:10px;padding-top:10px;">'
+      +'<div style="font-size:11px;color:#64748b;margin-bottom:8px;display:flex;align-items:center;gap:6px;"><i class="ti ti-versions" style="color:#7F3FBF"></i> 尺码/颜色变体(服装鞋类用)</div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+        +variant('单一规格','barcode 自动','#EEEDFE','#3C3489')
+        +'<button style="border:1px dashed rgba(15,23,42,.25);border-radius:8px;background:#fff;font-size:11px;color:#64748b;padding:6px 10px;cursor:pointer;">+ 加尺码/颜色</button>'
+      +'</div></div>'
+    // tnved
+    +'<div style="border-top:1px solid rgba(15,23,42,.08);margin-top:10px;padding-top:10px;display:flex;align-items:center;gap:10px;">'
+      +'<span style="font-size:12px;color:#64748b;">TNVED 海关编码</span>'
+      +'<input class="pv-in" value="8518300000" style="width:140px;"/>'
+      +'<span style="font-size:10.5px;color:#94a3b8;">AI 据类目预填,可改</span></div>'
+    +'</div>';
+  function charRow(k,v){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;">'
+      +'<span style="font-size:12px;color:#334155;">'+k+'</span><input class="pv-in" value="'+v+'" style="width:170px;"/></div>';
+  }
+  function variant(t,s,bg,col){
+    return '<div style="background:'+bg+';border-radius:8px;padding:6px 10px;"><div style="font-size:11.5px;font-weight:500;color:'+col+';">'+t+'</div><div style="font-size:9.5px;color:'+col+';opacity:.8;">'+s+'</div></div>';
+  }
+  var open=false;
+  window.pvTog=function(){ open=!open; document.getElementById('pv-adv').style.display=open?'block':'none'; document.getElementById('pv-adv').innerHTML=open?adv:''; document.getElementById('pv-chev').className='ti ti-chevron-'+(open?'up':'down'); document.getElementById('pv-chev').style.color='#94a3b8'; };
+})();
+</script>

@@ -1,0 +1,120 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Redesigned batch listing: import with media-folder matching, draft generation, bilingual review grid, selective bulk publish.</h2>
+<style>
+  .bt{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .bt *{box-sizing:border-box;}
+  .bt-tab{flex:1;border:none;background:transparent;border-radius:7px;padding:7px 4px;font-size:11.5px;color:var(--mut);cursor:pointer;}
+  .bt-tab.on{background:#fff;color:var(--ink);font-weight:500;box-shadow:0 1px 2px rgba(15,23,42,.08);}
+  .bt-prime{color:#fff;background-image:linear-gradient(135deg,var(--pk),var(--pk2));border:none;border-radius:10px;padding:9px 16px;font-size:12.5px;font-weight:500;cursor:pointer;}
+  .bt-ghost{border:1px solid var(--ln);background:#fff;border-radius:9px;padding:7px 11px;font-size:11.5px;color:var(--ink2);cursor:pointer;}
+  .bt-chip{display:inline-flex;align-items:center;gap:3px;font-size:9.5px;padding:1px 7px;border-radius:999px;}
+  .ru{font-size:12px;color:#0f172a;line-height:1.4;}
+  .zh{font-size:10.5px;color:#64748b;line-height:1.4;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;overflow:hidden;" class="bt">
+  <div style="padding:10px 14px;border-bottom:1px solid rgba(15,23,42,.08);background:#fff;font-size:13px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:6px;"><i class="ti ti-stack-2" style="color:var(--pk)"></i> 批量上架 <span style="margin-left:auto;font-size:10.5px;color:#854F0B;background:#FAEEDA;border:1px solid #FAC775;border-radius:999px;padding:2px 8px;"><i class="ti ti-flask"></i> 沙盒</span></div>
+  <div style="display:flex;gap:4px;background:var(--ins);margin:12px 14px 0;border:1px solid rgba(15,23,42,.08);border-radius:10px;padding:3px;">
+    <button class="bt-tab on" data-s="0" onclick="btGo(0)">1 · 导入</button>
+    <button class="bt-tab" data-s="1" onclick="btGo(1)">2 · 生成草稿</button>
+    <button class="bt-tab" data-s="2" onclick="btGo(2)">3 · 审核(双语)</button>
+    <button class="bt-tab" data-s="3" onclick="btGo(3)">4 · 发布</button>
+  </div>
+  <div id="bt-body" style="padding:14px;min-height:340px;"></div>
+</div>
+</div>
+<script>
+(function(){
+  function trow(name,price,img,vid,st){
+    var stc = st==='ok'?'<span class="bt-chip" style="color:#0F6E56;background:#E1F5EE;">✓ 就绪</span>'
+            : st==='warn'?'<span class="bt-chip" style="color:#854F0B;background:#FAEEDA;">⚠ 缺售价</span>'
+            : '<span class="bt-chip" style="color:#993556;background:#FBEAF0;">⚠ 缺名</span>';
+    var imgc = img==='ai'?'<span class="bt-chip" style="color:#534AB7;background:#EEEDFE;">AI 出图</span>':'<span class="bt-chip" style="color:#185FA5;background:#E6F1FB;"><i class="ti ti-photo"></i> 3 张实拍</span>';
+    var vidc = vid?'<span class="bt-chip" style="color:#993556;background:#FBEAF0;"><i class="ti ti-video"></i> '+vid+'</span>':'<span style="color:#cbd5e1;font-size:11px;">—</span>';
+    return '<tr style="border-top:1px solid rgba(15,23,42,.06);">'
+      +'<td style="padding:8px 6px;font-size:12px;color:#0f172a;">'+name+'</td>'
+      +'<td style="padding:8px 6px;font-size:12px;color:#0f172a;">'+price+'</td>'
+      +'<td style="padding:8px 6px;">'+imgc+'</td>'
+      +'<td style="padding:8px 6px;">'+vidc+'</td>'
+      +'<td style="padding:8px 6px;">'+stc+'</td></tr>';
+  }
+  function card(img,ru,zh,price,vid,st){
+    var bdr = st==='ok'?'#9FE1CB':st==='warn'?'#FAC775':'#F09595';
+    var badge = st==='ok'?'<span class="bt-chip" style="color:#0F6E56;background:#E1F5EE;">✓ 就绪</span>'
+              : st==='warn'?'<span class="bt-chip" style="color:#854F0B;background:#FAEEDA;">⚠ 待修:缺类目</span>'
+              : '<span class="bt-chip" style="color:#A32D2D;background:#FCEBEB;">✗ 失败</span>';
+    var act = st==='ok'?'<input type="checkbox" checked style="accent-color:#CB11AB;width:15px;height:15px;">'
+            : st==='warn'?'<button class="bt-ghost" style="padding:3px 9px;font-size:10.5px;">修正</button>'
+            : '<button class="bt-ghost" style="padding:3px 9px;font-size:10.5px;">重试</button>';
+    var vidtag = vid?'<span class="bt-chip" style="position:absolute;top:5px;right:5px;color:#fff;background:rgba(15,110,86,.85);"><i class="ti ti-video"></i> 俄</span>':'';
+    return '<div style="border:1px solid '+bdr+';border-radius:11px;overflow:hidden;background:#fff;">'
+      +'<div style="height:72px;background:'+img+';position:relative;display:flex;align-items:center;justify-content:center;"><i class="ti ti-photo" style="color:#fff;opacity:.5;font-size:22px;"></i>'+vidtag+'</div>'
+      +'<div style="padding:8px 9px;">'
+        +'<div class="ru" style="font-weight:500;">'+ru+'</div>'
+        +'<div class="zh" style="margin-top:1px;">'+zh+'</div>'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:7px;"><span style="font-size:11px;color:#334155;">'+price+'</span>'+badge+'</div>'
+        +'<div style="margin-top:7px;display:flex;justify-content:flex-end;">'+act+'</div>'
+      +'</div></div>';
+  }
+  function pubrow(name,st){
+    var c = st==='ok'?'<span style="font-size:11px;color:#0F6E56;">✓ nmID 330712</span>'
+          : st==='run'?'<span style="font-size:11px;color:#185FA5;"><i class="ti ti-loader-2" style="animation:btspin 1s linear infinite;"></i> 定价中…</span>'
+          : st==='wait'?'<span style="font-size:11px;color:#94a3b8;">排队</span>'
+          : '<span style="font-size:11px;color:#A32D2D;">✗ 限流,稍后重试</span>';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(15,23,42,.05);"><span style="flex:1;font-size:12px;color:#0f172a;">'+name+'</span>'+c+'</div>';
+  }
+  var bodies=[
+    // 1 import
+    '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">'
+      +'<button class="bt-ghost"><i class="ti ti-upload"></i> 导入 Excel</button>'
+      +'<button class="bt-ghost"><i class="ti ti-plus"></i> 加一行</button>'
+      +'<button class="bt-ghost" style="border-color:rgba(203,17,171,.35);color:#993556;"><i class="ti ti-folder"></i> 关联素材文件夹(图/视频)</button>'
+    +'</div>'
+    +'<div style="border:1px solid rgba(15,23,42,.10);border-radius:11px;overflow:hidden;background:#fff;">'
+      +'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">'
+      +'<tr style="background:#F4F6FA;"><th style="text-align:left;padding:7px 6px;font-size:10px;color:#64748b;font-weight:500;">商品名</th><th style="text-align:left;padding:7px 6px;font-size:10px;color:#64748b;font-weight:500;width:70px;">售价</th><th style="text-align:left;padding:7px 6px;font-size:10px;color:#64748b;font-weight:500;width:104px;">图片</th><th style="text-align:left;padding:7px 6px;font-size:10px;color:#64748b;font-weight:500;width:118px;">视频</th><th style="text-align:left;padding:7px 6px;font-size:10px;color:#64748b;font-weight:500;width:74px;">状态</th></tr>'
+      +trow('蓝牙耳机 Pro','1990 ₽','folder','耳机pro.mp4','ok')
+      +trow('降噪耳机 Air','2490 ₽','ai','','ok')
+      +trow('运动耳机 X','','ai','运动x.mp4','warn')
+      +trow('(空)','990 ₽','ai','','err')
+      +'</table></div>'
+    +'<div style="font-size:10.5px;color:#94a3b8;margin-top:9px;line-height:1.6;"><i class="ti ti-info-circle"></i> 素材按「商品名 / 货号 = 文件名」自动匹配:匹配到实拍图就用实拍、英文视频自动排队配俄语;没匹配到就 AI 出图、视频留空。缺必填的行(红)不会进生成。</div>'
+    +'<div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="bt-prime" onclick="btGo(1)">下一步:生成草稿(3 行就绪)→</button></div>',
+    // 2 generate
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px;">'
+      +stat('商品','3 个')+stat('配图','约 9 张')+stat('视频配俄语','2 个')+stat('预计','~8 分钟')
+    +'</div>'
+    +'<div style="background:#FAEEDA;border:1px solid #FAC775;color:#854F0B;border-radius:10px;padding:9px 12px;font-size:11.5px;margin-bottom:12px;"><i class="ti ti-coin"></i> 预计消耗你的 Aurixel 余额;目标:<b>沙盒</b>。仅生成草稿,<b>不会自动上架</b>。</div>'
+    +'<div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:6px 12px;margin-bottom:12px;">'
+      +genrow('蓝牙耳机 Pro','done')+genrow('降噪耳机 Air','run')+genrow('运动耳机 X','wait')
+    +'</div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;"><button class="bt-ghost"><i class="ti ti-player-pause"></i> 暂停</button><button class="bt-prime" onclick="btGo(2)">生成完 → 去审核</button></div>',
+    // 3 review grid
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:11px;flex-wrap:wrap;">'
+      +'<div style="display:flex;gap:3px;background:#F4F6FA;border:1px solid rgba(15,23,42,.08);border-radius:9px;padding:3px;"><button class="bt-tab" style="flex:none;padding:4px 12px;">俄</button><button class="bt-tab" style="flex:none;padding:4px 12px;">中</button><button class="bt-tab on" style="flex:none;padding:4px 12px;">双语</button></div>'
+      +'<span style="font-size:11px;color:#64748b;margin-left:4px;">就绪 <b style="color:#0F6E56;">2</b> · 待修 <b style="color:#854F0B;">1</b> · 失败 <b style="color:#A32D2D;">1</b></span>'
+      +'<button class="bt-ghost" style="margin-left:auto;">全选就绪</button>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
+      +card('#1e3a5f','Беспроводные наушники Pro','无线耳机 Pro · 深沉低音','1990 ₽',true,'ok')
+      +card('#3b2a5f','Наушники с шумоподавлением Air','降噪耳机 Air','2490 ₽',false,'ok')
+      +card('#5f3a2a','Спортивные наушники X','运动耳机 X','1490 ₽',true,'warn')
+      +card('#444','— 生成失败 —','配额超限,可重试','990 ₽',false,'err')
+    +'</div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid rgba(15,23,42,.08);"><span style="font-size:11.5px;color:#64748b;">已选 2 张就绪卡片</span><button class="bt-prime" onclick="btGo(3)">发布选中 2 张 →</button></div>',
+    // 4 publish
+    '<div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:12px 14px;margin-bottom:12px;">'
+      +'<div style="font-size:12.5px;color:#0f172a;margin-bottom:8px;">发布 <b>2 张</b> 到 <b>沙盒测试店铺</b></div>'
+      +'<div style="font-size:11px;color:#854F0B;background:#FAEEDA;border:1px solid #FAC775;border-radius:8px;padding:8px 10px;line-height:1.6;"><i class="ti ti-clock-hour-4"></i> WB 价格接口限流(约每分钟 1 张定价),<b>2 张约 2 分钟</b>。建卡+传图/视频更快,定价是瓶颈,后台慢慢推即可。</div>'
+    +'</div>'
+    +'<div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:6px 12px;margin-bottom:12px;">'
+      +pubrow('蓝牙耳机 Pro','ok')+pubrow('降噪耳机 Air','run')
+    +'</div>'
+    +'<div style="font-size:10.5px;color:#94a3b8;"><i class="ti ti-shield-check"></i> 已建过的卡不会重复创建(幂等);中途失败可只重试失败项。</div>'
+    +'<style>@keyframes btspin{to{transform:rotate(360deg)}}</style>'
+  ];
+  function stat(k,v){return '<div style="background:#F4F6FA;border-radius:9px;padding:8px 10px;"><div style="font-size:9.5px;color:#64748b;">'+k+'</div><div style="font-size:14px;color:#0f172a;font-weight:500;">'+v+'</div></div>';}
+  function genrow(n,st){var c=st==='done'?'<span style="font-size:11px;color:#0F6E56;">✓ 草稿就绪</span>':st==='run'?'<span style="font-size:11px;color:#854F0B;"><i class="ti ti-loader-2" style="animation:btspin 1s linear infinite;"></i> 生成中(图文+配俄语)</span>':'<span style="font-size:11px;color:#94a3b8;">排队</span>';return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(15,23,42,.05);"><span style="flex:1;font-size:12px;color:#0f172a;">'+n+'</span>'+c+'</div><style>@keyframes btspin{to{transform:rotate(360deg)}}</style>';}
+  window.btGo=function(s){document.querySelectorAll('.bt-tab[data-s]').forEach(function(b){b.classList.toggle('on',+b.getAttribute('data-s')===s);});document.getElementById('bt-body').innerHTML=bodies[s];};
+  btGo(0);
+})();
+</script>

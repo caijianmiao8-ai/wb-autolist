@@ -1,0 +1,97 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Mockup of the first-run setup wizard: welcome, connect Aurixel, connect Wildberries store, defaults.</h2>
+<style>
+  .wz { --pk:#CB11AB; --pk2:#7F3FBF; --ink:#0f172a; --ink2:#334155; --mut:#64748b; --ln:rgba(15,23,42,.10); --ins:#F4F6FA; }
+  .wz *{box-sizing:border-box;}
+  .wz-prime{color:#fff;background-image:linear-gradient(135deg,var(--pk),var(--pk2));border:none;border-radius:11px;padding:10px 16px;font-size:13px;font-weight:500;cursor:pointer;}
+  .wz-ghost{border:1px solid var(--ln);background:#fff;border-radius:11px;padding:10px 16px;font-size:13px;color:var(--ink2);cursor:pointer;}
+  .wz-in{width:100%;border:1px solid var(--ln);background:#fff;border-radius:10px;padding:9px 11px;font-size:12.5px;color:var(--ink);}
+  .wz-test{border:1px solid var(--ln);background:var(--ins);border-radius:9px;padding:8px 12px;font-size:12px;color:var(--ink2);cursor:pointer;white-space:nowrap;}
+  .wz-dot{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;}
+  .wz-ok{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#0F6E56;background:#E1F5EE;border:1px solid #9FE1CB;border-radius:8px;padding:7px 10px;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;padding:0;overflow:hidden;" class="wz">
+  <div style="text-align:center;padding:18px 0 6px;">
+    <div style="display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:500;color:var(--ink);"><i class="ti ti-bolt" style="color:var(--pk)"></i> WB AutoList · 初次设置</div>
+  </div>
+  <!-- stepper -->
+  <div id="wz-steps" style="display:flex;align-items:center;justify-content:center;gap:0;padding:10px 24px 14px;"></div>
+  <!-- body -->
+  <div id="wz-body" style="min-height:280px;padding:4px 28px 8px;"></div>
+  <!-- footer -->
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 28px 20px;border-top:1px solid rgba(15,23,42,.06);margin-top:8px;">
+    <button class="wz-ghost" onclick="wzGo(-1)" id="wz-back">上一步</button>
+    <span style="font-size:11px;color:var(--mut)" id="wz-hint"></span>
+    <button class="wz-prime" onclick="wzGo(1)" id="wz-next">下一步 →</button>
+  </div>
+</div>
+</div>
+<script>
+(function(){
+  var STEPS=["欢迎","Aurixel","店铺","默认"];
+  var cur=0;
+  var bodies=[
+    // 0 welcome
+    '<div style="text-align:center;padding:24px 0;">'
+      +'<div style="width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#CB11AB,#7F3FBF);margin:0 auto 14px;display:flex;align-items:center;justify-content:center;"><i class="ti ti-bolt" style="color:#fff;font-size:28px;"></i></div>'
+      +'<div style="font-size:18px;font-weight:500;color:#0f172a;">欢迎,3 步开始在 Wildberries 卖货</div>'
+      +'<div style="font-size:13px;color:#64748b;margin-top:10px;line-height:1.7;max-width:380px;margin-left:auto;margin-right:auto;">输入商品 → AI 生成图文 / 配图 / 俄语视频 → 一键上架。<br>先连两个账号,大约 1 分钟。</div>'
+    +'</div>',
+    // 1 aurixel
+    '<div style="padding:6px 0;">'
+      +'<div style="font-size:15px;font-weight:500;color:#0f172a;display:flex;align-items:center;gap:7px;"><i class="ti ti-sparkles" style="color:#CB11AB"></i> 连接 Aurixel(AI 引擎)</div>'
+      +'<div style="font-size:12px;color:#64748b;margin:6px 0 14px;line-height:1.6;">文案、配图、把视频配成俄语都用它,<b>按你自己的用量计费</b>。</div>'
+      +'<div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin-bottom:5px;">API Key</div>'
+      +'<div style="display:flex;gap:8px;"><input class="wz-in" type="password" value="ck-xxxxxxxxxxxxxxxxxxxx" /><button class="wz-test" onclick="wzPass(1)">测试连接</button></div>'
+      +'<div id="wz-ok-1" style="margin-top:12px;display:none;"><span class="wz-ok"><i class="ti ti-circle-check"></i> 已连接 · 余额 $12.40</span> <a style="font-size:12px;color:#CB11AB;margin-left:8px;cursor:pointer;">去 aurixel.ai 充值 ↗</a></div>'
+    +'</div>',
+    // 2 store
+    '<div style="padding:6px 0;">'
+      +'<div style="font-size:15px;font-weight:500;color:#0f172a;display:flex;align-items:center;gap:7px;"><i class="ti ti-building-store" style="color:#CB11AB"></i> 连接 Wildberries 店铺</div>'
+      +'<div style="font-size:12px;color:#64748b;margin:6px 0 14px;line-height:1.6;">从 WB 卖家后台生成 API Token 粘进来。<b>建议只授「内容+只读」权限</b>。</div>'
+      +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">'
+        +'<span style="font-size:12px;color:#334155;">环境</span>'
+        +'<div style="display:flex;gap:3px;background:#F4F6FA;border:1px solid rgba(15,23,42,.10);border-radius:9px;padding:3px;">'
+          +'<button style="border:none;background:#fff;border-radius:7px;padding:5px 12px;font-size:11.5px;font-weight:500;box-shadow:0 1px 2px rgba(15,23,42,.08);cursor:pointer;">沙盒测试</button>'
+          +'<button style="border:none;background:transparent;border-radius:7px;padding:5px 12px;font-size:11.5px;color:#64748b;cursor:pointer;">正式店铺</button>'
+        +'</div></div>'
+      +'<div style="display:flex;gap:8px;"><input class="wz-in" type="password" value="eyJhbGciOi…WB-token" /><button class="wz-test" onclick="wzPass(2)">测试连接</button></div>'
+      +'<div id="wz-ok-2" style="margin-top:12px;display:none;"><span class="wz-ok"><i class="ti ti-circle-check"></i> 已连接「My Test Store」· Token 有效期 168 天</span></div>'
+    +'</div>',
+    // 3 defaults
+    '<div style="padding:6px 0;">'
+      +'<div style="font-size:15px;font-weight:500;color:#0f172a;display:flex;align-items:center;gap:7px;"><i class="ti ti-adjustments" style="color:#CB11AB"></i> 默认设置 <span style="font-size:11px;color:#64748b;font-weight:400;">· 以后随时可改</span></div>'
+      +'<div style="font-size:12px;color:#64748b;margin:6px 0 14px;line-height:1.6;">设一次,以后每张卡片自动套用,不用反复填。</div>'
+      +'<div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin-bottom:5px;">默认发货仓库</div>'
+      +'<select class="wz-in" style="margin-bottom:14px;"><option>Коледино (莫斯科)</option><option>Казань</option></select>'
+      +'<div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin-bottom:5px;">常用包裹尺寸 / 重量</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;">'
+        +'<div><input class="wz-in" value="20"/><div style="font-size:10px;color:#94a3b8;text-align:center;margin-top:3px;">长 cm</div></div>'
+        +'<div><input class="wz-in" value="15"/><div style="font-size:10px;color:#94a3b8;text-align:center;margin-top:3px;">宽 cm</div></div>'
+        +'<div><input class="wz-in" value="5"/><div style="font-size:10px;color:#94a3b8;text-align:center;margin-top:3px;">高 cm</div></div>'
+        +'<div><input class="wz-in" value="0.3"/><div style="font-size:10px;color:#94a3b8;text-align:center;margin-top:3px;">重量 kg</div></div>'
+      +'</div>'
+    +'</div>'
+  ];
+  function render(){
+    var sc=document.getElementById('wz-steps');
+    sc.innerHTML=STEPS.map(function(s,i){
+      var done=i<cur, act=i===cur;
+      var bg=act?'background:linear-gradient(135deg,#CB11AB,#7F3FBF);color:#fff;':(done?'background:#E1F5EE;color:#0F6E56;':'background:#fff;color:#94a3b8;border:1px solid rgba(15,23,42,.10);');
+      var dot='<div class="wz-dot" style="'+bg+'">'+(done?'<i class="ti ti-check"></i>':(i+1))+'</div>';
+      var lab='<span style="font-size:11.5px;margin-left:7px;color:'+(act?'#0f172a':'#94a3b8')+';font-weight:'+(act?'500':'400')+'">'+s+'</span>';
+      var line=i<STEPS.length-1?'<div style="width:34px;height:1px;background:'+(done?'#9FE1CB':'rgba(15,23,42,.12)')+';margin:0 10px;"></div>':'';
+      return '<div style="display:flex;align-items:center;">'+dot+lab+line+'</div>';
+    }).join('');
+    document.getElementById('wz-body').innerHTML=bodies[cur];
+    document.getElementById('wz-back').style.visibility=cur===0?'hidden':'visible';
+    var nx=document.getElementById('wz-next');
+    nx.textContent=cur===3?'完成,进入工作台 ✓':(cur===0?'开始设置 →':'下一步 →');
+    var hints=['','需测试通过才能继续','需测试通过才能继续','可点「上一步」修改'];
+    document.getElementById('wz-hint').textContent=hints[cur];
+  }
+  window.wzGo=function(d){ cur=Math.max(0,Math.min(3,cur+d)); render(); };
+  window.wzPass=function(n){ var el=document.getElementById('wz-ok-'+n); if(el) el.style.display='block'; };
+  render();
+})();
+</script>

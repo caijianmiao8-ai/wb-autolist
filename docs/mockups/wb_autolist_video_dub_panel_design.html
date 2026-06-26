@@ -1,0 +1,166 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Mockup of the proposed "视频配音" (video dubbing) panel for the WB AutoList app, with a state switcher for ready / running / done.</h2>
+
+<style>
+  .wbf { --pk:#CB11AB; --pk2:#7F3FBF; --ink:#0f172a; --ink2:#334155; --mut:#64748b; --ln:rgba(15,23,42,.09); --ins:#F4F6FA; }
+  .wbf * { box-sizing:border-box; }
+  .wb-prime { color:#fff; background-image:linear-gradient(135deg,var(--pk),var(--pk2)); border:none; border-radius:12px; padding:11px 14px; font-size:13px; font-weight:500; width:100%; cursor:pointer; }
+  .wb-tab { padding:5px 10px; border-radius:8px; font-size:12px; color:var(--mut); white-space:nowrap; }
+  .wb-tab.on { background:rgba(15,23,42,.06); color:var(--ink); font-weight:500; }
+  .wb-seg { display:flex; gap:4px; background:var(--ins); border:1px solid var(--ln); border-radius:10px; padding:3px; }
+  .wb-seg button { flex:1; border:none; background:transparent; border-radius:7px; padding:6px 4px; font-size:11.5px; color:var(--ink2); cursor:pointer; }
+  .wb-seg button.on { background:#fff; color:var(--ink); font-weight:500; box-shadow:0 1px 2px rgba(15,23,42,.08); }
+  .wb-in { width:100%; border:1px solid var(--ln); background:#fff; border-radius:10px; padding:8px 10px; font-size:12px; color:var(--ink); }
+  .wb-lbl { font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); margin:0 0 5px; font-weight:500; }
+  .wb-chip { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; padding:2px 8px; border-radius:999px; border:1px solid var(--ln); color:var(--ink2); background:rgba(15,23,42,.03); }
+  .wb-row { display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:9px; font-size:12px; }
+  @keyframes wbspin { to { transform:rotate(360deg);} }
+  .wb-spin { display:inline-block; animation:wbspin 1s linear infinite; }
+  .wb-demo { border:none; background:#fff; border:1px solid var(--ln); border-radius:8px; padding:5px 11px; font-size:11.5px; color:var(--ink2); cursor:pointer; }
+  .wb-demo.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+</style>
+
+<div style="display:flex; align-items:center; gap:7px; margin:0 0 10px;">
+  <span style="font-size:11px; color:var(--color-text-secondary);">演示状态</span>
+  <button class="wb-demo on" data-st="ready" onclick="wbSet('ready')">准备就绪</button>
+  <button class="wb-demo" data-st="run" onclick="wbSet('run')">配音中</button>
+  <button class="wb-demo" data-st="done" onclick="wbSet('done')">完成</button>
+</div>
+
+<div class="wbf" style="background:#F7F8FB; border:1px solid var(--ln); border-radius:14px; overflow:hidden;">
+
+  <div style="display:flex; align-items:center; gap:10px; padding:9px 12px; border-bottom:1px solid var(--ln); background:#fff;">
+    <span style="font-size:13px; font-weight:500; color:var(--ink); display:flex; align-items:center; gap:5px;"><i class="ti ti-bolt" style="color:var(--pk)"></i>WB AutoList</span>
+    <div style="display:flex; gap:2px; margin-left:6px; flex-wrap:wrap;">
+      <span class="wb-tab">工作台</span>
+      <span class="wb-tab">批量上架</span>
+      <span class="wb-tab">商品管理</span>
+      <span class="wb-tab on"><i class="ti ti-microphone" style="font-size:13px; vertical-align:-1px;"></i> 视频配音</span>
+      <span class="wb-tab">上架记录</span>
+      <span class="wb-tab">设置</span>
+    </div>
+  </div>
+
+  <div style="padding:13px;">
+    <div style="margin:0 0 12px;">
+      <div style="font-size:16px; font-weight:500; color:var(--ink);">视频配音</div>
+      <div style="font-size:11.5px; color:var(--mut); margin-top:2px;">把英文产品视频配成俄语，直接用于 Wildberries 商品卡。</div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start;">
+
+      <div style="background:#fff; border:1px solid var(--ln); border-radius:14px; padding:12px;" id="wb-form">
+
+        <div style="display:flex; flex-wrap:wrap; gap:5px; padding:7px 8px; background:var(--ins); border:1px solid var(--ln); border-radius:9px; margin:0 0 12px;">
+          <span class="wb-chip" style="color:#0F6E56; background:#E1F5EE; border-color:#9FE1CB;"><i class="ti ti-check"></i> Node</span>
+          <span class="wb-chip" style="color:#0F6E56; background:#E1F5EE; border-color:#9FE1CB;"><i class="ti ti-check"></i> FFmpeg</span>
+          <span class="wb-chip" style="color:#0F6E56; background:#E1F5EE; border-color:#9FE1CB;"><i class="ti ti-check"></i> 语音分离</span>
+          <span class="wb-chip" style="color:#0F6E56; background:#E1F5EE; border-color:#9FE1CB;"><i class="ti ti-check"></i> Aurixel 密钥</span>
+        </div>
+
+        <div style="margin:0 0 12px;">
+          <p class="wb-lbl">视频文件</p>
+          <div style="display:flex; align-items:center; gap:9px; border:1px solid var(--ln); border-radius:10px; padding:9px; background:var(--ins);">
+            <div style="width:34px; height:34px; border-radius:8px; background:#fff; border:1px solid var(--ln); display:flex; align-items:center; justify-content:center; color:var(--pk);"><i class="ti ti-video" style="font-size:18px;"></i></div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:12px; color:var(--ink); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">product-demo.mp4</div>
+              <div style="font-size:10.5px; color:var(--mut);">1 分 33 秒 · 24.6 MB · 1080p</div>
+            </div>
+            <span style="font-size:11px; color:var(--pk); cursor:pointer;">重选</span>
+          </div>
+        </div>
+
+        <div style="margin:0 0 12px;">
+          <p class="wb-lbl">语言</p>
+          <div style="display:flex; align-items:center; gap:7px; font-size:12px; color:var(--ink2);">
+            <span class="wb-chip">英语 (自动识别)</span><i class="ti ti-arrow-right" style="color:var(--mut)"></i><span class="wb-chip" style="color:#993556; background:#FBEAF0; border-color:#F4C0D1;">俄语</span>
+          </div>
+        </div>
+
+        <div style="margin:0 0 12px;">
+          <p class="wb-lbl">翻译优化 · 可选</p>
+          <div style="display:grid; gap:6px;">
+            <input class="wb-in" placeholder="品牌名（保持原文不译）" value="AquaPro" />
+            <input class="wb-in" placeholder="关键词，逗号分隔" />
+            <select class="wb-in"><option>语气：营销</option><option>语气：口语</option><option>语气：专业</option><option>语气：中性</option></select>
+          </div>
+        </div>
+
+        <div style="margin:0 0 12px;">
+          <p class="wb-lbl">配音音色</p>
+          <div class="wb-seg"><button class="on">克隆原声 · 推荐</button><button>预设音色</button></div>
+          <div style="font-size:10px; color:var(--mut); margin-top:5px; line-height:1.5;">自动克隆视频里每个说话人的音色；清晰语音不足 6 秒会自动改用预设音色。</div>
+        </div>
+
+        <div style="margin:0 0 12px;">
+          <p class="wb-lbl">质量档位</p>
+          <div class="wb-seg"><button>快速</button><button class="on">标准</button><button>高质</button></div>
+          <div style="font-size:10px; color:var(--mut); margin-top:5px; line-height:1.5;">标准：每句生成 2 版择优。高质：4 版，更接近原声但更慢、更费额度。</div>
+        </div>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 2px; border-top:1px solid var(--ln); margin-bottom:10px; cursor:pointer;">
+          <span style="font-size:11.5px; color:var(--ink2);">高级选项</span>
+          <i class="ti ti-chevron-down" style="color:var(--mut)"></i>
+        </div>
+
+        <button class="wb-prime"><i class="ti ti-microphone"></i> 开始配音</button>
+        <div style="font-size:10px; color:var(--mut); text-align:center; margin-top:7px;"><i class="ti ti-coin" style="vertical-align:-1px;"></i> 将消耗你的 Aurixel 余额（按你自己的 key 计费）</div>
+      </div>
+
+      <div id="wb-right"></div>
+
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+(function(){
+  var paid='<span style="font-size:9.5px; color:#854F0B; background:#FAEEDA; border:1px solid #FAC775; border-radius:999px; padding:1px 6px; margin-left:auto;">网关·计费</span>';
+  var local='<span style="font-size:9.5px; color:#5F5E5A; background:#F1EFE8; border:1px solid #D3D1C7; border-radius:999px; padding:1px 6px; margin-left:auto;">本地</span>';
+  function step(state,label,tag){
+    var ic,col,bg;
+    if(state==='ok'){ic='<i class="ti ti-circle-check" style="color:#1D9E75"></i>';col='#0f172a';bg='transparent';}
+    else if(state==='run'){ic='<span class="wb-spin"><i class="ti ti-loader-2" style="color:#CB11AB"></i></span>';col='#0f172a';bg='rgba(203,17,171,.06)';}
+    else {ic='<i class="ti ti-circle" style="color:#cbd5e1"></i>';col='#94a3b8';bg='transparent';}
+    return '<div class="wb-row" style="background:'+bg+'; color:'+col+'">'+ic+'<span>'+label+'</span>'+(tag||'')+'</div>';
+  }
+  function steps(states){
+    var L=[['提取音轨',local],['分离人声/背景',local],['语音识别',paid],['翻译成俄语',paid],['克隆音色',paid],['合成配音',paid],['对齐时长 / 择优',local],['合成成片',local],['校验',local]];
+    return L.map(function(x,i){return step(states[i],x[0],x[1]);}).join('');
+  }
+  var ready='<div style="background:#fff; border:1px solid rgba(15,23,42,.09); border-radius:14px; padding:13px;">'
+    +'<div style="font-size:12px; font-weight:500; color:#0f172a; margin-bottom:9px; display:flex; align-items:center; gap:6px;"><i class="ti ti-list-check" style="color:#7F3FBF"></i> 即将运行</div>'
+    +'<div style="display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:11px;">'
+    +'<div style="background:#F4F6FA; border-radius:9px; padding:8px 10px;"><div style="font-size:9.5px; color:#64748b;">预计耗时</div><div style="font-size:15px; color:#0f172a; font-weight:500;">~2–3 分钟</div></div>'
+    +'<div style="background:#F4F6FA; border-radius:9px; padding:8px 10px;"><div style="font-size:9.5px; color:#64748b;">预计句数</div><div style="font-size:15px; color:#0f172a; font-weight:500;">约 30 句</div></div></div>'
+    +'<div style="opacity:.65">'+steps(['pend','pend','pend','pend','pend','pend','pend','pend','pend'])+'</div>'
+    +'<div style="font-size:10.5px; color:#64748b; margin-top:10px; display:flex; gap:6px; align-items:flex-start; background:#FAEEDA; border:1px solid #FAC775; color:#854F0B; padding:7px 9px; border-radius:9px;"><i class="ti ti-info-circle" style="margin-top:1px;"></i><span>点「开始配音」后会弹出确认：时长、预计花费、是否覆盖真实视频。</span></div>'
+    +'</div>';
+  var run='<div style="background:#fff; border:1px solid rgba(15,23,42,.09); border-radius:14px; padding:13px;">'
+    +'<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:11px;">'
+    +'<div style="font-size:12px; font-weight:500; color:#0f172a; display:flex; align-items:center; gap:6px;"><span class="wb-spin"><i class="ti ti-loader-2" style="color:#CB11AB"></i></span> 配音中… <span style="color:#64748b; font-weight:400;">已用 1 分 12 秒</span></div>'
+    +'<button class="wb-demo"><i class="ti ti-x" style="font-size:12px;"></i> 取消</button></div>'
+    +steps(['ok','ok','ok','ok','run','pend','pend','pend','pend'])
+    +'<div style="font-size:10px; color:#64748b; margin-top:9px;"><i class="ti ti-coin" style="color:#BA7517; vertical-align:-1px;"></i> 标黄步骤走网关，计入你的 Aurixel 用量。</div>'
+    +'</div>';
+  var done='<div style="background:#fff; border:1px solid rgba(15,23,42,.09); border-radius:14px; padding:13px;">'
+    +'<div style="display:flex; align-items:center; gap:7px; background:#E1F5EE; border:1px solid #9FE1CB; color:#0F6E56; border-radius:10px; padding:9px 11px; font-size:13px; font-weight:500; margin-bottom:11px;"><i class="ti ti-circle-check"></i> 配音完成</div>'
+    +'<div style="display:flex; align-items:center; gap:9px; border:1px solid rgba(15,23,42,.09); border-radius:10px; padding:9px; margin-bottom:10px;">'
+    +'<div style="width:34px; height:34px; border-radius:8px; background:#FBEAF0; display:flex; align-items:center; justify-content:center; color:#CB11AB;"><i class="ti ti-file-check" style="font-size:18px;"></i></div>'
+    +'<div style="flex:1; min-width:0;"><div style="font-size:12px; color:#0f172a; font-weight:500;">product-demo.ru.mp4</div><div style="font-size:10.5px; color:#64748b;">1 分 33 秒 · 漂移 0.003s · 已克隆 1 个说话人</div></div></div>'
+    +'<div style="display:grid; grid-template-columns:1fr 1fr; gap:7px;">'
+    +'<button class="wb-demo" style="justify-content:center;"><i class="ti ti-player-play" style="font-size:12px;"></i> 打开视频</button>'
+    +'<button class="wb-demo" style="justify-content:center;"><i class="ti ti-folder" style="font-size:12px;"></i> 文件夹</button>'
+    +'<button class="wb-demo" style="justify-content:center;"><i class="ti ti-photo-up" style="font-size:12px;"></i> 用于商品卡</button>'
+    +'<button class="wb-demo" style="justify-content:center;"><i class="ti ti-refresh" style="font-size:12px;"></i> 再配一个</button></div>'
+    +'</div>';
+  var M={ready:ready,run:run,done:done};
+  window.wbSet=function(s){
+    document.getElementById('wb-right').innerHTML=M[s];
+    document.querySelectorAll('.wb-demo[data-st]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-st')===s);});
+    var f=document.getElementById('wb-form'); if(f){f.style.opacity=(s==='run')?'.5':'1'; f.style.pointerEvents=(s==='run')?'none':'auto';}
+  };
+  wbSet('ready');
+})();
+</script>

@@ -16,14 +16,19 @@ import {
   Settings,
   RefreshCw,
   Video,
+  Eye,
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  Search,
 } from "lucide-react";
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "@/lib/api";
 import { EnvBadge } from "./EnvBadge";
-import type { Listing, StageLog } from "@/lib/types";
+import type { Listing, StageLog, WbCharacteristic, WbColor, WbSubject } from "@/lib/types";
 
-type Step = "input" | "generating" | "preview" | "publishing" | "done";
+type Step = "input" | "generating" | "preview" | "review" | "publishing" | "done";
 
 interface SettingsState {
   wbContentTokenSet: boolean;
@@ -357,157 +362,461 @@ export function Workbench() {
     }
   }
 
+  const restMissing = listing
+    ? Math.max(0, (listing.requestedImages ?? imageCount) - listing.images.length)
+    : 0;
+  const onInput = step === "input" || step === "generating";
+
   return (
-    <div className="animate-fade-up">
-      {/* Hero — compact: title + env badge in one row */}
-      <div className="mb-4 flex items-center gap-3">
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white">单品上架</h1>
+    <div className="flex h-full min-h-0 flex-col animate-fade-up">
+      {/* ── Hero band: title · env · step indicator — one compact row ── */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-white">
+          单品上架
+        </h1>
         {settings && <EnvBadge dryRun={dryRun} sandbox={sandbox} />}
+        <StepBar
+          step={step}
+          className="ml-auto"
+          onJump={(n) => {
+            if (step === "publishing" || step === "done" || !listing) return;
+            if (n === 2) setStep("preview");
+            else if (n === 3 && !listing.partial && !listing.nmID) setStep("review");
+          }}
+        />
       </div>
 
-      {dryRun && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-500/[0.07] px-3 py-2 text-xs text-amber-700 dark:text-amber-200/90">
+      {/* demo / token-expiry notice — one slim line, mutually exclusive */}
+      {dryRun ? (
+        <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-500/[0.07] px-3 py-1.5 text-xs text-amber-700 dark:text-amber-200/90">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-          <span>演示模式(未配 WB Token):完整跑通并出图,但不会真实上架。</span>
-          <Link href="/settings" className="ml-auto inline-flex shrink-0 items-center gap-1 font-medium underline">
+          <span>演示模式（未配 WB Token）：完整跑通并出图，但不会真实上架。</span>
+          <Link
+            href="/settings"
+            className="ml-auto inline-flex shrink-0 items-center gap-1 font-medium underline"
+          >
             <Settings className="h-3 w-3" /> 去配置
           </Link>
         </div>
-      )}
-
-      {!dryRun &&
+      ) : (
         settings?.wbTokenExpiresInDays != null &&
         settings.wbTokenExpiresInDays <= 14 && (
           <div
             className={clsx(
-              "mb-6 flex items-start gap-3 rounded-2xl border px-4 py-3.5 text-sm",
+              "mb-3 flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs",
               settings.wbTokenExpiresInDays < 0
                 ? "border-rose-400/30 bg-rose-500/[0.08] text-rose-700 dark:text-rose-200"
                 : "border-amber-400/20 bg-amber-500/[0.07] text-amber-700 dark:text-amber-200/90"
             )}
           >
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="leading-relaxed">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>
               WB Token{" "}
               {settings.wbTokenExpiresInDays < 0
                 ? "已过期"
                 : settings.wbTokenExpiresInDays === 0
                 ? "今天内到期"
                 : `还有 ${settings.wbTokenExpiresInDays} 天过期`}
-              —— 到期后无法上架/同步。请到 WB 卖家后台「设置 → 访问 API」重新生成，并在
-              <Link href="/settings" className="ml-1 font-medium underline underline-offset-2">
-                设置
-              </Link>
-              更新。
+              —— 到期后无法上架/同步。
+            </span>
+            <Link href="/settings" className="ml-auto shrink-0 font-medium underline">
+              去更新
+            </Link>
+          </div>
+        )
+      )}
+
+      {/* ── Two zones: 控制台(左) · 预览(右) — fill remaining height, scroll inside ── */}
+      <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(380px,420px)_1fr]">
+        {/* ════ 左:控制台 ════ */}
+        <section className="card flex min-h-0 flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+            {onInput ? (
+              <InputForm
+                productName={productName}
+                setProductName={setProductName}
+                keywordInput={keywordInput}
+                setKeywordInput={setKeywordInput}
+                keywords={keywords}
+                setKeywords={setKeywords}
+                addKeyword={addKeyword}
+                price={price}
+                setPrice={setPrice}
+                wbBase={wbBase}
+                dClamped={dClamped}
+                priceOutOfRange={priceOutOfRange}
+                basePhotos={basePhotos}
+                setBasePhotos={setBasePhotos}
+                photoRef={photoRef}
+                onPhotos={onPhotos}
+                videoPath={videoPath}
+                setVideoPath={setVideoPath}
+                showAdvanced={showAdvanced}
+                setShowAdvanced={setShowAdvanced}
+                discount={discount}
+                setDiscount={setDiscount}
+                brand={brand}
+                setBrand={setBrand}
+                length={length}
+                setLength={setLength}
+                width={width}
+                setWidth={setWidth}
+                height={height}
+                setHeight={setHeight}
+                weight={weight}
+                setWeight={setWeight}
+                customPrompt={customPrompt}
+                setCustomPrompt={setCustomPrompt}
+                imageCount={imageCount}
+                setImageCount={setImageCount}
+                mainOnly={mainOnly}
+                setMainOnly={setMainOnly}
+                disabled={step === "generating"}
+              />
+            ) : (
+              listing && (
+                <ProductSummary
+                  listing={listing}
+                  videoPath={videoPath}
+                  onReset={reset}
+                  locked={step === "publishing" || step === "done"}
+                />
+              )
+            )}
+          </div>
+
+          {/* sticky action footer — the one CTA is always in view */}
+          <div className="shrink-0 border-t border-slate-900/[0.06] px-5 py-4 dark:border-white/[0.06]">
+            {error && step !== "publishing" && (
+              <p className="mb-2.5 text-xs leading-relaxed text-rose-600 dark:text-rose-400">
+                {error}
+              </p>
+            )}
+            <PrimaryAction
+              step={step}
+              listing={listing}
+              dryRun={dryRun}
+              live={live}
+              genMsg={genMsg}
+              restLoading={restLoading}
+              restMissing={restMissing}
+              hasVideo={!!videoPath}
+              onGenerate={handleGenerate}
+              onPublish={handlePublish}
+              onGenerateRest={doGenerateRest}
+              onGoReview={() => setStep("review")}
+              onBackToPreview={() => setStep("preview")}
+              onReset={reset}
+            />
+          </div>
+        </section>
+
+        {/* ════ 右:预览 ════ */}
+        <section className="min-h-0 overflow-y-auto pr-0.5">
+          {step === "input" && (
+            <LivePreview
+              productName={productName}
+              price={price}
+              discount={dClamped}
+              wbBase={wbBase}
+              basePhotos={basePhotos}
+              imageCount={imageCount}
+              hasVideo={!!videoPath}
+            />
+          )}
+          {step === "generating" && <GeneratingState msg={genMsg} />}
+          {step === "preview" && listing && (
+            <div className="space-y-4">
+              <ImagesPanel
+                listing={listing}
+                onRegenerate={doRegenerate}
+                regenLoading={regenLoading}
+              />
+              <CopyPanel key={listing.id} listing={listing} onUpdate={setListing} />
+              {/* 视频归位:作为媒体的一部分,放在预览右侧图文下方 */}
+              {videoPath && (
+                <VideoPanel listing={listing} videoPath={videoPath} onUpdate={setListing} />
+              )}
             </div>
+          )}
+          {step === "review" && listing && (
+            <ReviewCard listing={listing} dryRun={dryRun} sandbox={sandbox} videoPath={videoPath} />
+          )}
+          {(step === "publishing" || step === "done") && (
+            <ProgressPanel
+              logs={logs}
+              done={done}
+              publishing={step === "publishing"}
+              logEndRef={logEndRef}
+              onReset={reset}
+            />
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ── Left: the input form (input/generating step) ──
+interface InputFormProps {
+  productName: string;
+  setProductName: (v: string) => void;
+  keywordInput: string;
+  setKeywordInput: (v: string) => void;
+  keywords: string[];
+  setKeywords: React.Dispatch<React.SetStateAction<string[]>>;
+  addKeyword: () => void;
+  price: number;
+  setPrice: (v: number) => void;
+  wbBase: number;
+  dClamped: number;
+  priceOutOfRange: boolean;
+  basePhotos: string[];
+  setBasePhotos: React.Dispatch<React.SetStateAction<string[]>>;
+  photoRef: React.RefObject<HTMLInputElement>;
+  onPhotos: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  videoPath: string | null;
+  setVideoPath: (v: string | null) => void;
+  showAdvanced: boolean;
+  setShowAdvanced: React.Dispatch<React.SetStateAction<boolean>>;
+  discount: number;
+  setDiscount: (v: number) => void;
+  brand: string;
+  setBrand: (v: string) => void;
+  length: number;
+  setLength: (v: number) => void;
+  width: number;
+  setWidth: (v: number) => void;
+  height: number;
+  setHeight: (v: number) => void;
+  weight: number;
+  setWeight: (v: number) => void;
+  customPrompt: string;
+  setCustomPrompt: (v: string) => void;
+  imageCount: number;
+  setImageCount: (v: number) => void;
+  mainOnly: boolean;
+  setMainOnly: (v: boolean) => void;
+  disabled: boolean;
+}
+
+function InputForm(p: InputFormProps) {
+  return (
+    <fieldset disabled={p.disabled} className="space-y-4 disabled:opacity-60">
+      <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+        <Tag className="h-4 w-4 text-wb-pink" /> 商品信息
+      </div>
+
+      <div>
+        <label className="label">商品名 *</label>
+        <input
+          className="input"
+          placeholder="如：无线蓝牙耳机 / Беспроводные наушники"
+          value={p.productName}
+          onChange={(e) => p.setProductName(e.target.value)}
+        />
+      </div>
+
+      <div>
+        <label className="label">关键字</label>
+        <div className="flex gap-2">
+          <input
+            className="input"
+            placeholder="回车添加，逗号分隔"
+            value={p.keywordInput}
+            onChange={(e) => p.setKeywordInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                p.addKeyword();
+              }
+            }}
+          />
+          <button className="btn-ghost px-3" onClick={p.addKeyword} type="button">
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+        {p.keywords.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {p.keywords.map((k) => (
+              <span key={k} className="chip">
+                {k}
+                <button
+                  type="button"
+                  onClick={() => p.setKeywords((arr) => arr.filter((x) => x !== k))}
+                  className="text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
           </div>
         )}
+      </div>
 
-      <StepBar listing={listing} step={step} />
+      <div>
+        <label className="label">售价（到手价 · 按店铺币种）</label>
+        <input
+          type="number"
+          className="input"
+          value={p.price}
+          min={1}
+          onChange={(e) => p.setPrice(Number(e.target.value))}
+        />
+        {p.price > 0 && (
+          <p
+            className={clsx(
+              "mt-1.5 text-xs leading-relaxed",
+              p.priceOutOfRange ? "text-rose-600 dark:text-rose-400" : "text-slate-500"
+            )}
+          >
+            提交给 WB 的划线价 ≈ <b>{p.wbBase.toLocaleString()}</b>（到手 {p.price} ÷ (1−
+            {p.dClamped}%)）
+            {p.priceOutOfRange && "；⚠ 超出常见区间 4–850000，可能被 WB 拒绝（跨境店按 CNY 计）"}
+          </p>
+        )}
+      </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(360px,400px)_1fr]">
-        {/* ── 左:输入(始终可见;内部滚动,不撑高整页) ── */}
-        <div className="card p-6 lg:max-h-[calc(100vh-11rem)] lg:overflow-y-auto">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-            <Tag className="h-4 w-4 text-wb-pink" /> 商品信息
-          </div>
-
-          <label className="label">商品名 *</label>
-          <input
-            className="input mb-4"
-            placeholder="如：无线蓝牙耳机 / Беспроводные наушники"
-            value={productName}
-            onChange={(e) => setProductName(e.target.value)}
-          />
-
-          <label className="label">关键字</label>
-          <div className="mb-2 flex gap-2">
-            <input
-              className="input"
-              placeholder="回车添加，逗号分隔"
-              value={keywordInput}
-              onChange={(e) => setKeywordInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addKeyword();
-                }
-              }}
-            />
-            <button className="btn-ghost px-3" onClick={addKeyword} type="button">
-              <Plus className="h-4 w-4" />
-            </button>
-          </div>
-          {keywords.length > 0 && (
-            <div className="mb-4 flex flex-wrap gap-1.5">
-              {keywords.map((k) => (
-                <span key={k} className="chip">
-                  {k}
-                  <button
-                    onClick={() => setKeywords((arr) => arr.filter((x) => x !== k))}
-                    className="text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              ))}
+      {/* 素材:两个独立、含义清晰的上传区 */}
+      <div>
+        <label className="label">素材（都可选）</label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {/* 参考产品图 → 喂 AI */}
+          <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
+              <ImageIcon className="h-3.5 w-3.5 text-wb-purple" /> 参考产品图
             </div>
-          )}
-
-          <label className="label">售价（到手价 · 按店铺币种）</label>
-          <input
-            type="number"
-            className="input mb-1.5"
-            value={price}
-            min={1}
-            onChange={(e) => setPrice(Number(e.target.value))}
-          />
-          {price > 0 && (
-            <p
-              className={clsx(
-                "mb-4 text-xs leading-relaxed",
-                priceOutOfRange ? "text-rose-600 dark:text-rose-400" : "text-slate-500"
-              )}
-            >
-              提交给 WB 的划线价 ≈ <b>{wbBase.toLocaleString()}</b>（到手 {price} ÷ (1−{dClamped}%)）
-              {priceOutOfRange &&
-                "；⚠ 超出常见区间 4–850000，可能被 WB 拒绝（跨境店按 CNY 计）"}
+            <div className="flex flex-wrap gap-1.5">
+              {p.basePhotos.map((ph, i) => (
+                <div key={i} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={ph}
+                    alt=""
+                    className="h-12 w-12 rounded-lg border border-slate-900/10 object-cover dark:border-white/10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => p.setBasePhotos((a) => a.filter((_, idx) => idx !== i))}
+                    className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-rose-500 text-[10px] text-white"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => p.photoRef.current?.click()}
+                className="grid h-12 w-12 place-items-center rounded-lg border border-dashed border-slate-900/15 text-slate-400 transition hover:border-wb-purple/50 hover:text-wb-purple dark:border-white/15"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              <input
+                ref={p.photoRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={p.onPhotos}
+              />
+            </div>
+            <p className="mt-2 text-[11px] leading-snug text-slate-400">
+              你的真实产品图。AI 据此出图；<b>留空则全自动生成</b>。
             </p>
-          )}
+          </div>
 
-          {showAdvanced && (
-            <>
-              <label className="label">折扣 (%)</label>
-              <input
-                type="number"
-                className="input mb-4"
-                value={discount}
-                min={0}
-                max={99}
-                onChange={(e) => setDiscount(Math.max(0, Math.min(99, Number(e.target.value) || 0)))}
-              />
+          {/* 英文产品视频 → 配俄语 */}
+          <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
+              <Video className="h-3.5 w-3.5 text-wb-pink" /> 产品视频 · 英文
+            </div>
+            {p.videoPath ? (
+              <div className="flex items-center gap-2 rounded-lg border border-slate-900/10 bg-white px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
+                <Video className="h-4 w-4 shrink-0 text-wb-pink" />
+                <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-300">
+                  {p.videoPath.split(/[\\/]/).pop()}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => p.setVideoPath(null)}
+                  className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  const path = await api.dubPickVideo().catch(() => null);
+                  if (path) p.setVideoPath(path);
+                }}
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-900/15 text-xs text-slate-400 transition hover:border-wb-pink/50 hover:text-wb-pink dark:border-white/15"
+              >
+                <Plus className="h-4 w-4" /> 选择视频
+              </button>
+            )}
+            <p className="mt-2 text-[11px] leading-snug text-slate-400">
+              你的英文产品视频。生成时<b>自动配成俄语</b>，随卡片上架。
+            </p>
+          </div>
+        </div>
+      </div>
 
-              <label className="label">品牌（可选）</label>
-              <input
-                className="input mb-4"
-                placeholder="留空则自动生成"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-              />
+      {/* 高级选项 fold */}
+      <div className="border-t border-slate-900/[0.06] pt-3 dark:border-white/[0.06]">
+        <button
+          type="button"
+          onClick={() => p.setShowAdvanced((s) => !s)}
+          className="flex w-full items-center justify-between text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+        >
+          高级选项（折扣 / 品牌 / 包裹 / 提示词 / 图片数量）
+          <span>{p.showAdvanced ? "收起 ▲" : "展开 ▼"}</span>
+        </button>
 
+        {p.showAdvanced && (
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">折扣 (%)</label>
+                <input
+                  type="number"
+                  className="input"
+                  value={p.discount}
+                  min={0}
+                  max={99}
+                  onChange={(e) =>
+                    p.setDiscount(Math.max(0, Math.min(99, Number(e.target.value) || 0)))
+                  }
+                />
+              </div>
+              <div>
+                <label className="label">品牌（可选）</label>
+                <input
+                  className="input"
+                  placeholder="留空自动生成"
+                  value={p.brand}
+                  onChange={(e) => p.setBrand(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div>
               <label className="label">包裹尺寸 / 重量（按真实填写）</label>
-              <div className="mb-1 grid grid-cols-4 gap-2">
-                {([
-                  ["长", length, setLength, 1, "cm"],
-                  ["宽", width, setWidth, 1, "cm"],
-                  ["高", height, setHeight, 1, "cm"],
-                  ["重", weight, setWeight, 0.1, "kg"],
-                ] as const).map(([lab, val, setter, step, unit]) => (
+              <div className="grid grid-cols-4 gap-2">
+                {(
+                  [
+                    ["长", p.length, p.setLength, 1, "cm"],
+                    ["宽", p.width, p.setWidth, 1, "cm"],
+                    ["高", p.height, p.setHeight, 1, "cm"],
+                    ["重", p.weight, p.setWeight, 0.1, "kg"],
+                  ] as const
+                ).map(([lab, val, setter, stepv, unit]) => (
                   <div key={lab}>
                     <input
                       type="number"
-                      min={step}
-                      step={step}
+                      min={stepv}
+                      step={stepv}
                       className="input text-center"
                       value={val}
                       onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
@@ -518,209 +827,710 @@ export function Workbench() {
                   </div>
                 ))}
               </div>
-              <p className="mb-4 text-xs text-slate-500">
-                WB 按包裹体积/重量计物流与仓储费，并在入库时复测——填错会被多收费甚至罚款。默认用「设置」里的值。
-              </p>
-            </>
-          )}
-
-          <label className="label">素材（都可选）</label>
-          <div className="mb-4 grid gap-3 sm:grid-cols-2">
-            {/* 参考产品图 → 喂 AI */}
-            <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
-              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
-                <ImageIcon className="h-3.5 w-3.5 text-wb-purple" /> 参考产品图
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {basePhotos.map((p, i) => (
-                  <div key={i} className="relative">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={p} alt="" className="h-12 w-12 rounded-lg border border-slate-900/10 object-cover dark:border-white/10" />
-                    <button
-                      type="button"
-                      onClick={() => setBasePhotos((a) => a.filter((_, idx) => idx !== i))}
-                      className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-rose-500 text-[10px] text-white"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => photoRef.current?.click()}
-                  className="grid h-12 w-12 place-items-center rounded-lg border border-dashed border-slate-900/15 text-slate-400 transition hover:border-wb-purple/50 hover:text-wb-purple dark:border-white/15"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-                <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={onPhotos} />
-              </div>
-              <p className="mt-2 text-[11px] leading-snug text-slate-400">
-                你的真实产品图。AI 据此出主图/详情图;<b>留空则全自动生成</b>。
+              <p className="mt-1 text-[11px] text-slate-500">
+                WB 按包裹体积/重量计物流与仓储费并在入库复测——填错会被多收费。默认用「设置」里的值。
               </p>
             </div>
 
-            {/* 英文产品视频 → 配俄语 */}
-            <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
-              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
-                <Video className="h-3.5 w-3.5 text-wb-pink" /> 产品视频 · 英文
-              </div>
-              {videoPath ? (
-                <div className="flex items-center gap-2 rounded-lg border border-slate-900/10 bg-white px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
-                  <Video className="h-4 w-4 shrink-0 text-wb-pink" />
-                  <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-300">
-                    {videoPath.split(/[\\/]/).pop()}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setVideoPath(null)}
-                    className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const p = await api.dubPickVideo().catch(() => null);
-                    if (p) setVideoPath(p);
-                  }}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-900/15 text-xs text-slate-400 transition hover:border-wb-pink/50 hover:text-wb-pink dark:border-white/15"
-                >
-                  <Plus className="h-4 w-4" /> 选择视频
-                </button>
-              )}
-              <p className="mt-2 text-[11px] leading-snug text-slate-400">
-                你的英文产品视频。生成时<b>自动配成俄语</b>,随卡片上架。
-              </p>
-            </div>
-          </div>
-
-          {showAdvanced && (
-            <>
+            <div>
               <label className="label">自定义提示词（可选）</label>
               <textarea
-                className="input mb-4"
+                className="input"
                 rows={2}
                 placeholder="如：极简风、青绿配色、突出 304 不锈钢"
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
+                value={p.customPrompt}
+                onChange={(e) => p.setCustomPrompt(e.target.value)}
               />
+            </div>
 
+            <div>
               <label className="label">生成图片数量（1–12）</label>
               <input
                 type="number"
-                className="input mb-1.5"
+                className="input"
                 min={1}
                 max={12}
-                value={imageCount}
-                onChange={(e) => setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 3)))}
+                value={p.imageCount}
+                onChange={(e) =>
+                  p.setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 3)))
+                }
               />
-              <p className="mb-2 text-xs text-slate-500">
-                预计 ~{imageCount} 张 × 约 2.5 分钟 ≈ <b>{Math.ceil(imageCount * 2.5)} 分钟</b>（逐张生成，可在「设置」改模板风格）
-              </p>
-              <label className="mb-5 flex cursor-pointer items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 accent-wb-purple"
-                  checked={mainOnly}
-                  onChange={(e) => setMainOnly(e.target.checked)}
-                />
-                <span>
-                  先只出主图
-                  <span className="mt-0.5 block text-xs text-slate-500">确认满意后再出其余，省出图额度</span>
-                </span>
-              </label>
-            </>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((s) => !s)}
-            className="mb-4 flex w-full items-center justify-between border-t border-slate-900/[0.06] pt-3 text-xs text-slate-500 hover:text-slate-700 dark:border-white/[0.06] dark:hover:text-slate-300"
-          >
-            高级选项（折扣 / 品牌 / 包裹 / 提示词 / 图片数量）
-            <span>{showAdvanced ? "收起 ▲" : "展开 ▼"}</span>
-          </button>
-
-          <button className="btn-primary w-full" onClick={handleGenerate}>
-            <Sparkles className="h-4 w-4" /> 一键生成
-          </button>
-          <p className="mt-2 text-center text-[11px] text-slate-400">
-            生成俄语图文 + 配图{videoPath ? "、并把视频配成俄语" : ""} · 消耗你的 Aurixel 余额
-          </p>
-
-          {error && (
-            <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{error}</p>
-          )}
-        </div>
-
-        {/* ── 右:实时预览(内部滚动,不撑高整页) ── */}
-        <div className="space-y-4 lg:max-h-[calc(100vh-11rem)] lg:overflow-y-auto lg:pr-1">
-          {!listing && step !== "generating" && (
-            <div className="card flex min-h-[320px] flex-col items-center justify-center p-8 text-center">
-              <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-slate-900/[0.04] dark:bg-white/5">
-                <ImageIcon className="h-7 w-7 text-slate-400" />
-              </div>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                填好左侧 → 点「一键生成」
-                <br />
-                这里出主图 / 详情图 + 俄文文案(带中文对照)
+              <p className="mt-1 text-[11px] text-slate-500">
+                预计 ~{p.imageCount} 张 × 约 2.5 分钟 ≈{" "}
+                <b>{Math.ceil(p.imageCount * 2.5)} 分钟</b>（逐张生成）
               </p>
             </div>
+
+            <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-wb-purple"
+                checked={p.mainOnly}
+                onChange={(e) => p.setMainOnly(e.target.checked)}
+              />
+              <span>
+                先只出主图
+                <span className="mt-0.5 block text-xs text-slate-500">
+                  确认满意后再出其余，省出图额度
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+      </div>
+    </fieldset>
+  );
+}
+
+// ── Left: product summary + actions (preview/publishing/done step) ──
+function ProductSummary({
+  listing,
+  videoPath,
+  onReset,
+  locked,
+}: {
+  listing: Listing;
+  videoPath: string | null;
+  onReset: () => void;
+  locked: boolean;
+}) {
+  const main = listing.images.find((i) => i.kind === "main") ?? listing.images[0];
+  const lDisc = Math.max(0, Math.min(99, listing.discount || 0));
+  const lBase =
+    listing.price > 0
+      ? lDisc > 0
+        ? Math.round(listing.price / (1 - lDisc / 100))
+        : Math.round(listing.price)
+      : 0;
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+          <Tag className="h-4 w-4 text-wb-pink" /> 本次商品
+        </div>
+        {!locked && (
+          <button
+            onClick={onReset}
+            className="inline-flex items-center gap-1 text-xs text-slate-500 transition hover:text-slate-800 dark:hover:text-slate-200"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> 重新开始
+          </button>
+        )}
+      </div>
+
+      <div className="flex gap-3">
+        <div className="h-20 w-16 shrink-0 overflow-hidden rounded-lg border border-slate-900/10 bg-slate-900/[0.03] dark:border-white/10 dark:bg-white/5">
+          {main ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={main.url} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <div className="grid h-full w-full place-items-center text-slate-300">
+              <ImageIcon className="h-5 w-5" />
+            </div>
           )}
-          {step === "generating" && <GeneratingState msg={genMsg} />}
-          {listing && (
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+            {listing.productName || listing.copy?.title || "未命名商品"}
+          </div>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-base font-semibold text-wb-pink">
+              {listing.price.toLocaleString()} ₽
+            </span>
+            {lDisc > 0 && (
+              <span className="text-xs text-slate-400 line-through">{lBase.toLocaleString()}</span>
+            )}
+          </div>
+          {listing.keywords.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {listing.keywords.slice(0, 4).map((k) => (
+                <span key={k} className="chip px-2 py-0.5 text-[11px]">
+                  {k}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 视频状态(只读;配音操作在右侧预览的视频卡) */}
+      {videoPath && (
+        <div className="flex items-center gap-1.5 border-t border-slate-900/[0.06] pt-3 text-[11px] text-slate-500 dark:border-white/[0.06] dark:text-slate-400">
+          <Video className="h-3.5 w-3.5 text-wb-pink" />
+          {listing.videoRu ? "视频已配俄语" : "视频待配(在预览点「配成俄语」)"}
+        </div>
+      )}
+
+      {/* 类目/品牌 small facts */}
+      {listing.copy && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-900/[0.06] pt-3 text-xs text-slate-500 dark:border-white/[0.06] dark:text-slate-400">
+          <span>
+            类目：
+            <b className="text-slate-700 dark:text-slate-200">
+              {listing.copy.categoryHint || "—"}
+            </b>
+          </span>
+          <span>
+            品牌：<b className="text-slate-700 dark:text-slate-200">{listing.copy.brand || "—"}</b>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Right (review step): pre-publish 复核卡 — a clean summary before上架 ──
+function ReviewCard({
+  listing,
+  dryRun,
+  sandbox,
+  videoPath,
+}: {
+  listing: Listing;
+  dryRun: boolean;
+  sandbox: boolean;
+  videoPath: string | null;
+}) {
+  const lDisc = Math.max(0, Math.min(99, listing.discount || 0));
+  const base =
+    listing.price > 0
+      ? lDisc > 0
+        ? Math.round(listing.price / (1 - lDisc / 100))
+        : Math.round(listing.price)
+      : 0;
+  const dims =
+    listing.length || listing.width || listing.height || listing.weight
+      ? `${listing.length ?? "—"}×${listing.width ?? "—"}×${listing.height ?? "—"}cm · ${listing.weight ?? "—"}kg`
+      : "默认";
+  const cat = listing.subjectName || listing.copy?.categoryHint || "AI 自动选";
+  const envLabel = dryRun ? "演示(不真实上架)" : sandbox ? "沙盒测试店铺" : "真实店铺(线上)";
+  const media =
+    `${listing.images.length} 图` +
+    (listing.videoRu ? " + 1 俄语视频 ✓含俄配" : videoPath ? " + 1 视频(未配俄语)" : "");
+
+  const rows: [string, React.ReactNode][] = [
+    [
+      "售价(到手价)",
+      <span key="p">
+        <b className="text-slate-900 dark:text-slate-100">{listing.price.toLocaleString()} ₽</b>
+        {lDisc > 0 && (
+          <span className="ml-1.5 text-xs text-slate-400">
+            划线 {base.toLocaleString()} · -{lDisc}%
+          </span>
+        )}
+      </span>,
+    ],
+    ["包裹尺寸/重量", dims],
+    ["类目", cat],
+    ["媒体", media],
+    [
+      "上架到",
+      <span
+        key="e"
+        className={clsx(
+          "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+          dryRun
+            ? "border-slate-400/40 bg-slate-500/10 text-slate-600 dark:text-slate-300"
+            : sandbox
+            ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300"
+            : "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+        )}
+      >
+        {envLabel}
+      </span>,
+    ],
+  ];
+
+  return (
+    <div className="card p-6">
+      <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+        <Rocket className="h-4 w-4 text-wb-pink" /> 发布复核
+        <span className="ml-auto text-xs font-normal text-slate-400">确认无误后点左下「确认上架」</span>
+      </div>
+
+      <div className="rounded-xl border border-slate-900/[0.08] dark:border-white/[0.07]">
+        {rows.map(([k, v], i) => (
+          <div
+            key={k}
+            className={clsx(
+              "flex items-center justify-between gap-3 px-4 py-3 text-sm",
+              i < rows.length - 1 && "border-b border-slate-900/[0.06] dark:border-white/[0.06]"
+            )}
+          >
+            <span className="text-slate-500 dark:text-slate-400">{k}</span>
+            <span className="text-right text-slate-800 dark:text-slate-100">{v}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* 高级 · 全部商品参数(默认折叠) */}
+      <ParamsEditor listing={listing} />
+
+      <div className="mt-3 flex items-start gap-1.5 rounded-xl bg-slate-900/[0.04] px-3.5 py-2.5 text-[11px] leading-relaxed text-slate-500 dark:bg-white/5 dark:text-slate-400">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+        库存默认不自动设;上架后到「商品管理」给商品设库存才会真正可售。不展开「全部商品参数」时,特征按类目 AI 自动填。
+      </div>
+    </div>
+  );
+}
+
+// 高级·全部商品参数 编辑器 —— 默认折叠。展开后按类目拉特征字典,可逐项编辑;
+// 留空的项发布时 AI 兜底。保存写入 listing,publish 时「用户值优先」。
+function ParamsEditor({ listing }: { listing: Listing }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [subjectId, setSubjectId] = useState<number | null>(listing.subjectId ?? null);
+  const [subjectName, setSubjectName] = useState<string>(
+    listing.subjectName ?? listing.copy?.categoryHint ?? ""
+  );
+  const [charcs, setCharcs] = useState<WbCharacteristic[]>([]);
+  const [values, setValues] = useState<Record<number, string>>({});
+  const [colors, setColors] = useState<WbColor[]>([]);
+  const [tnved, setTnved] = useState<string>(listing.tnved ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [catQuery, setCatQuery] = useState("");
+  const [catResults, setCatResults] = useState<WbSubject[]>([]);
+  const [catSearching, setCatSearching] = useState(false);
+
+  async function loadFor(sid: number, sname: string) {
+    setLoading(true);
+    setErr(null);
+    try {
+      const [cs, cols] = await Promise.all([
+        api.subjectCharacteristics(sid),
+        api.wbColors().catch(() => [] as WbColor[]),
+      ]);
+      setCharcs(cs);
+      setColors(cols);
+      const pre: Record<number, string> = {};
+      (listing.characteristics ?? []).forEach((c) => {
+        pre[c.id] = Array.isArray(c.value)
+          ? (c.value as unknown[]).join(", ")
+          : String(c.value ?? "");
+      });
+      setValues(pre);
+      if (!tnved) {
+        const t = await api.wbTnved(sid).catch(() => null);
+        if (t) setTnved(t);
+      }
+      setSubjectId(sid);
+      setSubjectName(sname);
+      setLoaded(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "读取类目特征失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function expand() {
+    const next = !open;
+    setOpen(next);
+    if (next && !loaded && !loading) {
+      let sid = subjectId;
+      let sname = subjectName;
+      if (!sid) {
+        try {
+          const res = await api.searchSubjects(subjectName || listing.productName);
+          if (res[0]) {
+            sid = res[0].subjectID;
+            sname = res[0].subjectName;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      if (sid) await loadFor(sid, sname);
+      else setErr("未能自动解析类目,请在下方搜索手动选一个。");
+    }
+  }
+
+  async function searchCat() {
+    if (!catQuery.trim()) return;
+    setCatSearching(true);
+    try {
+      setCatResults(await api.searchSubjects(catQuery.trim()));
+    } catch {
+      setCatResults([]);
+    } finally {
+      setCatSearching(false);
+    }
+  }
+  async function pickCat(s: WbSubject) {
+    setCatResults([]);
+    setCatQuery("");
+    setLoaded(false);
+    await loadFor(s.subjectID, s.subjectName);
+  }
+
+  function valueFor(c: WbCharacteristic): unknown {
+    const raw = (values[c.charcID] ?? "").trim();
+    if (!raw) return null;
+    if (c.charcType === 4) {
+      const n = Number(raw);
+      return Number.isNaN(n) ? null : n;
+    }
+    return raw
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  async function save() {
+    if (!subjectId) {
+      setErr("请先选类目");
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      const characteristics = charcs
+        .map((c) => ({ id: c.charcID, value: valueFor(c) }))
+        .filter((x) => x.value !== null && !(Array.isArray(x.value) && x.value.length === 0));
+      await api.updateParams(listing.id, {
+        subjectId,
+        subjectName,
+        characteristics,
+        tnved: tnved.trim(),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const isColor = (c: WbCharacteristic) => /цвет|color/i.test(c.name);
+
+  return (
+    <div className="mt-3 rounded-xl border border-slate-900/[0.08] dark:border-white/[0.07]">
+      <button
+        type="button"
+        onClick={expand}
+        className="flex w-full items-center justify-between px-4 py-3 text-sm"
+      >
+        <span className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+          <Settings className="h-4 w-4 text-wb-purple" /> 高级 · 全部商品参数
+          <span className="text-[11px] font-normal text-slate-400">(默认按 AI 推荐,可逐项改)</span>
+        </span>
+        <ChevronDown
+          className={clsx("h-4 w-4 text-slate-400 transition-transform", open && "rotate-180")}
+        />
+      </button>
+      {open && (
+        <div className="border-t border-slate-900/[0.06] px-4 py-3 dark:border-white/[0.06]">
+          {/* 类目 + 改类目 */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-500">类目</span>
+              <span className="text-xs font-medium text-slate-800 dark:text-slate-100">
+                {subjectName || "未解析"}
+              </span>
+            </div>
+            <div className="mt-1.5 flex gap-2">
+              <input
+                className="input px-2.5 py-1.5 text-xs"
+                placeholder="改类目:搜关键词(如 наушники / 耳机)"
+                value={catQuery}
+                onChange={(e) => setCatQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    searchCat();
+                  }
+                }}
+              />
+              <button className="btn-ghost shrink-0 px-2.5 py-1.5 text-xs" onClick={searchCat} disabled={catSearching}>
+                {catSearching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            {catResults.length > 0 && (
+              <div className="mt-1.5 max-h-32 overflow-auto rounded-lg border border-slate-900/[0.08] dark:border-white/[0.07]">
+                {catResults.map((s) => (
+                  <button
+                    key={s.subjectID}
+                    onClick={() => pickCat(s)}
+                    className="block w-full px-3 py-1.5 text-left text-xs hover:bg-slate-900/[0.04] dark:hover:bg-white/5"
+                  >
+                    {s.subjectName}
+                    {s.parentName && <span className="text-slate-400"> · {s.parentName}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="flex items-center gap-2 py-4 text-xs text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> 读取该类目的全部参数…
+            </div>
+          ) : charcs.length > 0 ? (
             <>
-              {step !== "publishing" && step !== "done" && (
-                <button
-                  onClick={reset}
-                  className="text-xs text-slate-500 transition hover:text-slate-800 dark:hover:text-slate-200"
-                >
-                  ← 重新开始
-                </button>
-              )}
-              <ImagesPanel listing={listing} onRegenerate={doRegenerate} regenLoading={regenLoading} />
-              <CopyPanel key={listing.id} listing={listing} onUpdate={setListing} />
-              {videoPath && (
-                <VideoPanel listing={listing} videoPath={videoPath} onUpdate={setListing} />
-              )}
-
-              {/* main-first: generate the remaining images on approval */}
-              {listing.partial && (
-                <button className="btn-primary w-full" onClick={doGenerateRest} disabled={restLoading}>
-                  {restLoading ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" /> {genMsg || "生成其余…"}</>
-                  ) : (
-                    <><Sparkles className="h-4 w-4" /> 满意，继续生成其余 {Math.max(0, (listing.requestedImages ?? imageCount) - listing.images.length)} 张</>
-                  )}
-                </button>
-              )}
-
-              {/* Publish action — hidden once the card is live (nmID set), so a
-                  restored published listing can't be re-published by mistake. */}
-              {!listing.partial && !listing.nmID && step !== "publishing" && step !== "done" && (
-                <button className="btn-primary w-full" onClick={handlePublish}>
-                  <Rocket className="h-4 w-4" />
-                  {dryRun ? "演示上架" : live ? "上架到 Wildberries（线上）" : "上架到沙盒（测试）"}
-                </button>
-              )}
-              {!listing.partial && !!listing.nmID && step !== "publishing" && step !== "done" && (
-                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.08] px-4 py-3 text-sm text-emerald-700 dark:text-emerald-200">
-                  此商品已上架（nmID {listing.nmID}）。如需补图/改价，请到「上架记录」或「商品管理」操作。
-                </div>
-              )}
-
-              {(step === "publishing" || step === "done") && (
-                <ProgressPanel
-                  logs={logs}
-                  done={done}
-                  publishing={step === "publishing"}
-                  logEndRef={logEndRef}
-                  onReset={reset}
-                />
-              )}
+              <div className="mb-1.5 text-xs text-slate-500">
+                商品特征(该类目共 {charcs.length} 项;留空的发布时 AI 自动填)
+              </div>
+              <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                {charcs.map((c) => (
+                  <div key={c.charcID} className="grid grid-cols-[1fr_1.4fr] items-center gap-2">
+                    <span
+                      className="truncate text-xs text-slate-600 dark:text-slate-300"
+                      title={c.name}
+                    >
+                      {c.name}
+                      {c.required && <span className="text-rose-500"> *</span>}
+                      {c.unitName && <span className="text-slate-400"> ({c.unitName})</span>}
+                    </span>
+                    {isColor(c) && colors.length > 0 ? (
+                      <select
+                        className="input px-2 py-1.5 text-xs"
+                        value={values[c.charcID] ?? ""}
+                        onChange={(e) => setValues((v) => ({ ...v, [c.charcID]: e.target.value }))}
+                      >
+                        <option value="">（自动）</option>
+                        {colors.map((col) => (
+                          <option key={col.name} value={col.name}>
+                            {col.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={c.charcType === 4 ? "number" : "text"}
+                        className="input px-2 py-1.5 text-xs"
+                        placeholder={c.charcType === 4 ? "数字" : "留空 = AI 填"}
+                        value={values[c.charcID] ?? ""}
+                        onChange={(e) => setValues((v) => ({ ...v, [c.charcID]: e.target.value }))}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
             </>
+          ) : loaded ? (
+            <div className="py-3 text-xs text-slate-400">该类目没有可填特征。</div>
+          ) : null}
+
+          {/* TNVED */}
+          <div className="mt-3 grid grid-cols-[1fr_1.4fr] items-center gap-2">
+            <span className="text-xs text-slate-600 dark:text-slate-300">TNVED 海关编码</span>
+            <input
+              className="input px-2 py-1.5 text-xs"
+              placeholder="留空 = 按类目自动"
+              value={tnved}
+              onChange={(e) => setTnved(e.target.value)}
+            />
+          </div>
+
+          {err && <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">{err}</p>}
+          <div className="mt-3 flex items-center justify-end gap-2">
+            {saved && <span className="text-xs text-emerald-600 dark:text-emerald-400">已保存</span>}
+            <button
+              className="btn-primary px-3 py-1.5 text-xs"
+              onClick={save}
+              disabled={saving || !subjectId}
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 保存参数
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-400">
+            尺码/颜色多变体(多 barcode)暂为单一规格,后续支持。
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Left footer: the single primary CTA, by step ──
+function PrimaryAction({
+  step,
+  listing,
+  dryRun,
+  live,
+  genMsg,
+  restLoading,
+  restMissing,
+  hasVideo,
+  onGenerate,
+  onPublish,
+  onGenerateRest,
+  onGoReview,
+  onBackToPreview,
+  onReset,
+}: {
+  step: Step;
+  listing: Listing | null;
+  dryRun: boolean;
+  live: boolean;
+  genMsg: string;
+  restLoading: boolean;
+  restMissing: number;
+  hasVideo: boolean;
+  onGenerate: () => void;
+  onPublish: () => void;
+  onGenerateRest: () => void;
+  onGoReview: () => void;
+  onBackToPreview: () => void;
+  onReset: () => void;
+}) {
+  if (step === "input") {
+    return (
+      <>
+        <button className="btn-primary w-full" onClick={onGenerate}>
+          <Sparkles className="h-4 w-4" /> 一键生成
+        </button>
+        <p className="mt-2 text-center text-[11px] text-slate-400">
+          生成俄语图文 + 配图 · 消耗你的 Aurixel 余额{hasVideo ? "（视频在预览里点「配成俄语」）" : ""}
+        </p>
+      </>
+    );
+  }
+  if (step === "generating") {
+    return (
+      <button className="btn-primary w-full" disabled>
+        <Loader2 className="h-4 w-4 animate-spin" /> {genMsg || "生成中…"}
+      </button>
+    );
+  }
+  if (step === "preview" && listing) {
+    if (listing.partial) {
+      return (
+        <button className="btn-primary w-full" onClick={onGenerateRest} disabled={restLoading}>
+          {restLoading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> {genMsg || "生成其余…"}
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4" /> 满意，继续生成其余 {restMissing} 张
+            </>
+          )}
+        </button>
+      );
+    }
+    if (!listing.nmID) {
+      return (
+        <>
+          <button className="btn-primary w-full" onClick={onGoReview}>
+            发布复核 <ArrowRight className="h-4 w-4" />
+          </button>
+          <p className="mt-2 text-center text-[11px] text-slate-400">下一步看一遍要上架的内容再确认</p>
+        </>
+      );
+    }
+    return (
+      <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.08] px-3 py-2.5 text-xs text-emerald-700 dark:text-emerald-200">
+        已上架（nmID {listing.nmID}）。补图/改价请到「商品管理」。
+      </div>
+    );
+  }
+  if (step === "review" && listing) {
+    return (
+      <>
+        <button className="btn-primary w-full" onClick={onPublish}>
+          <Rocket className="h-4 w-4" />
+          {dryRun ? "确认演示上架" : live ? "确认上架到 Wildberries（线上）" : "确认上架到沙盒（测试）"}
+        </button>
+        <button
+          className="mt-2 w-full text-center text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+          onClick={onBackToPreview}
+        >
+          ← 返回预览修改
+        </button>
+      </>
+    );
+  }
+  if (step === "publishing") {
+    return (
+      <button className="btn-primary w-full" disabled>
+        <Loader2 className="h-4 w-4 animate-spin" /> 上架中…
+      </button>
+    );
+  }
+  // done
+  return (
+    <button className="btn-ghost w-full" onClick={onReset}>
+      <Sparkles className="h-4 w-4" /> 再来一个
+    </button>
+  );
+}
+
+// ── Right (input step): live WB-card preview reflecting what you type ──
+function LivePreview({
+  productName,
+  price,
+  discount,
+  wbBase,
+  basePhotos,
+  imageCount,
+  hasVideo,
+}: {
+  productName: string;
+  price: number;
+  discount: number;
+  wbBase: number;
+  basePhotos: string[];
+  imageCount: number;
+  hasVideo: boolean;
+}) {
+  return (
+    <div className="card flex h-full min-h-0 flex-col p-5">
+      <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+        <Eye className="h-4 w-4 text-wb-pink" /> 实时预览
+        <span className="ml-auto text-xs font-normal text-slate-400">生成后这里出成品</span>
+      </div>
+
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-900/10 bg-slate-900/[0.015] p-6 dark:border-white/10 dark:bg-white/[0.015]">
+        {/* a WB-card-shaped mock */}
+        <div className="w-full max-w-[240px]">
+          <div className="aspect-[3/4] overflow-hidden rounded-xl border border-slate-900/10 bg-white dark:border-white/10 dark:bg-white/5">
+            {basePhotos[0] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={basePhotos[0]} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-300 dark:text-slate-600">
+                <ImageIcon className="h-9 w-9" />
+                <span className="text-[11px] text-slate-400">AI 主图将显示在这里</span>
+              </div>
+            )}
+          </div>
+          <div className="mt-3">
+            <div className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+              {productName.trim() || "商品标题（俄文）将在这里"}
+            </div>
+            <div className="mt-1.5 flex items-baseline gap-2">
+              <span className="text-lg font-semibold text-wb-pink">
+                {price > 0 ? `${price.toLocaleString()} ₽` : "—"}
+              </span>
+              {discount > 0 && wbBase > 0 && (
+                <span className="text-xs text-slate-400 line-through">
+                  {wbBase.toLocaleString()}
+                </span>
+              )}
+              <span className="text-[11px] text-slate-400">到手价</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 shrink-0 rounded-xl bg-slate-900/[0.04] px-3.5 py-3 text-xs leading-relaxed text-slate-600 dark:bg-white/5 dark:text-slate-300">
+        <span className="font-medium text-slate-800 dark:text-slate-100">点「一键生成」后产出：</span>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <span className="chip">
+            <ImageIcon className="h-3 w-3 text-wb-purple" /> 图片 ×{imageCount}
+          </span>
+          <span className="chip">
+            <Sparkles className="h-3 w-3 text-wb-pink" /> 俄语文案 + 中文对照
+          </span>
+          {hasVideo && (
+            <span className="chip">
+              <Video className="h-3 w-3 text-wb-pink" /> 视频配俄语
+            </span>
           )}
         </div>
       </div>
@@ -728,39 +1538,55 @@ export function Workbench() {
   );
 }
 
-function StepBar({ listing, step }: { listing: Listing | null; step: Step }) {
-  const cur = !listing ? 1 : step === "publishing" || step === "done" ? 3 : 2;
+function StepBar({
+  step,
+  className,
+  onJump,
+}: {
+  step: Step;
+  className?: string;
+  onJump?: (n: number) => void;
+}) {
+  const cur = step === "input" ? 1 : step === "preview" || step === "generating" ? 2 : 3;
   const steps = ["输入", "预览", "发布"];
   return (
-    <div className="mb-5 flex items-center justify-center">
+    <div className={clsx("flex items-center", className)}>
       {steps.map((s, i) => {
         const n = i + 1;
-        const done = n < cur;
+        const isDone = n < cur;
         const act = n === cur;
+        const clickable = !!onJump && n !== cur && n >= 2;
         return (
           <div key={s} className="flex items-center">
-            <div
-              className={clsx(
-                "grid h-7 w-7 place-items-center rounded-full text-xs font-medium transition-all",
-                act
-                  ? "bg-gradient-to-br from-wb-pink to-wb-purple text-white shadow-sm"
-                  : done
+            <button
+              type="button"
+              disabled={!clickable}
+              onClick={() => clickable && onJump?.(n)}
+              className={clsx("flex items-center", clickable && "cursor-pointer")}
+            >
+              <span
+                className={clsx(
+                  "grid h-6 w-6 place-items-center rounded-full text-[11px] font-medium transition-all",
+                  act
+                    ? "bg-gradient-to-br from-wb-pink to-wb-purple text-white shadow-sm"
+                    : isDone
                     ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                     : "border border-slate-900/10 text-slate-400 dark:border-white/10"
-              )}
-            >
-              {done ? <CheckCircle2 className="h-4 w-4" /> : n}
-            </div>
-            <span
-              className={clsx(
-                "ml-1.5 text-xs",
-                act ? "font-medium text-slate-900 dark:text-white" : "text-slate-400"
-              )}
-            >
-              {s}
-            </span>
+                )}
+              >
+                {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : n}
+              </span>
+              <span
+                className={clsx(
+                  "ml-1.5 text-xs",
+                  act ? "font-medium text-slate-900 dark:text-white" : "text-slate-400"
+                )}
+              >
+                {s}
+              </span>
+            </button>
             {i < steps.length - 1 && (
-              <div className="mx-3 h-px w-8 bg-slate-900/10 dark:bg-white/10" />
+              <div className="mx-2.5 h-px w-6 bg-slate-900/10 dark:bg-white/10" />
             )}
           </div>
         );
@@ -809,11 +1635,14 @@ function ImagesPanel({
         <ImageIcon className="h-4 w-4 text-wb-pink" /> 生成的图片
         <span className="text-xs font-normal text-slate-400">（不满意可单张重生成）</span>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {listing.images.map((img, i) => {
           const busy = regenLoading === i;
           return (
-            <div key={img.id} className="group relative overflow-hidden rounded-xl border border-slate-900/10 dark:border-white/10">
+            <div
+              key={img.id}
+              className="group relative overflow-hidden rounded-xl border border-slate-900/10 dark:border-white/10"
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={img.url} alt={img.kind} className="aspect-[3/4] w-full object-cover" />
               <div className="absolute left-2 top-2">
@@ -880,7 +1709,10 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
     setSavingCopy(true);
     setCopyErr(null);
     try {
-      const bullets = eBullets.split("\n").map((s) => s.trim()).filter(Boolean);
+      const bullets = eBullets
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
       const updated = await api.updateCopy(listing.id, eTitle, eDesc, bullets);
       onUpdate?.(updated);
       setEditing(false);
@@ -977,74 +1809,107 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
           {copyErr && <p className="text-xs text-rose-600 dark:text-rose-400">{copyErr}</p>}
         </div>
       ) : (
-      <div className="space-y-3 text-sm">
-        <div>
-          <span className="label">标题（{copy.title.length}/60）</span>
-          {showRu && (
-            <p className="rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-slate-900 dark:text-slate-100">{copy.title}</p>
-          )}
-          {showZh && copy.titleZh && (
-            <p className={clsx("text-slate-500 dark:text-slate-400", showRu ? "mt-1 px-3 text-xs" : "rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-slate-700 dark:text-slate-300")}>
-              {copy.titleZh}
-            </p>
-          )}
-        </div>
-        <div>
-          <span className="label">描述</span>
-          {showRu && (
-            <p className="max-h-32 overflow-auto rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 leading-relaxed text-slate-700 dark:text-slate-300">
-              {copy.description}
-            </p>
-          )}
-          {showZh && copy.descriptionZh && (
-            <p className={clsx("max-h-32 overflow-auto leading-relaxed text-slate-500 dark:text-slate-400", showRu ? "mt-1 px-3 text-xs" : "rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-slate-700 dark:text-slate-300")}>
-              {copy.descriptionZh}
-            </p>
-          )}
-        </div>
-        {copy.bullets.length > 0 && (
+        <div className="space-y-3 text-sm">
           <div>
-            <span className="label">卖点</span>
-            <ul className="space-y-1.5">
-              {copy.bullets.map((b, i) => (
-                <li key={i} className="flex items-start gap-2 text-slate-700 dark:text-slate-300">
-                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  <span>
-                    {showRu && <span>{b}</span>}
-                    {showZh && copy.bulletsZh?.[i] && (
-                      <span className={clsx("block text-slate-500 dark:text-slate-400", showRu ? "mt-0.5 text-xs" : "")}>
-                        {copy.bulletsZh[i]}
-                      </span>
-                    )}
-                  </span>
-                </li>
+            <span className="label">标题（{copy.title.length}/60）</span>
+            {showRu && (
+              <p className="rounded-lg bg-slate-900/[0.04] px-3 py-2 text-slate-900 dark:bg-white/5 dark:text-slate-100">
+                {copy.title}
+              </p>
+            )}
+            {showZh && copy.titleZh && (
+              <p
+                className={clsx(
+                  "text-slate-500 dark:text-slate-400",
+                  showRu
+                    ? "mt-1 px-3 text-xs"
+                    : "rounded-lg bg-slate-900/[0.04] px-3 py-2 text-slate-700 dark:bg-white/5 dark:text-slate-300"
+                )}
+              >
+                {copy.titleZh}
+              </p>
+            )}
+          </div>
+          <div>
+            <span className="label">描述</span>
+            {showRu && (
+              <p className="max-h-32 overflow-auto rounded-lg bg-slate-900/[0.04] px-3 py-2 leading-relaxed text-slate-700 dark:bg-white/5 dark:text-slate-300">
+                {copy.description}
+              </p>
+            )}
+            {showZh && copy.descriptionZh && (
+              <p
+                className={clsx(
+                  "max-h-32 overflow-auto leading-relaxed text-slate-500 dark:text-slate-400",
+                  showRu
+                    ? "mt-1 px-3 text-xs"
+                    : "rounded-lg bg-slate-900/[0.04] px-3 py-2 text-slate-700 dark:bg-white/5 dark:text-slate-300"
+                )}
+              >
+                {copy.descriptionZh}
+              </p>
+            )}
+          </div>
+          {copy.bullets.length > 0 && (
+            <div>
+              <span className="label">卖点</span>
+              <ul className="space-y-1.5">
+                {copy.bullets.map((b, i) => (
+                  <li
+                    key={i}
+                    className="flex items-start gap-2 text-slate-700 dark:text-slate-300"
+                  >
+                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span>
+                      {showRu && <span>{b}</span>}
+                      {showZh && copy.bulletsZh?.[i] && (
+                        <span
+                          className={clsx(
+                            "block text-slate-500 dark:text-slate-400",
+                            showRu ? "mt-0.5 text-xs" : ""
+                          )}
+                        >
+                          {copy.bulletsZh[i]}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-3 pt-1 text-xs text-slate-500 dark:text-slate-400">
+            <span>
+              类目: <b className="text-slate-800 dark:text-slate-200">{copy.categoryHint || "—"}</b>
+            </span>
+            <span>
+              品牌: <b className="text-slate-800 dark:text-slate-200">{copy.brand}</b>
+            </span>
+            <span>
+              vendorCode:{" "}
+              <b className="text-slate-800 dark:text-slate-200">{listing.vendorCode}</b>
+            </span>
+          </div>
+          {copy.keywords.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {copy.keywords.map((k) => (
+                <span key={k} className="chip text-xs">
+                  {k}
+                </span>
               ))}
-            </ul>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-3 pt-1 text-xs text-slate-500 dark:text-slate-400">
-          <span>类目: <b className="text-slate-800 dark:text-slate-200">{copy.categoryHint || "—"}</b></span>
-          <span>品牌: <b className="text-slate-800 dark:text-slate-200">{copy.brand}</b></span>
-          <span>vendorCode: <b className="text-slate-800 dark:text-slate-200">{listing.vendorCode}</b></span>
+            </div>
+          )}
+          {copy.imagePrompt && (
+            <details className="pt-1">
+              <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200">
+                文生图提示词（英文）
+              </summary>
+              <p className="mt-1.5 rounded-lg bg-slate-900/[0.04] px-3 py-2 text-xs leading-relaxed text-slate-500 dark:bg-white/5 dark:text-slate-400">
+                {copy.imagePrompt}
+              </p>
+            </details>
+          )}
         </div>
-        {copy.keywords.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {copy.keywords.map((k) => (
-              <span key={k} className="chip text-xs">{k}</span>
-            ))}
-          </div>
-        )}
-        {copy.imagePrompt && (
-          <details className="pt-1">
-            <summary className="cursor-pointer text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200">
-              文生图提示词（英文）
-            </summary>
-            <p className="mt-1.5 rounded-lg bg-slate-900/[0.04] dark:bg-white/5 px-3 py-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-              {copy.imagePrompt}
-            </p>
-          </details>
-        )}
-      </div>
       )}
     </div>
   );
@@ -1080,7 +1945,11 @@ function VideoPanel({
         throw new Error("运行环境未就绪:缺 " + miss.join("、"));
       }
       un = await listen<{ stage: string }>("dub:progress", (e) => setStage(e.payload.stage));
-      const out = await api.dubStart({ inputPath: videoPath, quality: "standard", voiceMode: "clone" });
+      const out = await api.dubStart({
+        inputPath: videoPath,
+        quality: "standard",
+        voiceMode: "clone",
+      });
       onUpdate(await api.setListingVideo(listing.id, out));
     } catch (e) {
       setErr(e instanceof Error ? e.message : "配音失败");
@@ -1096,39 +1965,45 @@ function VideoPanel({
   }
 
   return (
-    <div className="card p-6">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-        <Video className="h-4 w-4 text-wb-pink" /> 产品视频
+    <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3.5 dark:border-white/[0.07] dark:bg-white/[0.02]">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+        <Video className="h-3.5 w-3.5 text-wb-pink" /> 产品视频
         {done && (
           <span className="chip border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
             <CheckCircle2 className="h-3 w-3" /> 已配俄语
           </span>
         )}
       </div>
-      <div className="mb-3 truncate text-xs text-slate-500 dark:text-slate-400">
+      <div className="mb-2 truncate text-[11px] text-slate-500 dark:text-slate-400">
         {videoPath.split(/[\\/]/).pop()}
       </div>
       {done ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-xs text-emerald-700 dark:text-emerald-300">
-            俄语配音已生成,发布时随卡片一起上传到 WB。
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
+            发布时随卡片一起上传。
           </span>
-          <button className="btn-ghost px-3 py-1.5 text-xs" onClick={reDub}>
-            <RefreshCw className="h-3.5 w-3.5" /> 重配
+          <button className="btn-ghost px-2.5 py-1 text-xs" onClick={reDub}>
+            <RefreshCw className="h-3 w-3" /> 重配
           </button>
         </div>
       ) : busy ? (
-        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-          <Loader2 className="h-4 w-4 animate-spin text-wb-pink" /> 配音中…
-          <span className="text-xs text-slate-400">{stage}</span>
+        <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-wb-pink" /> 配音中…
+          <span className="text-slate-400">{stage}</span>
         </div>
       ) : (
-        <button className="btn-primary" onClick={dub} disabled={!!listing.nmID}>
-          <Video className="h-4 w-4" /> 配成俄语
+        <button
+          className="btn-primary w-full py-2 text-xs"
+          onClick={dub}
+          disabled={!!listing.nmID}
+        >
+          <Video className="h-3.5 w-3.5" /> 配成俄语
         </button>
       )}
-      {err && <p className="mt-2 break-words text-xs text-rose-600 dark:text-rose-400">{err}</p>}
-      <p className="mt-2 text-[11px] text-slate-400">把英文视频配成俄语 · 消耗你的 Aurixel 余额 · ~1–2 分钟</p>
+      {err && <p className="mt-2 break-words text-[11px] text-rose-600 dark:text-rose-400">{err}</p>}
+      {!done && !busy && (
+        <p className="mt-2 text-[11px] text-slate-400">配成俄语 · 消耗 Aurixel · ~1–2 分钟</p>
+      )}
     </div>
   );
 }
@@ -1141,7 +2016,13 @@ function ProgressPanel({
   onReset,
 }: {
   logs: StageLog[];
-  done: { stage: string; nmID: number | null; dryRun: boolean; sandbox: boolean; error: string | null } | null;
+  done: {
+    stage: string;
+    nmID: number | null;
+    dryRun: boolean;
+    sandbox: boolean;
+    error: string | null;
+  } | null;
   publishing: boolean;
   logEndRef: React.RefObject<HTMLDivElement>;
   onReset: () => void;
@@ -1166,10 +2047,16 @@ function ProgressPanel({
         上架流程
       </div>
 
-      <div className="max-h-64 space-y-2 overflow-auto rounded-lg bg-slate-900/[0.05] dark:bg-black/20 p-3 font-mono text-xs">
+      <div className="max-h-64 space-y-2 overflow-auto rounded-lg bg-slate-900/[0.05] p-3 font-mono text-xs dark:bg-black/20">
         {logs.map((l, i) => (
           <div key={i} className="flex items-start gap-2">
-            <span className={clsx(l.ok ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+            <span
+              className={clsx(
+                l.ok
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400"
+              )}
+            >
               {l.ok ? "✓" : "✗"}
             </span>
             <span className="text-slate-700 dark:text-slate-300">{l.message}</span>

@@ -122,6 +122,14 @@ pub struct Listing {
     /// attached as the card's video on publish. None = no video for this card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_ru: Option<String>,
+    /// User-confirmed WB characteristics [{id, value}] from the「全部商品参数」
+    /// editor. Empty = let the pipeline auto-fill (AI). Non-empty entries OVERRIDE
+    /// the auto-filled value for that charc id (用户值优先, AI 兜底).
+    #[serde(default)]
+    pub characteristics: Vec<serde_json::Value>,
+    /// User-set TNVED (customs) code; empty = pipeline resolves automatically.
+    #[serde(default)]
+    pub tnved: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

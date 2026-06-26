@@ -115,8 +115,14 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-10">
       <div className="card w-full max-w-xl p-0">
+        {/* brand title bar */}
+        <div className="flex items-center justify-center gap-2 border-b border-slate-900/[0.06] px-6 py-3.5 dark:border-white/[0.06]">
+          <span className="h-4 w-4 rounded-md bg-gradient-to-br from-wb-pink to-wb-purple" />
+          <span className="text-sm font-semibold text-slate-900 dark:text-white">WB AutoList</span>
+          <span className="text-sm text-slate-400">· 初次设置</span>
+        </div>
         {/* stepper */}
-        <div className="flex items-center justify-center gap-1 px-6 pb-3 pt-6">
+        <div className="flex items-center justify-center gap-1 px-6 pb-3 pt-5">
           {STEPS.map((s, i) => {
             const done = i < step;
             const act = i === step;

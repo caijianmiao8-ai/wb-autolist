@@ -1,0 +1,72 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Redesigned settings: wizard-managed values shown collapsed, common vs advanced split, guarded sandbox/live switch with banner.</h2>
+<style>
+  .st{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .st *{box-sizing:border-box;}
+  .st-btn{border:1px solid var(--ln);background:#fff;border-radius:9px;padding:5px 11px;font-size:11px;color:var(--ink2);cursor:pointer;}
+  .st-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid rgba(15,23,42,.06);}
+  .st-k{font-size:12.5px;color:var(--ink);}
+  .st-sub{font-size:10.5px;color:var(--mut);margin-top:2px;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;overflow:hidden;" class="st">
+  <!-- live banner (shown only when 正式) -->
+  <div id="st-banner" style="display:none;background:#A32D2D;color:#fff;font-size:11.5px;padding:7px 14px;text-align:center;"><i class="ti ti-alert-triangle"></i> 正式环境:你的所有操作都会作用于<b>真实店铺</b></div>
+  <div style="padding:12px 14px;border-bottom:1px solid rgba(15,23,42,.08);background:#fff;display:flex;align-items:center;gap:8px;">
+    <span style="font-size:15px;font-weight:500;color:var(--ink);">设置</span>
+    <span id="st-mode" class="st-k" style="margin-left:auto;font-size:10px;color:#854F0B;background:#FAEEDA;border:1px solid #FAC775;border-radius:999px;padding:2px 8px;">当前:沙盒</span>
+  </div>
+
+  <div style="padding:14px;">
+    <div style="background:#EEEDFE;border:1px solid #CECBF6;border-radius:11px;padding:10px 13px;display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <i class="ti ti-wand" style="color:#534AB7;font-size:18px;"></i>
+      <div style="flex:1;font-size:11.5px;color:#3C3489;line-height:1.5;">账号与默认值已在<b>初次设置向导</b>配置好,这里随时查看/修改。</div>
+      <button class="st-btn" style="border-color:#CECBF6;color:#534AB7;background:#fff;">重新运行向导</button>
+    </div>
+
+    <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#94a3b8;margin:0 0 4px;">常用</div>
+    <div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:2px 14px;margin-bottom:14px;">
+      <div class="st-row">
+        <div><div class="st-k">运行环境</div><div class="st-sub">切到「正式」会二次确认并常驻顶栏告警</div></div>
+        <div style="display:flex;gap:3px;background:#F4F6FA;border:1px solid rgba(15,23,42,.08);border-radius:9px;padding:3px;">
+          <button class="st-env" data-e="演示" onclick="stEnv('演示')" style="border:none;background:transparent;border-radius:7px;padding:4px 11px;font-size:11px;color:#64748b;cursor:pointer;">演示</button>
+          <button class="st-env on" data-e="沙盒" onclick="stEnv('沙盒')" style="border:none;background:#fff;border-radius:7px;padding:4px 11px;font-size:11px;color:#0f172a;font-weight:500;box-shadow:0 1px 2px rgba(15,23,42,.08);cursor:pointer;">沙盒</button>
+          <button class="st-env" data-e="正式" onclick="stEnv('正式')" style="border:none;background:transparent;border-radius:7px;padding:4px 11px;font-size:11px;color:#64748b;cursor:pointer;">正式</button>
+        </div>
+      </div>
+      <div class="st-row">
+        <div><div class="st-k">Wildberries 店铺</div><div class="st-sub" style="color:#0F6E56;">✓ 已连接 My Test Store · Token 168 天后过期</div></div>
+        <button class="st-btn">续期 / 修改</button>
+      </div>
+      <div class="st-row" style="border-bottom:none;">
+        <div><div class="st-k">Aurixel(AI 引擎)</div><div class="st-sub" style="color:#0F6E56;">✓ 已连接 · 余额 $12.40</div></div>
+        <div style="display:flex;gap:6px;"><button class="st-btn">充值</button><button class="st-btn">修改</button></div>
+      </div>
+    </div>
+
+    <button onclick="stAdv()" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:11px 14px;cursor:pointer;">
+      <span style="font-size:12.5px;color:#334155;"><i class="ti ti-adjustments-alt" style="color:#7F3FBF"></i> 高级设置 <span style="font-size:10.5px;color:#94a3b8;">(普通卖家通常不用动)</span></span>
+      <i class="ti ti-chevron-down" id="st-chev" style="color:#94a3b8;"></i>
+    </button>
+    <div id="st-adv" style="display:none;background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:2px 14px;margin-top:8px;">
+      <div class="st-row"><div><div class="st-k">默认发货仓库</div></div><span class="st-k" style="color:#64748b;">Коледино <span style="color:#94a3b8;">▾</span></span></div>
+      <div class="st-row"><div><div class="st-k">常用包裹尺寸 / 重量</div></div><span class="st-k" style="color:#64748b;">20×15×5cm · 0.3kg <button class="st-btn">修改</button></span></div>
+      <div class="st-row"><div><div class="st-k">新品默认库存</div><div class="st-sub">留空 = 上架后去「商品管理」逐个补货(更稳)</div></div><span class="st-k" style="color:#94a3b8;">留空</span></div>
+      <div class="st-row"><div><div class="st-k">配图引擎</div></div><span class="st-k" style="color:#64748b;">Aurixel(推荐) ▾</span></div>
+      <div class="st-row" style="border-bottom:none;"><div><div class="st-k">价格用单独 Token</div><div class="st-sub">一般一个多权限 Token 就够,无需开</div></div><span style="font-size:11px;color:#94a3b8;">☐ 关</span></div>
+    </div>
+  </div>
+</div>
+</div>
+<script>
+  window.stEnv=function(e){
+    document.querySelectorAll('.st-env').forEach(function(b){var on=b.getAttribute('data-e')===e;b.classList.toggle('on',on);b.style.background=on?'#fff':'transparent';b.style.color=on?'#0f172a':'#64748b';b.style.fontWeight=on?'500':'400';b.style.boxShadow=on?'0 1px 2px rgba(15,23,42,.08)':'none';});
+    var live=e==='正式';
+    document.getElementById('st-banner').style.display=live?'block':'none';
+    var m=document.getElementById('st-mode');
+    m.textContent='当前:'+e;
+    if(live){m.style.color='#fff';m.style.background='#A32D2D';m.style.borderColor='#A32D2D';}
+    else if(e==='沙盒'){m.style.color='#854F0B';m.style.background='#FAEEDA';m.style.borderColor='#FAC775';}
+    else{m.style.color='#64748b';m.style.background='#F1EFE8';m.style.borderColor='#D3D1C7';}
+  };
+  window.stAdv=function(){var a=document.getElementById('st-adv');var open=a.style.display==='none';a.style.display=open?'block':'none';document.getElementById('st-chev').className='ti ti-chevron-'+(open?'up':'down');document.getElementById('st-chev').style.color='#94a3b8';};
+</script>

@@ -1,13 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Check, Loader2, KeyRound, ImageIcon, Boxes, Ruler, Wand2 } from "lucide-react";
+import {
+  Save,
+  Check,
+  Loader2,
+  Wand2,
+  Settings as SettingsIcon,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  CheckCircle2,
+} from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import { EnvBadge } from "./EnvBadge";
+import { envKind } from "@/lib/env";
 import type { Warehouse } from "@/lib/types";
 
 interface Redacted {
   authEnabled: boolean;
+  dryRun: boolean;
   wbContentTokenSet: boolean;
   wbPricesTokenSet: boolean;
   wbTokenExpiresInDays: number | null;
@@ -32,11 +45,19 @@ export function SettingsForm() {
   const [redacted, setRedacted] = useState<Redacted | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [reveal, setReveal] = useState(false);
+  const [balance, setBalance] = useState<{ usd: number; rmb: number } | null>(null);
+  const [advanced, setAdvanced] = useState(false);
+  // per-row inline editors
+  const [editWb, setEditWb] = useState(false);
+  const [editAi, setEditAi] = useState(false);
+  const [editPkg, setEditPkg] = useState(false);
+  const [editPriceTok, setEditPriceTok] = useState(false);
 
-  // local editable fields (blank = keep existing for secrets)
   const [wbContentToken, setWbContentToken] = useState("");
   const [wbPricesToken, setWbPricesToken] = useState("");
   const [wbSandbox, setWbSandbox] = useState(false);
+  const [dryRun, setDryRun] = useState(true);
   const [imageProvider, setImageProvider] = useState("pollinations");
   const [openaiApiKey, setOpenaiApiKey] = useState("");
   const [aurixelApiKey, setAurixelApiKey] = useState("");
@@ -56,6 +77,7 @@ export function SettingsForm() {
       setRedacted(d);
       setImageProvider(d.imageProvider || "pollinations");
       setWbSandbox(!!d.wbSandbox);
+      setDryRun(d.dryRun);
       setAurixelChatModel(d.aurixelChatModel || "gpt-5.5");
       setAutoStock(d.autoStock ?? false);
       setDefaultStock(d.defaultStock ?? 99);
@@ -65,8 +87,14 @@ export function SettingsForm() {
       setDefaultHeight(d.defaultHeight ?? 5);
       setDefaultWeight(d.defaultWeight ?? 0.3);
     });
-    // FBS warehouses need the Маркетплейс scope — failure just leaves the picker empty.
     api.listWarehouses().then(setWarehouses).catch(() => setWarehouses([]));
+    // Aurixel balance — only if a key is configured (read-only GET /v1/balance).
+    api
+      .getSettings()
+      .then((d) => {
+        if (d.aurixelKeySet) api.aurixelBalance().then(setBalance).catch(() => {});
+      })
+      .catch(() => {});
   }, []);
 
   async function save() {
@@ -75,6 +103,7 @@ export function SettingsForm() {
     const patch: Record<string, string | boolean | number> = {
       imageProvider,
       wbSandbox,
+      dryRun,
       autoStock,
       defaultStock,
       defaultWarehouseId,
@@ -83,8 +112,6 @@ export function SettingsForm() {
       defaultHeight,
       defaultWeight,
     };
-    // trim — pasted tokens often carry a trailing space/newline that would
-    // corrupt the Authorization header.
     if (wbContentToken.trim()) patch.wbContentToken = wbContentToken.trim();
     if (wbPricesToken.trim()) patch.wbPricesToken = wbPricesToken.trim();
     if (openaiApiKey.trim()) patch.openaiApiKey = openaiApiKey.trim();
@@ -94,17 +121,21 @@ export function SettingsForm() {
 
     const d = await api.saveSettings(patch);
     setRedacted(d);
+    setDryRun(d.dryRun);
     setWbContentToken("");
     setWbPricesToken("");
     setOpenaiApiKey("");
     setAurixelApiKey("");
     setPollinationsToken("");
+    setEditWb(false);
+    setEditAi(false);
+    setEditPkg(false);
+    setEditPriceTok(false);
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   }
 
-  // Re-show the first-run wizard (AppShell reads this flag on load).
   function rerunWizard() {
     try {
       localStorage.setItem("wb:rerunSetup", "1");
@@ -114,289 +145,403 @@ export function SettingsForm() {
     window.location.assign("/");
   }
 
+  const tokenSet = !!redacted?.wbContentTokenSet || !!wbContentToken.trim();
+  const kind = envKind(dryRun, wbSandbox);
+  const inputType = reveal ? "text" : "password";
+
+  // 三态运行环境切换
+  function pickEnv(target: "demo" | "sandbox" | "live") {
+    if (target === kind) return;
+    if ((target === "sandbox" || target === "live") && !tokenSet) {
+      alert("请先在下方「Wildberries 店铺」配置 Token,才能切换到沙盒 / 正式。");
+      return;
+    }
+    if (target === "live") {
+      if (
+        !window.confirm(
+          "切换到「正式店铺」?\n\n之后所有上架 / 改价 / 库存操作都会作用于你的真实 Wildberries 店铺,且不可撤销。确认切换?"
+        )
+      )
+        return;
+      setDryRun(false);
+      setWbSandbox(false);
+    } else if (target === "sandbox") {
+      setDryRun(false);
+      setWbSandbox(true);
+    } else {
+      setDryRun(true); // 演示
+    }
+  }
+
+  const wbExpiry =
+    redacted?.wbTokenExpiresInDays != null
+      ? redacted.wbTokenExpiresInDays < 0
+        ? "Token 已过期"
+        : `Token ${redacted.wbTokenExpiresInDays} 天后过期`
+      : "";
+
   return (
-    <div className="mx-auto max-w-2xl animate-fade-up">
-      <h1 className="mb-1 text-2xl font-semibold tracking-tight">设置</h1>
-      <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
-        密钥仅保存在<b className="text-slate-700 dark:text-slate-300">本机</b>应用数据目录，不随程序上传。
-        生成图片/文案时，商品名、关键词等内容会发送到所选 AI 网关（如 Aurixel）进行处理。
-      </p>
-
-      <div className="mb-6 flex items-center gap-3 rounded-2xl border border-wb-purple/20 bg-wb-purple/[0.06] px-4 py-3 text-sm">
-        <Wand2 className="h-4 w-4 shrink-0 text-wb-purple" />
-        <span className="flex-1 text-slate-600 dark:text-slate-300">
-          账号与默认值可在<b>初次设置向导</b>里一步步配置;这里随时单独查看 / 修改。
-        </span>
-        <button onClick={rerunWizard} className="btn-ghost shrink-0 px-3 py-1.5 text-xs">
-          重新运行向导
-        </button>
+    <div className="flex h-full min-h-0 flex-col animate-fade-up">
+      {/* ── Header (pinned) ── */}
+      <div className="shrink-0">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-slate-900 dark:text-white">
+            <SettingsIcon className="h-5 w-5 text-wb-pink" /> 设置
+          </h1>
+          {redacted && <EnvBadge dryRun={dryRun} sandbox={wbSandbox} className="ml-auto" />}
+        </div>
       </div>
 
-      <div className="space-y-5">
-        {/* WB */}
-        <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-            <KeyRound className="h-4 w-4 text-wb-pink" /> Wildberries Token
-          </div>
-          <label className="label">
-            内容(Контент) Token {redacted?.wbContentTokenSet && (
-              <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>
-            )}
-            {redacted?.wbContentTokenSet && redacted.wbTokenExpiresInDays != null && (
-              <span
-                className={clsx(
-                  "ml-1",
-                  redacted.wbTokenExpiresInDays < 0
-                    ? "text-rose-600 dark:text-rose-400"
-                    : redacted.wbTokenExpiresInDays <= 14
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-slate-400"
-                )}
-              >
-                {redacted.wbTokenExpiresInDays < 0
-                  ? "· 已过期，请到 WB 后台重新生成"
-                  : redacted.wbTokenExpiresInDays === 0
-                  ? "· 今天内到期"
-                  : `· 有效期剩 ${redacted.wbTokenExpiresInDays} 天`}
-              </span>
-            )}
-          </label>
-          <input
-            type="password"
-            className="input mb-4"
-            placeholder={redacted?.wbContentTokenSet ? "留空保持不变" : "粘贴 Content 范围 Token（JWT）"}
-            value={wbContentToken}
-            onChange={(e) => setWbContentToken(e.target.value)}
-          />
-          <label className="label">
-            价格(Цены) Token（可选，留空复用上面的 Token）
-            {redacted?.wbPricesTokenSet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
-            {redacted?.wbPricesTokenSet && redacted.wbPricesTokenExpiresInDays != null && (
-              <span
-                className={clsx(
-                  "ml-1",
-                  redacted.wbPricesTokenExpiresInDays < 0
-                    ? "text-rose-600 dark:text-rose-400"
-                    : redacted.wbPricesTokenExpiresInDays <= 14
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-slate-400"
-                )}
-              >
-                {redacted.wbPricesTokenExpiresInDays < 0
-                  ? "· 已过期"
-                  : `· 剩 ${redacted.wbPricesTokenExpiresInDays} 天`}
-              </span>
-            )}
-          </label>
-          <input
-            type="password"
-            className="input"
-            placeholder="若内容 Token 已含价格范围则无需填写"
-            value={wbPricesToken}
-            onChange={(e) => setWbPricesToken(e.target.value)}
-          />
-          <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-slate-800 dark:text-slate-200">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-wb-purple"
-              checked={wbSandbox}
-              onChange={(e) => {
-                const next = e.target.checked;
-                // Switching OFF sandbox = operate the REAL store — guard it.
-                if (
-                  !next &&
-                  !window.confirm(
-                    "切换到「正式店铺」?\n\n之后所有上架 / 改价 / 库存操作都会作用于你的真实 Wildberries 店铺,且不可撤销。确认切换?"
-                  )
-                ) {
-                  return;
-                }
-                setWbSandbox(next);
-              }}
-            />
-            使用沙盒环境（content-api-sandbox）—— 测试 Token 必须开启;关闭 = 正式店铺
-          </label>
-          <p className="mt-3 text-xs text-slate-500">
-            在卖家后台「设置 → 访问 API」生成 Token，需勾选 <b>Контент</b> 与 <b>Цены и скидки</b> 两个范围，且非只读。未配置则运行演示模式。
-          </p>
-        </section>
-
-        {/* Image */}
-        <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-            <ImageIcon className="h-4 w-4 text-wb-pink" /> 文生图
-          </div>
-          <label className="label">提供方</label>
-          <select
-            className="input mb-4"
-            value={imageProvider}
-            onChange={(e) => setImageProvider(e.target.value)}
-          >
-            <option value="aurixel">Aurixel gpt-image-2（推荐，需 Key）</option>
-            <option value="pollinations">Pollinations（免 Key）</option>
-            <option value="openai">OpenAI gpt-image-1（需 Key）</option>
-          </select>
-          {imageProvider === "aurixel" && (
-            <>
-              <label className="label">
-                Aurixel API Key {redacted?.aurixelKeySet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
-              </label>
-              <input
-                type="password"
-                className="input mb-4"
-                placeholder="ck_..."
-                value={aurixelApiKey}
-                onChange={(e) => setAurixelApiKey(e.target.value)}
-              />
-              <label className="label">文案模型</label>
-              <select
-                className="input"
-                value={aurixelChatModel}
-                onChange={(e) => setAurixelChatModel(e.target.value)}
-              >
-                <option value="gpt-5.5">gpt-5.5</option>
-                <option value="gpt-4o">gpt-4o</option>
-                <option value="claude-opus-4-8">claude-opus-4-8</option>
-                <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-                <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
-              </select>
-              <p className="mt-3 text-xs text-slate-500">
-                标题、描述、卖点、类目与文生图提示词都由所选模型生成。Aurixel 是 OpenAI 兼容网关（conduit-api.aurixel.ai），同一个 Key 既出图（gpt-image-2）也写文案。
-              </p>
-            </>
-          )}
-          {imageProvider === "openai" && (
-            <>
-              <label className="label">
-                OpenAI API Key {redacted?.openaiKeySet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
-              </label>
-              <input
-                type="password"
-                className="input"
-                placeholder="sk-..."
-                value={openaiApiKey}
-                onChange={(e) => setOpenaiApiKey(e.target.value)}
-              />
-            </>
-          )}
-          {imageProvider === "pollinations" && (
-            <>
-              <label className="label">
-                Pollinations Token（可选，解除限流/水印）
-                {redacted?.pollinationsTokenSet && <span className="ml-1 text-emerald-600 dark:text-emerald-400">已配置</span>}
-              </label>
-              <input
-                type="password"
-                className="input"
-                placeholder="在 auth.pollinations.ai 免费获取"
-                value={pollinationsToken}
-                onChange={(e) => setPollinationsToken(e.target.value)}
-              />
-              <p className="mt-3 text-xs text-slate-500">
-                未配置 Token 时免费匿名层可能被限流(402)，此时会自动用品牌占位图兜底，整条流程仍可跑通。
-              </p>
-            </>
-          )}
-        </section>
-
-        {/* Stock (FBS) */}
-        <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-            <Boxes className="h-4 w-4 text-wb-pink" /> 库存（FBS）
-          </div>
-          <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-800 dark:text-slate-200">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 accent-wb-purple"
-              checked={autoStock}
-              onChange={(e) => setAutoStock(e.target.checked)}
-            />
-            <span>
-              上架后<b>自动设库存</b>
-              <span className="mt-0.5 block text-xs text-slate-500">
-                建卡成功后，按下面的仓库与数量自动设库存——商品在审核+定价后才能真正可售。
-              </span>
+      {/* ── Body (scrolls) ── */}
+      <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+        <div className="mx-auto max-w-3xl pb-2">
+          {/* 向导提示 */}
+          <div className="mb-4 flex items-center gap-3 rounded-xl border border-wb-purple/25 bg-wb-purple/[0.06] px-4 py-3">
+            <Wand2 className="h-4 w-4 shrink-0 text-wb-purple" />
+            <span className="flex-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              账号与默认值已在<b>初次设置向导</b>配置好,这里随时查看 / 修改。密钥仅存本机,不随程序上传。
             </span>
-          </label>
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div>
-              <label className="label">默认仓库</label>
-              <select
-                className="input"
-                value={defaultWarehouseId || ""}
-                onChange={(e) => setDefaultWarehouseId(Number(e.target.value) || 0)}
-              >
-                <option value="">（不自动设库存）</option>
-                {warehouses?.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}（{w.id}）
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">默认库存数量</label>
-              <input
-                type="number"
-                min={0}
-                className="input"
-                value={defaultStock}
-                onChange={(e) => setDefaultStock(Math.max(0, Number(e.target.value) || 0))}
-              />
-            </div>
+            <button onClick={rerunWizard} className="btn-ghost shrink-0 px-3 py-1.5 text-xs">
+              重新运行向导
+            </button>
           </div>
-          <p className="mt-3 text-xs text-slate-500">
-            {warehouses === null
-              ? "正在读取仓库…"
-              : warehouses.length === 0
-              ? "未读取到仓库（Token 需含「Маркетплейс」范围）。可在「商品管理」里逐个设库存。"
-              : "也可在「商品管理」里对单个商品补货 / 下架。"}
-          </p>
-        </section>
 
-        {/* Default package dimensions / weight */}
-        <section className="card p-6">
-          <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-            <Ruler className="h-4 w-4 text-wb-pink" /> 默认包裹尺寸 / 重量
-          </div>
-          <p className="mb-3 text-xs text-slate-500">
-            生成新商品时预填这组数值（可在工作台逐个改）。WB 按包裹体积/重量计物流与仓储费、入库时复测，请按真实填写。
-          </p>
-          <div className="grid grid-cols-4 gap-3">
-            {(
-              [
-                ["长 (cm)", defaultLength, setDefaultLength, 1],
-                ["宽 (cm)", defaultWidth, setDefaultWidth, 1],
-                ["高 (cm)", defaultHeight, setDefaultHeight, 1],
-                ["重 (kg)", defaultWeight, setDefaultWeight, 0.1],
-              ] as const
-            ).map(([lab, val, setter, step]) => (
-              <div key={lab}>
-                <label className="label">{lab}</label>
+          {/* ════ 常用 ════ */}
+          <div className="mb-1 px-1 text-[10.5px] uppercase tracking-[0.05em] text-slate-400">常用</div>
+          <div className="card mb-4 px-4">
+            {/* 运行环境 */}
+            <Row
+              k="运行环境"
+              sub="切到「正式」会二次确认,并常驻顶栏告警"
+              right={
+                <div className="flex gap-0.5 rounded-lg border border-slate-900/[0.08] bg-slate-900/[0.03] p-0.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
+                  {(
+                    [
+                      ["演示", "demo"],
+                      ["沙盒", "sandbox"],
+                      ["正式", "live"],
+                    ] as const
+                  ).map(([lab, k]) => (
+                    <button
+                      key={k}
+                      onClick={() => pickEnv(k)}
+                      className={clsx(
+                        "rounded-md px-3 py-1 text-[11.5px] font-medium transition",
+                        kind === k
+                          ? k === "live"
+                            ? "bg-rose-600 text-white shadow-sm"
+                            : k === "sandbox"
+                            ? "bg-amber-500 text-white shadow-sm"
+                            : "bg-white text-slate-900 shadow-sm dark:bg-white/[0.14] dark:text-white"
+                          : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                      )}
+                    >
+                      {lab}
+                    </button>
+                  ))}
+                </div>
+              }
+            />
+            {/* WB 店铺 */}
+            <Row
+              k="Wildberries 店铺"
+              subEl={
+                redacted?.wbContentTokenSet ? (
+                  <span className="flex items-center gap-1 text-[10.5px] text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3 w-3" /> 已连接{wbExpiry ? ` · ${wbExpiry}` : ""}
+                  </span>
+                ) : (
+                  <span className="text-[10.5px] text-amber-600 dark:text-amber-400">未连接 · 处于演示模式</span>
+                )
+              }
+              right={
+                <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setEditWb((v) => !v)}>
+                  {editWb ? "收起" : redacted?.wbContentTokenSet ? "续期 / 修改" : "配置"}
+                </button>
+              }
+            />
+            {editWb && (
+              <div className="pb-3">
                 <input
-                  type="number"
-                  min={0}
-                  step={step}
-                  className="input"
-                  value={val}
-                  onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+                  type={inputType}
+                  className="input mb-2"
+                  placeholder={redacted?.wbContentTokenSet ? "留空保持不变" : "粘贴 Content 范围 Token(JWT)"}
+                  value={wbContentToken}
+                  onChange={(e) => setWbContentToken(e.target.value)}
                 />
+                <p className="text-[11px] text-slate-500">
+                  卖家后台「设置 → 访问 API」生成,勾选 <b>Контент</b> 与 <b>Цены и скидки</b>,且非只读。
+                </p>
               </div>
-            ))}
+            )}
+            {/* Aurixel */}
+            <Row
+              last
+              k="Aurixel(AI 引擎)"
+              subEl={
+                redacted?.aurixelKeySet ? (
+                  <span className="flex items-center gap-1 text-[10.5px] text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3 w-3" /> 已连接 · 文案 {redacted.aurixelChatModel}
+                    {balance && (
+                      <span className="text-slate-500 dark:text-slate-400">
+                        {" "}
+                        · 余额 ¥{balance.rmb.toFixed(0)} (${balance.usd.toFixed(2)})
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-[10.5px] text-amber-600 dark:text-amber-400">未连接</span>
+                )
+              }
+              right={
+                <div className="flex gap-1.5">
+                  <button
+                    className="btn-ghost px-3 py-1.5 text-xs"
+                    onClick={() => api.openUrl("https://conduit-api.aurixel.ai")}
+                  >
+                    充值
+                  </button>
+                  <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setEditAi((v) => !v)}>
+                    {editAi ? "收起" : "修改"}
+                  </button>
+                </div>
+              }
+            />
+            {editAi && (
+              <div className="pb-3">
+                <input
+                  type={inputType}
+                  className="input mb-2"
+                  placeholder={redacted?.aurixelKeySet ? "留空保持不变" : "ck_..."}
+                  value={aurixelApiKey}
+                  onChange={(e) => setAurixelApiKey(e.target.value)}
+                />
+                <select className="input" value={aurixelChatModel} onChange={(e) => setAurixelChatModel(e.target.value)}>
+                  <option value="gpt-5.5">gpt-5.5</option>
+                  <option value="gpt-4o">gpt-4o</option>
+                  <option value="claude-opus-4-8">claude-opus-4-8</option>
+                  <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+                  <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
+                </select>
+              </div>
+            )}
           </div>
-        </section>
 
-        <button className="btn-primary w-full" onClick={save} disabled={saving}>
-          {saving ? (
-            <><Loader2 className="h-4 w-4 animate-spin" /> 保存中…</>
-          ) : saved ? (
-            <><Check className="h-4 w-4" /> 已保存</>
-          ) : (
-            <><Save className="h-4 w-4" /> 保存设置</>
+          {/* ════ 高级 ════ */}
+          <button
+            onClick={() => setAdvanced((v) => !v)}
+            className="flex w-full items-center justify-between rounded-xl border border-slate-900/[0.1] bg-white px-4 py-3 text-sm text-slate-600 hover:bg-slate-900/[0.02] dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300"
+          >
+            <span className="flex items-center gap-2">
+              <SettingsIcon className="h-4 w-4 text-wb-purple" /> 高级设置
+              <span className="text-[10.5px] text-slate-400">(普通卖家通常不用动)</span>
+            </span>
+            <ChevronDown className={clsx("h-4 w-4 text-slate-400 transition-transform", advanced && "rotate-180")} />
+          </button>
+
+          {advanced && (
+            <div className="card mt-2 px-4">
+              {/* 默认发货仓库 */}
+              <Row
+                k="默认发货仓库"
+                right={
+                  <select
+                    className="input max-w-[200px] py-1.5 text-sm"
+                    value={defaultWarehouseId || ""}
+                    onChange={(e) => setDefaultWarehouseId(Number(e.target.value) || 0)}
+                  >
+                    <option value="">（暂不设置）</option>
+                    {warehouses?.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                }
+              />
+              {/* 包裹尺寸 */}
+              <Row
+                k="常用包裹尺寸 / 重量"
+                right={
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    {defaultLength}×{defaultWidth}×{defaultHeight}cm · {defaultWeight}kg
+                    <button className="btn-ghost px-2.5 py-1 text-xs" onClick={() => setEditPkg((v) => !v)}>
+                      {editPkg ? "收起" : "修改"}
+                    </button>
+                  </div>
+                }
+              />
+              {editPkg && (
+                <div className="grid grid-cols-4 gap-2 pb-3">
+                  {(
+                    [
+                      ["长cm", defaultLength, setDefaultLength, 1],
+                      ["宽cm", defaultWidth, setDefaultWidth, 1],
+                      ["高cm", defaultHeight, setDefaultHeight, 1],
+                      ["重kg", defaultWeight, setDefaultWeight, 0.1],
+                    ] as const
+                  ).map(([lab, val, setter, step]) => (
+                    <div key={lab}>
+                      <input
+                        type="number"
+                        min={0}
+                        step={step}
+                        className="input py-1.5 text-center text-sm"
+                        value={val}
+                        onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+                      />
+                      <span className="mt-0.5 block text-center text-[10px] text-slate-400">{lab}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* 新品默认库存 — 留空更稳 */}
+              <Row
+                k="新品默认库存"
+                sub="留空 = 上架后去「商品管理」逐个补货(更稳)"
+                right={
+                  <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-wb-purple"
+                      checked={autoStock}
+                      onChange={(e) => setAutoStock(e.target.checked)}
+                    />
+                    {autoStock ? (
+                      <input
+                        type="number"
+                        min={0}
+                        className="input w-20 py-1.5 text-sm"
+                        value={defaultStock}
+                        onChange={(e) => setDefaultStock(Math.max(0, Number(e.target.value) || 0))}
+                      />
+                    ) : (
+                      <span className="text-slate-400">留空</span>
+                    )}
+                  </label>
+                }
+              />
+              {/* 配图引擎 */}
+              <Row
+                k="配图引擎"
+                right={
+                  <select
+                    className="input max-w-[220px] py-1.5 text-sm"
+                    value={imageProvider}
+                    onChange={(e) => setImageProvider(e.target.value)}
+                  >
+                    <option value="aurixel">Aurixel(推荐)</option>
+                    <option value="pollinations">Pollinations(免 Key)</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                }
+              />
+              {imageProvider === "openai" && (
+                <div className="pb-3">
+                  <input
+                    type={inputType}
+                    className="input"
+                    placeholder={redacted?.openaiKeySet ? "OpenAI Key 留空保持不变" : "sk-..."}
+                    value={openaiApiKey}
+                    onChange={(e) => setOpenaiApiKey(e.target.value)}
+                  />
+                </div>
+              )}
+              {imageProvider === "pollinations" && (
+                <div className="pb-3">
+                  <input
+                    type={inputType}
+                    className="input"
+                    placeholder={redacted?.pollinationsTokenSet ? "Pollinations Token 留空保持不变" : "可选 · 解除限流/水印"}
+                    value={pollinationsToken}
+                    onChange={(e) => setPollinationsToken(e.target.value)}
+                  />
+                </div>
+              )}
+              {/* 价格单独 Token */}
+              <Row
+                last
+                k="价格用单独 Token"
+                sub="一般一个多权限 Token 就够,无需开"
+                right={
+                  <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setEditPriceTok((v) => !v)}>
+                    {editPriceTok ? "收起" : redacted?.wbPricesTokenSet ? "已设 · 修改" : "设置"}
+                  </button>
+                }
+              />
+              {editPriceTok && (
+                <div className="pb-3">
+                  <input
+                    type={inputType}
+                    className="input"
+                    placeholder="留空则复用上面的店铺 Token"
+                    value={wbPricesToken}
+                    onChange={(e) => setWbPricesToken(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {/* 显示密钥 */}
+              <div className="border-t border-slate-900/[0.06] py-3 dark:border-white/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => setReveal((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                >
+                  {reveal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {reveal ? "隐藏密钥明文" : "显示密钥明文"}
+                </button>
+              </div>
+            </div>
           )}
-        </button>
+        </div>
       </div>
+
+      {/* ── Sticky save ── */}
+      <div className="shrink-0 border-t border-slate-900/[0.06] pt-3 dark:border-white/[0.06]">
+        <div className="mx-auto max-w-3xl">
+          <button className="btn-primary w-full" onClick={save} disabled={saving}>
+            {saving ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> 保存中…</>
+            ) : saved ? (
+              <><Check className="h-4 w-4" /> 已保存</>
+            ) : (
+              <><Save className="h-4 w-4" /> 保存设置</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One setting row: label (+ optional sub) on the left, control on the right.
+function Row({
+  k,
+  sub,
+  subEl,
+  right,
+  last,
+}: {
+  k: string;
+  sub?: string;
+  subEl?: React.ReactNode;
+  right: React.ReactNode;
+  last?: boolean;
+}) {
+  return (
+    <div
+      className={clsx(
+        "flex items-center justify-between gap-3 py-3",
+        !last && "border-b border-slate-900/[0.06] dark:border-white/[0.06]"
+      )}
+    >
+      <div className="min-w-0">
+        <div className="text-[13px] text-slate-800 dark:text-slate-100">{k}</div>
+        {sub && <div className="mt-0.5 text-[10.5px] text-slate-500 dark:text-slate-400">{sub}</div>}
+        {subEl && <div className="mt-0.5">{subEl}</div>}
+      </div>
+      <div className="shrink-0">{right}</div>
     </div>
   );
 }

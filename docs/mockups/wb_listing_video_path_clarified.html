@@ -1,0 +1,66 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Clarified input step showing separate image and video upload zones, plus the video's full journey from upload to Wildberries.</h2>
+<style>
+  .vp{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .vp *{box-sizing:border-box;}
+  .vp-in{width:100%;border:1px solid var(--ln);background:#fff;border-radius:10px;padding:9px 11px;font-size:12.5px;color:var(--ink);}
+  .vp-lbl{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);margin:0 0 5px;}
+  .vp-prime{color:#fff;background-image:linear-gradient(135deg,var(--pk),var(--pk2));border:none;border-radius:11px;padding:11px 16px;font-size:13px;font-weight:500;cursor:pointer;width:100%;}
+  .vp-drop{border:1px dashed rgba(15,23,42,.22);border-radius:11px;padding:14px 10px;text-align:center;background:#F4F6FA;height:100%;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;overflow:hidden;" class="vp">
+  <div style="padding:11px 14px;border-bottom:1px solid rgba(15,23,42,.08);background:#fff;font-size:13px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:6px;"><span style="background:linear-gradient(135deg,#CB11AB,#7F3FBF);color:#fff;border-radius:6px;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;">1</span> 输入</div>
+
+  <div style="padding:14px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;">
+      <div><p class="vp-lbl">商品名 *</p><input class="vp-in" placeholder="无线蓝牙耳机"/></div>
+      <div><p class="vp-lbl">关键词(俄语)</p><input class="vp-in" placeholder="наушники"/></div>
+      <div><p class="vp-lbl">售价 ₽</p><input class="vp-in" value="1990"/></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+      <div>
+        <p class="vp-lbl"><i class="ti ti-photo" style="color:#7F3FBF"></i> 参考产品图 · 可选</p>
+        <div class="vp-drop"><i class="ti ti-upload" style="font-size:18px;color:#7F3FBF;"></i>
+          <div style="font-size:11.5px;color:#334155;margin-top:5px;">拖入真实产品图</div>
+          <div style="font-size:10px;color:#94a3b8;margin-top:3px;">AI 据此出主图/详情图;留空则全自动生成</div></div>
+      </div>
+      <div>
+        <p class="vp-lbl"><i class="ti ti-video" style="color:#CB11AB"></i> 产品视频 · 可选 · 英文</p>
+        <div class="vp-drop" style="border-color:rgba(203,17,171,.35);background:#FBEAF0;"><i class="ti ti-upload" style="font-size:18px;color:#CB11AB;"></i>
+          <div style="font-size:11.5px;color:#993556;margin-top:5px;">拖入你的英文产品视频</div>
+          <div style="font-size:10px;color:#b56;margin-top:3px;">上传后会<b>自动配成俄语</b>,随卡片上架</div></div>
+      </div>
+    </div>
+
+    <button class="vp-prime"><i class="ti ti-sparkles"></i> 一键生成</button>
+    <div style="font-size:10.5px;color:#94a3b8;text-align:center;margin-top:8px;">生成俄语图文 + 配图,并把视频配成俄语(若上传了)—— 一次完成,消耗 Aurixel 余额</div>
+  </div>
+
+  <!-- video journey -->
+  <div style="background:#fff;border-top:1px solid rgba(15,23,42,.08);padding:14px;">
+    <div style="font-size:11px;color:#64748b;margin-bottom:10px;display:flex;align-items:center;gap:6px;"><i class="ti ti-route" style="color:#CB11AB"></i> 视频的完整去向(不用你单独跑配音)</div>
+    <div style="display:flex;align-items:stretch;gap:6px;">
+      <div style="flex:1;background:#FBEAF0;border:1px solid #F4C0D1;border-radius:9px;padding:9px 8px;text-align:center;">
+        <i class="ti ti-upload" style="color:#993556;font-size:16px;"></i>
+        <div style="font-size:11px;font-weight:500;color:#72243E;margin-top:4px;">① 上传英文视频</div>
+        <div style="font-size:9.5px;color:#993556;margin-top:2px;">就在这一步</div></div>
+      <div style="display:flex;align-items:center;color:#cbd5e1;"><i class="ti ti-chevron-right"></i></div>
+      <div style="flex:1;background:#EEEDFE;border:1px solid #CECBF6;border-radius:9px;padding:9px 8px;text-align:center;">
+        <i class="ti ti-language" style="color:#534AB7;font-size:16px;"></i>
+        <div style="font-size:11px;font-weight:500;color:#3C3489;margin-top:4px;">② 自动配俄语</div>
+        <div style="font-size:9.5px;color:#534AB7;margin-top:2px;">点「一键生成」时,与图文并行 ~40s</div></div>
+      <div style="display:flex;align-items:center;color:#cbd5e1;"><i class="ti ti-chevron-right"></i></div>
+      <div style="flex:1;background:#EEEDFE;border:1px solid #CECBF6;border-radius:9px;padding:9px 8px;text-align:center;">
+        <i class="ti ti-eye" style="color:#534AB7;font-size:16px;"></i>
+        <div style="font-size:11px;font-weight:500;color:#3C3489;margin-top:4px;">③ 预览确认</div>
+        <div style="font-size:9.5px;color:#534AB7;margin-top:2px;">第 2 步看/可重配</div></div>
+      <div style="display:flex;align-items:center;color:#cbd5e1;"><i class="ti ti-chevron-right"></i></div>
+      <div style="flex:1;background:#E1F5EE;border:1px solid #9FE1CB;border-radius:9px;padding:9px 8px;text-align:center;">
+        <i class="ti ti-rocket" style="color:#0F6E56;font-size:16px;"></i>
+        <div style="font-size:11px;font-weight:500;color:#085041;margin-top:4px;">④ 随卡片上架</div>
+        <div style="font-size:9.5px;color:#0F6E56;margin-top:2px;">第 3 步发布时一起传 WB</div></div>
+    </div>
+  </div>
+</div>
+</div>

@@ -1,0 +1,65 @@
+<div style="background: var(--color-background-secondary); border-radius: var(--border-radius-lg); padding: 14px;">
+<h2 class="sr-only">Redesigned listing records: drafts (continuable) split from publish history (read-only), with plain-language status.</h2>
+<style>
+  .hi{--pk:#CB11AB;--pk2:#7F3FBF;--ink:#0f172a;--ink2:#334155;--mut:#64748b;--ln:rgba(15,23,42,.10);--ins:#F4F6FA;}
+  .hi *{box-sizing:border-box;}
+  .hi-tab{border:none;background:transparent;border-radius:7px;padding:6px 16px;font-size:12.5px;color:var(--mut);cursor:pointer;}
+  .hi-tab.on{background:#fff;color:var(--ink);font-weight:500;box-shadow:0 1px 2px rgba(15,23,42,.08);}
+  .hi-btn{border:1px solid var(--ln);background:#fff;border-radius:9px;padding:6px 12px;font-size:11.5px;color:var(--ink2);cursor:pointer;}
+  .hi-prime{color:#fff;background-image:linear-gradient(135deg,var(--pk),var(--pk2));border:none;border-radius:9px;padding:6px 14px;font-size:11.5px;font-weight:500;cursor:pointer;}
+  .ru{font-size:12.5px;color:#0f172a;font-weight:500;}
+  .zh{font-size:10.5px;color:#64748b;}
+  .hi-chip{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 8px;border-radius:999px;}
+</style>
+<div style="background:#F7F8FB;border:1px solid rgba(15,23,42,.10);border-radius:14px;overflow:hidden;" class="hi">
+  <div style="padding:12px 14px;border-bottom:1px solid rgba(15,23,42,.08);background:#fff;display:flex;align-items:center;gap:12px;">
+    <span style="font-size:15px;font-weight:500;color:var(--ink);">上架记录</span>
+    <div style="display:flex;gap:3px;background:#F4F6FA;border:1px solid rgba(15,23,42,.08);border-radius:9px;padding:3px;margin-left:4px;">
+      <button class="hi-tab on" data-t="0" onclick="hiGo(0)">草稿箱 · 2</button>
+      <button class="hi-tab" data-t="1" onclick="hiGo(1)">发布历史 · 5</button>
+    </div>
+  </div>
+  <div id="hi-body" style="padding:12px;min-height:240px;"></div>
+</div>
+</div>
+<script>
+(function(){
+  function draft(ru,zh,note){
+    return '<div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:11px;display:flex;gap:11px;align-items:center;">'
+      +'<div style="width:44px;height:44px;border-radius:8px;background:#3b2a5f;flex-shrink:0;"></div>'
+      +'<div style="flex:1;min-width:0;"><div class="ru">'+ru+'</div><div class="zh">'+zh+'</div><div style="font-size:10.5px;color:#94a3b8;margin-top:3px;">'+note+'</div></div>'
+      +'<button class="hi-prime"><i class="ti ti-arrow-right"></i> 继续编辑发布</button>'
+      +'<button class="hi-btn" style="color:#993556;"><i class="ti ti-trash"></i></button>'
+      +'</div>';
+  }
+  function hist(ru,zh,st){
+    var chip,act;
+    if(st==='live'){chip='<span class="hi-chip" style="color:#0F6E56;background:#E1F5EE;">● 已上架</span>';act='<button class="hi-btn"><i class="ti ti-external-link"></i> 查看</button><button class="hi-btn">去商品管理</button>';}
+    else if(st==='test'){chip='<span class="hi-chip" style="color:#854F0B;background:#FAEEDA;">测试发布</span>';act='<span style="font-size:10.5px;color:#94a3b8;">不会上线真店</span>';}
+    else{chip='<span class="hi-chip" style="color:#A32D2D;background:#FCEBEB;">● 失败</span>';act='<button class="hi-prime"><i class="ti ti-refresh"></i> 重新发布</button>';}
+    return '<div style="background:#fff;border:1px solid rgba(15,23,42,.10);border-radius:11px;padding:11px;display:flex;gap:11px;align-items:center;">'
+      +'<div style="width:44px;height:44px;border-radius:8px;background:#1e3a5f;flex-shrink:0;"></div>'
+      +'<div style="flex:1;min-width:0;"><div class="ru">'+ru+'</div><div class="zh">'+zh+'</div><div style="margin-top:4px;">'+chip+'</div></div>'
+      +'<div style="display:flex;gap:5px;align-items:center;">'+act+'</div>'
+      +'</div>';
+  }
+  var bodies=[
+    '<div style="font-size:11px;color:#64748b;margin:0 2px 9px;">还没发布的草稿,点「继续编辑发布」回到 3 步流程接着做。</div>'
+      +'<div style="display:flex;flex-direction:column;gap:9px;">'
+      +draft('Наушники Air','降噪耳机 Air','已生成图文,视频配俄语完成 · 待发布')
+      +draft('Спортивные наушники X','运动耳机 X','草稿 · 类目待确认')
+      +'</div>',
+    '<div style="display:flex;align-items:center;gap:8px;margin:0 2px 9px;">'
+      +'<span style="font-size:11px;color:#64748b;">只读追溯 · 改价/库存请去「商品管理」</span>'
+      +'<div style="margin-left:auto;display:flex;gap:5px;"><button class="hi-btn" style="padding:3px 10px;">全部</button><button class="hi-btn" style="padding:3px 10px;color:#A32D2D;">失败 1</button></div></div>'
+      +'<div style="display:flex;flex-direction:column;gap:9px;">'
+      +hist('Беспроводные наушники Pro','无线耳机 Pro','live')
+      +hist('Чехол AquaPro','AquaPro 手机壳','live')
+      +hist('Наушники Lite','耳机 Lite','fail')
+      +hist('Тестовый товар','测试商品','test')
+      +'</div>'
+  ];
+  window.hiGo=function(t){document.querySelectorAll('.hi-tab').forEach(function(b){b.classList.toggle('on',+b.getAttribute('data-t')===t);});document.getElementById('hi-body').innerHTML=bodies[t];};
+  hiGo(0);
+})();
+</script>
