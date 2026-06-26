@@ -2,9 +2,67 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Sparkles, Settings, History, Layers, Boxes, Sun, Moon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Sparkles, Settings, History, Layers, Boxes, Sun, Moon, Wallet, Plus } from "lucide-react";
 import clsx from "clsx";
+import { api } from "@/lib/api";
+
+// Aurixel top-up page (the seller's account / billing). The gateway host
+// (conduit-api.*) is the API, not a human page — this is the real site.
+const AURIXEL_TOPUP_URL = "https://aurixel.ai";
+
+/// Always-visible Aurixel USD balance, pinned in the top bar on every screen.
+/// Click = open the top-up page; balance refreshes on mount and on window focus
+/// (so it reflects spend after generating cards). Hidden until a key is set.
+function BalanceChip() {
+  const [usd, setUsd] = useState<number | null>(null);
+  const [hasKey, setHasKey] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await api.getSettings();
+      setHasKey(!!s.aurixelKeySet);
+      if (!s.aurixelKeySet) return;
+      const b = await api.aurixelBalance();
+      setUsd(b.usd);
+    } catch {
+      /* ignore — keep last known value */
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [refresh]);
+
+  if (!hasKey) return null;
+
+  const low = usd != null && usd < 5;
+
+  return (
+    <button
+      type="button"
+      onClick={() => api.openUrl(AURIXEL_TOPUP_URL)}
+      title="Aurixel 余额（点击充值）"
+      className={clsx(
+        "group flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[13px] font-medium tabular-nums transition",
+        low
+          ? "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+          : "border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-700 hover:bg-emerald-500/[0.14] dark:text-emerald-300"
+      )}
+    >
+      <Wallet className="h-4 w-4 shrink-0 opacity-80" />
+      <span>{usd == null ? "$…" : `$${usd.toFixed(2)}`}</span>
+      <Plus className="h-3.5 w-3.5 shrink-0 opacity-50 transition group-hover:opacity-100" />
+    </button>
+  );
+}
 
 const links = [
   { href: "/", label: "工作台", icon: Sparkles },
@@ -83,6 +141,7 @@ export function Nav() {
               );
             })}
           </nav>
+          <BalanceChip />
           <ThemeToggle />
         </div>
       </div>

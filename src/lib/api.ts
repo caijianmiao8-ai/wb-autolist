@@ -117,6 +117,11 @@ export const api = {
       characteristics: params.characteristics,
       tnved: params.tnved,
     }),
+  /** Update a draft's package dimensions (cm) + gross weight (kg) at 复核. */
+  updateDimensions: (
+    id: string,
+    dims: { length: number; width: number; height: number; weight: number }
+  ) => invoke<Listing>("update_dimensions", { id, ...dims }),
   publish: (id: string) => invoke<Listing>("publish", { id }),
   listListings: () => invoke<Listing[]>("list_listings"),
   getListing: (id: string) => invoke<Listing | null>("get_listing", { id }),
@@ -147,6 +152,9 @@ export const api = {
   /** Full characteristics dictionary for a subject. */
   subjectCharacteristics: (subjectId: number) =>
     invoke<WbCharacteristic[]>("subject_characteristics", { subjectId }),
+  /** AI-predicted characteristics [{id,value}] for a draft (editor pre-fill). */
+  predictCharacteristics: (id: string, subjectId: number) =>
+    invoke<{ id: number; value: unknown }[]>("predict_characteristics", { id, subjectId }),
   /** WB color directory (цвет dropdown). */
   wbColors: () => invoke<WbColor[]>("wb_colors"),
   /** Resolve a TNVED customs code for a subject. */

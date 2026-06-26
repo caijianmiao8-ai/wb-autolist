@@ -18,7 +18,7 @@ import {
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { EnvBadge } from "./EnvBadge";
-import type { ManageView, ManagedCard, ManagedStatus } from "@/lib/types";
+import type { ManageView, ManagedCard, ManagedStatus, Warehouse } from "@/lib/types";
 
 // Human-readable status — never the raw WB enum. Dot + label, like the mockup.
 const STATUS: Record<ManagedStatus, { label: string; cls: string }> = {
@@ -57,6 +57,9 @@ export function ManagePanel() {
   const [cooldown, setCooldown] = useState(0);
   const [dryRun, setDryRun] = useState(true);
   const [sandbox, setSandbox] = useState(false);
+  // Live warehouses, fetched as a fallback when the local DB has none synced —
+  // so 库存/下架 aren't blocked just because a sync didn't populate the picker.
+  const [whFallback, setWhFallback] = useState<Warehouse[]>([]);
   const cdRef = useRef(0);
 
   const loadDb = useCallback(async (wh: number | null) => {
@@ -81,6 +84,19 @@ export function ManagePanel() {
         const def = cfg?.defaultWarehouseId || 0;
         const v = await loadDb(def || null);
         if (def && v.warehouseId == null) await loadDb(def);
+        // DB has no warehouses synced → pull them live so the picker isn't empty
+        // and 库存/下架 stay usable. Auto-select the first if none chosen.
+        if (v.warehouses.length === 0) {
+          const live = await api.listWarehouses().catch(() => [] as Warehouse[]);
+          if (live.length) {
+            setWhFallback(live);
+            if (!def && warehouseId == null) {
+              setWarehouseId(live[0].id);
+              api.saveSettings({ defaultWarehouseId: live[0].id }).catch(() => {});
+              await loadDb(live[0].id);
+            }
+          }
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -131,7 +147,10 @@ export function ManagePanel() {
     try {
       await api.syncWarehouses().catch(() => null);
       await api.syncProducts();
-      if (warehouseId) await api.syncStocks(warehouseId).catch(() => null);
+      // Sync stock for EVERY warehouse so the total is accurate (stock can be
+      // split across warehouses). Marketplace/stock domain isn't rate-limited.
+      const whs = await api.listWarehouses().catch(() => warehouses);
+      for (const w of whs) await api.syncStocks(w.id).catch(() => null);
       if (cooldown <= 0) {
         try {
           await api.syncPrices();
@@ -155,13 +174,30 @@ export function ManagePanel() {
 
   // The inline editors / inline red card ARE the confirmation — no window.confirm.
   async function doSetStock(card: ManagedCard, amount: number, isUnlist: boolean) {
-    if (!warehouseId) return setError("请先在右上角选择仓库。");
     if (!card.skus.length) return setError(`「${card.title || card.vendorCode}」没有条码,无法设库存。`);
     setBusyNm(card.nmID);
     try {
-      await api.setCardStock(warehouseId, card.skus, amount);
+      if (isUnlist) {
+        // 下架 = 真·全网下架:清空该商品在【所有仓库】的库存(货可能分散在多个仓)。
+        const whs = warehouses.length ? warehouses.map((w) => w.id) : warehouseId ? [warehouseId] : [];
+        if (!whs.length) {
+          setError("没有可用仓库。");
+          setBusyNm(null);
+          return;
+        }
+        for (const wid of whs) await api.setCardStock(wid, card.skus, 0);
+        flash(`已提交下架(清空 ${whs.length} 个仓库的库存),约 1 分钟生效。`);
+      } else {
+        // 设库存 = 加到当前选中的仓库。
+        if (!warehouseId) {
+          setError("请先在右上角选择「设库存到」的仓库。");
+          setBusyNm(null);
+          return;
+        }
+        await api.setCardStock(warehouseId, card.skus, amount);
+        flash("库存已提交,约 1 分钟生效。");
+      }
       markPending(card.nmID);
-      flash(isUnlist ? "已提交下架,约 1 分钟生效。" : "库存已提交,约 1 分钟生效。");
       await loadDb(warehouseId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -187,14 +223,8 @@ export function ManagePanel() {
     }
   }
 
+  // Confirmation is the inline red 删除 card (panel === "delete"), no native dialog.
   async function doTrash(card: ManagedCard) {
-    const store = sandbox ? "沙盒测试" : "真实";
-    if (
-      !window.confirm(
-        `删除「${card.title || card.vendorCode}」?\n\n· 从${store}店铺移入 WB 回收站(30 天内可恢复)\n· 本地记录一并清除`
-      )
-    )
-      return;
     setBusyNm(card.nmID);
     try {
       await api.trashCards([card.nmID]);
@@ -209,7 +239,8 @@ export function ManagePanel() {
   const cards = view?.cards ?? [];
   const sync = view?.sync;
   const now = sync?.nowEpoch ?? 0;
-  const warehouses = view?.warehouses ?? [];
+  // Prefer DB warehouses; fall back to the live list when the DB has none.
+  const warehouses = (view?.warehouses?.length ? view.warehouses : whFallback) ?? [];
   const neverSynced = sync ? sync.products.lastSyncAt === 0 : false;
   const sellable = cards.filter((c) => c.status === "live").length;
   const todo = cards.length - sellable;
@@ -240,12 +271,13 @@ export function ManagePanel() {
             )}
           >
             <WarehouseIcon className="h-3.5 w-3.5 text-slate-400" />
-            当前仓库:
+            设库存到:
             <select
               className="max-w-[150px] cursor-pointer bg-transparent outline-none"
               value={warehouseId ?? ""}
               onChange={(e) => onWarehouse(Number(e.target.value))}
               disabled={warehouses.length === 0}
+              title="设库存时加到哪个仓库;库存显示与下架是跨所有仓库的"
             >
               {warehouses.length === 0 && <option value="">（先刷新）</option>}
               {warehouses.map((w) => (
@@ -279,6 +311,17 @@ export function ManagePanel() {
         {error && (
           <div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/[0.08] px-4 py-2.5 text-sm text-rose-600 dark:text-rose-300">
             {error}
+          </div>
+        )}
+        {!loading && !warehouseId && (
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-500/[0.08] px-4 py-2.5 text-xs text-amber-700 dark:text-amber-200">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              未选择仓库 —— 改库存 / 下架需要先选仓库。
+              {warehouses.length > 0
+                ? "在右上角「当前仓库」里选一个即可。"
+                : "点右上「刷新」同步仓库;若仍为空,去 设置→高级→默认发货仓库 选一个。"}
+            </span>
           </div>
         )}
       </div>
@@ -330,7 +373,7 @@ export function ManagePanel() {
   );
 }
 
-type Panel = "price" | "stock" | "unlist" | "detail" | null;
+type Panel = "price" | "stock" | "unlist" | "delete" | "detail" | null;
 
 function CardRow({
   card,
@@ -446,6 +489,7 @@ function CardRow({
               className="rounded-lg border border-slate-900/[0.1] bg-white px-2.5 py-1 text-[11.5px] text-slate-600 transition hover:bg-slate-900/[0.03] disabled:opacity-50 dark:border-white/[0.1] dark:bg-white/[0.04] dark:text-slate-300"
               onClick={() => toggle("stock")}
               disabled={busy || !hasWarehouse}
+              title={!hasWarehouse ? "先在右上角选择仓库" : "设库存"}
             >
               库存
             </button>
@@ -453,8 +497,17 @@ function CardRow({
               className="rounded-lg border border-rose-500/30 bg-white px-2.5 py-1 text-[11.5px] text-rose-600 transition hover:bg-rose-500/10 disabled:opacity-50 dark:bg-white/[0.04] dark:text-rose-300"
               onClick={() => toggle("unlist")}
               disabled={busy || !hasWarehouse}
+              title={!hasWarehouse ? "先在右上角选择仓库" : "下架(库存清零)"}
             >
               下架
+            </button>
+            <button
+              className="grid place-items-center rounded-lg border border-rose-500/30 bg-white px-2 py-1 text-rose-600 transition hover:bg-rose-500/10 disabled:opacity-50 dark:bg-white/[0.04] dark:text-rose-300"
+              onClick={() => toggle("delete")}
+              disabled={busy}
+              title="删除卡片(移入 WB 回收站,30 天可恢复)"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
           <button
@@ -567,6 +620,35 @@ function CardRow({
         </div>
       )}
 
+      {panel === "delete" && (
+        <div className="border-t border-slate-900/[0.06] px-3 py-3 dark:border-white/[0.06]">
+          <div className="rounded-xl border-[1.5px] border-rose-400/70 bg-rose-500/[0.04] p-3.5">
+            <div className="flex items-center gap-1.5 text-sm font-medium text-rose-700 dark:text-rose-300">
+              <Trash2 className="h-4 w-4" /> 删除「{card.title || card.vendorCode}」?
+            </div>
+            <div className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              · 从<b>{sandbox ? "沙盒" : "真实"}</b>店铺移入 WB 回收站(<b>30 天内</b>可在 WB 后台恢复)。
+              <br />· 同时从本地列表移除。
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button className="btn-ghost px-3 py-1.5 text-xs" onClick={() => setPanel(null)}>
+                取消
+              </button>
+              <button
+                className="rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-medium text-white transition hover:bg-rose-700 disabled:opacity-50"
+                onClick={() => {
+                  onTrash();
+                  setPanel(null);
+                }}
+                disabled={busy}
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {panel === "detail" && (
         <div className="border-t border-slate-900/[0.06] bg-slate-900/[0.015] px-3 py-3 dark:border-white/[0.06] dark:bg-white/[0.015]">
           <div className="rounded-lg bg-slate-900/[0.04] px-3 py-2 font-mono text-[10.5px] text-slate-500 dark:bg-black/20 dark:text-slate-400">
@@ -582,13 +664,6 @@ function CardRow({
               title={sandbox ? "沙盒卡片没有公开商品页" : "在浏览器打开 WB 商品页"}
             >
               <ExternalLink className="h-3.5 w-3.5" /> 查看商品页
-            </button>
-            <button
-              className="btn-ghost px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-500/10 dark:text-rose-300"
-              onClick={onTrash}
-              disabled={busy}
-            >
-              <Trash2 className="h-3.5 w-3.5" /> 删除
             </button>
           </div>
         </div>

@@ -25,6 +25,11 @@ pub struct WbCharacteristic {
     #[serde(default, rename = "subjectID")]
     pub subject_id: i64,
     pub name: String,
+    /// Chinese display name for the same characteristic (WB `locale=zh`). Filled
+    /// by the `subject_characteristics` command for the bilingual editor; empty
+    /// in the pipeline (which only matches on the Russian `name`).
+    #[serde(default, rename = "nameZh")]
+    pub name_zh: String,
     #[serde(default)]
     pub required: bool,
     #[serde(default, rename = "unitName")]

@@ -540,7 +540,13 @@ export function Workbench() {
             </div>
           )}
           {step === "review" && listing && (
-            <ReviewCard listing={listing} dryRun={dryRun} sandbox={sandbox} videoPath={videoPath} />
+            <ReviewCard
+              listing={listing}
+              dryRun={dryRun}
+              sandbox={sandbox}
+              videoPath={videoPath}
+              onUpdate={setListing}
+            />
           )}
           {(step === "publishing" || step === "done") && (
             <ProgressPanel
@@ -985,11 +991,13 @@ function ReviewCard({
   dryRun,
   sandbox,
   videoPath,
+  onUpdate,
 }: {
   listing: Listing;
   dryRun: boolean;
   sandbox: boolean;
   videoPath: string | null;
+  onUpdate?: (l: Listing) => void;
 }) {
   const lDisc = Math.max(0, Math.min(99, listing.discount || 0));
   const base =
@@ -998,10 +1006,6 @@ function ReviewCard({
         ? Math.round(listing.price / (1 - lDisc / 100))
         : Math.round(listing.price)
       : 0;
-  const dims =
-    listing.length || listing.width || listing.height || listing.weight
-      ? `${listing.length ?? "—"}×${listing.width ?? "—"}×${listing.height ?? "—"}cm · ${listing.weight ?? "—"}kg`
-      : "默认";
   const cat = listing.subjectName || listing.copy?.categoryHint || "AI 自动选";
   const envLabel = dryRun ? "演示(不真实上架)" : sandbox ? "沙盒测试店铺" : "真实店铺(线上)";
   const media =
@@ -1020,7 +1024,7 @@ function ReviewCard({
         )}
       </span>,
     ],
-    ["包裹尺寸/重量", dims],
+    ["包裹尺寸/重量", <DimsCell key="d" listing={listing} onUpdate={onUpdate} />],
     ["类目", cat],
     ["媒体", media],
     [
@@ -1074,6 +1078,100 @@ function ReviewCard({
   );
 }
 
+// 复核里「包裹尺寸/重量」可就地改 —— WB 按体积/重量计物流仓储费,发布前能改最稳。
+function DimsCell({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Listing) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [l, setL] = useState(listing.length || 20);
+  const [w, setW] = useState(listing.width || 15);
+  const [h, setH] = useState(listing.height || 5);
+  const [kg, setKg] = useState(listing.weight || 0.3);
+
+  // Resync the edit fields if the listing's dimensions change from elsewhere
+  // (while not actively editing), so reopening never shows stale values.
+  useEffect(() => {
+    if (editing) return;
+    setL(listing.length || 20);
+    setW(listing.width || 15);
+    setH(listing.height || 5);
+    setKg(listing.weight || 0.3);
+  }, [listing.length, listing.width, listing.height, listing.weight, editing]);
+
+  const has = !!(listing.length || listing.width || listing.height || listing.weight);
+  const text = has
+    ? `${listing.length ?? "—"}×${listing.width ?? "—"}×${listing.height ?? "—"}cm · ${listing.weight ?? "—"}kg`
+    : "默认";
+
+  async function save() {
+    setSaving(true);
+    try {
+      const updated = await api.updateDimensions(listing.id, {
+        length: Math.max(0, l),
+        width: Math.max(0, w),
+        height: Math.max(0, h),
+        weight: Math.max(0, kg),
+      });
+      onUpdate?.(updated);
+      setEditing(false);
+    } catch {
+      /* keep editing open so the user can retry */
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <span className="inline-flex items-center gap-2">
+        {text}
+        <button
+          className="text-[11px] text-wb-purple hover:underline"
+          onClick={() => setEditing(true)}
+        >
+          改
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center justify-end gap-1">
+      {(
+        [
+          ["长", l, setL, 1],
+          ["宽", w, setW, 1],
+          ["高", h, setH, 1],
+          ["重", kg, setKg, 0.1],
+        ] as const
+      ).map(([lab, val, setter, step]) => (
+        <span key={lab} className="inline-flex items-center gap-0.5">
+          <input
+            type="number"
+            min={0}
+            step={step}
+            value={val}
+            onChange={(e) => setter(Math.max(0, Number(e.target.value) || 0))}
+            className="input w-14 px-1 py-1 text-center text-xs"
+          />
+          <span className="text-[10px] text-slate-400">{lab}</span>
+        </span>
+      ))}
+      <button
+        className="btn-primary ml-1 px-2.5 py-1 text-[11px]"
+        onClick={save}
+        disabled={saving}
+      >
+        {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : "存"}
+      </button>
+      <button
+        className="text-[11px] text-slate-400 hover:text-slate-600"
+        onClick={() => setEditing(false)}
+      >
+        取消
+      </button>
+    </span>
+  );
+}
+
 // 高级·全部商品参数 编辑器 —— 默认折叠。展开后按类目拉特征字典,可逐项编辑;
 // 留空的项发布时 AI 兜底。保存写入 listing,publish 时「用户值优先」。
 function ParamsEditor({ listing }: { listing: Listing }) {
@@ -1091,6 +1189,7 @@ function ParamsEditor({ listing }: { listing: Listing }) {
   const [tnved, setTnved] = useState<string>(listing.tnved ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [predicting, setPredicting] = useState(false);
   const [catQuery, setCatQuery] = useState("");
   const [catResults, setCatResults] = useState<WbSubject[]>([]);
   const [catSearching, setCatSearching] = useState(false);
@@ -1105,20 +1204,39 @@ function ParamsEditor({ listing }: { listing: Listing }) {
       ]);
       setCharcs(cs);
       setColors(cols);
+      const fmt = (v: unknown) =>
+        Array.isArray(v) ? (v as unknown[]).join(", ") : String(v ?? "");
+      const saved = listing.characteristics ?? [];
       const pre: Record<number, string> = {};
-      (listing.characteristics ?? []).forEach((c) => {
-        pre[c.id] = Array.isArray(c.value)
-          ? (c.value as unknown[]).join(", ")
-          : String(c.value ?? "");
+      saved.forEach((c) => {
+        pre[c.id] = fmt(c.value);
       });
       setValues(pre);
+      setSubjectId(sid);
+      setSubjectName(sname);
+      setLoaded(true);
+      // No user-confirmed values yet → pre-fill the AI's standard suggestions
+      // (same values publish would auto-fill) so the seller sees ~20 filled
+      // rows to review instead of an empty form.
+      if (saved.length === 0) {
+        setPredicting(true);
+        try {
+          const pred = await api.predictCharacteristics(listing.id, sid);
+          const pv: Record<number, string> = {};
+          pred.forEach((c) => {
+            pv[c.id] = fmt(c.value);
+          });
+          setValues(pv);
+        } catch {
+          /* non-fatal: leave blank, publish still auto-fills */
+        } finally {
+          setPredicting(false);
+        }
+      }
       if (!tnved) {
         const t = await api.wbTnved(sid).catch(() => null);
         if (t) setTnved(t);
       }
-      setSubjectId(sid);
-      setSubjectName(sname);
-      setLoaded(true);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "读取类目特征失败");
     } finally {
@@ -1271,19 +1389,36 @@ function ParamsEditor({ listing }: { listing: Listing }) {
             </div>
           ) : charcs.length > 0 ? (
             <>
-              <div className="mb-1.5 text-xs text-slate-500">
-                商品特征(该类目共 {charcs.length} 项;留空的发布时 AI 自动填)
+              <div className="mb-1.5 flex items-center gap-2 text-xs text-slate-500">
+                {predicting ? (
+                  <span className="flex items-center gap-1.5 text-wb-purple">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> AI 正在按类目填充标准特征值…
+                  </span>
+                ) : (
+                  <>
+                    商品特征(该类目共 {charcs.length} 项,已为你填好{" "}
+                    <b className="text-slate-700 dark:text-slate-200">
+                      {Object.values(values).filter((v) => v && v.trim()).length}
+                    </b>{" "}
+                    项;可逐项改,留空的发布时仍会 AI 兜底)
+                  </>
+                )}
               </div>
               <div className="max-h-72 space-y-2 overflow-auto pr-1">
                 {charcs.map((c) => (
                   <div key={c.charcID} className="grid grid-cols-[1fr_1.4fr] items-center gap-2">
                     <span
-                      className="truncate text-xs text-slate-600 dark:text-slate-300"
-                      title={c.name}
+                      className="min-w-0 text-xs text-slate-600 dark:text-slate-300"
+                      title={c.nameZh ? `${c.nameZh} · ${c.name}` : c.name}
                     >
-                      {c.name}
-                      {c.required && <span className="text-rose-500"> *</span>}
-                      {c.unitName && <span className="text-slate-400"> ({c.unitName})</span>}
+                      <span className="block truncate text-slate-700 dark:text-slate-200">
+                        {c.nameZh || c.name}
+                        {c.required && <span className="text-rose-500"> *</span>}
+                        {c.unitName && <span className="text-slate-400"> ({c.unitName})</span>}
+                      </span>
+                      {c.nameZh && c.nameZh !== c.name && (
+                        <span className="block truncate text-[10px] text-slate-400">{c.name}</span>
+                      )}
                     </span>
                     {isColor(c) && colors.length > 0 ? (
                       <select

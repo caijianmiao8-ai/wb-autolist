@@ -371,11 +371,18 @@ pub fn get_managed_cards(
             prices.insert(row.nm_id, row);
         }
     }
-    // stocks for the selected warehouse
+    // Stock summed across ALL warehouses — a card's stock can be split between
+    // warehouses, so the panel must show the true total sellable quantity. Reading
+    // only the picked warehouse silently hid stock sitting on the others.
+    let _ = warehouse_id; // warehouse selection now only targets 设库存, not display
+    let stocks_synced: bool = conn
+        .query_row("SELECT COUNT(*) FROM stocks", [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0)
+        > 0;
     let mut stock_by_sku: HashMap<String, i64> = HashMap::new();
-    if let Some(wh) = warehouse_id {
-        let mut stmt = conn.prepare("SELECT sku,amount FROM stocks WHERE warehouse_id=?1")?;
-        let it = stmt.query_map(params![wh], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    {
+        let mut stmt = conn.prepare("SELECT sku, SUM(amount) FROM stocks GROUP BY sku")?;
+        let it = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
         for row in it.flatten() {
             stock_by_sku.insert(row.0, row.1);
         }
@@ -400,13 +407,15 @@ pub fn get_managed_cards(
         ))
     })?;
 
-    let warehouse_selected = warehouse_id.is_some();
+    // "stocks have been synced" — once true, stock 0 means truly out of stock
+    // (across all warehouses), not "no warehouse picked".
+    let warehouse_selected = stocks_synced;
     let mut out = vec![];
     for row in rows.flatten() {
         let (nm_id, vendor_code, title, brand, subject_name, photo, characteristics, skus_json, rejected) = row;
         let skus: Vec<String> = serde_json::from_str(&skus_json).unwrap_or_default();
         let pr = prices.get(&nm_id);
-        let stock = if warehouse_selected {
+        let stock = if stocks_synced {
             Some(skus.iter().map(|s| stock_by_sku.get(s).copied().unwrap_or(0)).sum::<i64>())
         } else {
             None

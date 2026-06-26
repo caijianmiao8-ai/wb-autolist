@@ -487,7 +487,9 @@ pub async fn search_subjects(
         .map_err(|e| e.to_string())
 }
 
-/// Full characteristics dictionary for a subject (id/name/required/charcType/…).
+/// Full characteristics dictionary for a subject (id/name/required/charcType/…),
+/// with Chinese display names (`nameZh`) merged in from WB's `locale=zh` so the
+/// editor can show 中文 · Русский. The zh fetch is best-effort.
 #[tauri::command]
 pub async fn subject_characteristics(
     state: State<'_, Arc<AppState>>,
@@ -496,9 +498,87 @@ pub async fn subject_characteristics(
     let st = state.inner().clone();
     let cfg = get_config(&st.paths);
     let ctx = content_ctx(&cfg);
-    get_characteristics(&st, &ctx, subject_id)
+    let mut ru = get_characteristics(&st, &ctx, subject_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Best-effort Chinese names; on any failure the editor just shows Russian.
+    if let Ok(zh) = crate::wb::categories::get_characteristics_locale(&st, &ctx, subject_id, "zh").await {
+        let zh_map: std::collections::HashMap<i64, String> =
+            zh.into_iter().map(|c| (c.charc_id, c.name)).collect();
+        for c in &mut ru {
+            if let Some(z) = zh_map.get(&c.charc_id) {
+                c.name_zh = z.clone();
+            }
+        }
+    }
+    Ok(ru)
+}
+
+/// Update a draft's package dimensions (cm) + gross weight (kg) — editable at the
+/// 复核 step. WB bills logistics/storage on these and re-measures at intake.
+#[tauri::command]
+pub fn update_dimensions(
+    state: State<Arc<AppState>>,
+    id: String,
+    length: i64,
+    width: i64,
+    height: i64,
+    weight: f64,
+) -> Result<Listing, String> {
+    let updated = store::update_listing(&state.paths, &id, |l| {
+        l.length = length.max(0);
+        l.width = width.max(0);
+        l.height = height.max(0);
+        l.weight = weight.max(0.0);
+    })
+    .ok_or("未找到该商品")?;
+    Ok(hydrate(&state.paths, updated))
+}
+
+/// Predict the AI-filled characteristics for a draft (same logic the publish
+/// pipeline runs), so the「全部商品参数」editor can pre-populate ~20 standard
+/// values for the seller to review/tweak instead of showing an empty form.
+/// Returns [{id, value}]; user-confirmed values on the listing take priority.
+#[tauri::command]
+pub async fn predict_characteristics(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    subject_id: i64,
+) -> Result<Vec<Value>, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let ctx = content_ctx(&cfg);
+    let listing = store::get_listing(&st.paths, &id).ok_or("未找到该商品")?;
+    // Fall back to a minimal copy if the draft has no generated copy yet.
+    let copy = listing.copy.clone().unwrap_or_else(|| crate::types::ProductCopy {
+        title: listing.product_name.clone(),
+        description: String::new(),
+        bullets: vec![],
+        brand: listing.brand.clone(),
+        keywords: listing.keywords.clone(),
+        category_hint: listing.subject_name.clone().unwrap_or_default(),
+        image_prompt: None,
+        title_zh: String::new(),
+        description_zh: String::new(),
+        bullets_zh: vec![],
+    });
+    let category = listing
+        .subject_name
+        .clone()
+        .unwrap_or_else(|| copy.category_hint.clone());
+    let charcs = get_characteristics(&st, &ctx, subject_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let colors = get_colors(&st, &ctx).await.unwrap_or_default();
+    let tnved = if !listing.tnved.is_empty() {
+        Some(listing.tnved.clone())
+    } else {
+        get_tnved(&st, &ctx, subject_id, None).await.unwrap_or(None)
+    };
+    Ok(crate::wb::pipeline::build_characteristics(
+        &st, &cfg, &listing, &copy, &category, &charcs, &colors, &tnved,
+    )
+    .await)
 }
 
 /// WB color directory (for the «цвет» characteristic dropdown).

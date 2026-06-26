@@ -38,7 +38,7 @@ pub async fn fill_characteristics(
         lines.push_str(&format!("- id={} \"{}\" type={}{}\n", c.charc_id, c.name, kind, unit));
     }
     let user = format!(
-        "Товар: {}\nКатегория: {}\nКлючевые слова: {}\nЗаголовок: {}\n\nЗаполни значения характеристик карточки Wildberries. Верни ТОЛЬКО JSON-объект: ключ — id (строкой), значение — подходящее значение НА РУССКОМ. Для type=number верни число. Для type=text — короткую строку или массив строк. ПРОПУСТИ (не включай в ответ) характеристики, которые неприменимы или требуют точных данных, которых ты не знаешь (точный вес, размеры, мощность — пропусти, если не уверен). Не выдумывай числа.\n\nХарактеристики:\n{}",
+        "Товар: {}\nКатегория: {}\nКлючевые слова: {}\nЗаголовок: {}\n\nЗаполни КАК МОЖНО БОЛЬШЕ характеристик карточки Wildberries — цель максимально полная карточка (хорошие карточки в этой категории заполнены на 20+ характеристик, это поднимает товар в поиске). Верни ТОЛЬКО JSON-объект: ключ — id (строкой), значение — НА РУССКОМ.\n\nПРАВИЛА:\n- Заполняй ВСЕ текстовые (type=text) характеристики, типичные для этой категории: материал, тип, назначение, особенности, управление, комплектация, страна производства, форма, покрытие, стиль, для кого, уход и т.п. Используй стандартные, общеупотребимые значения, типичные для такого товара (так значение точно совпадёт со справочником Wildberries).\n- type=number: заполняй, только если значение СТАНДАРТНО/ТИПИЧНО для категории (например мощность типового прибора, количество секций/режимов). НЕ заполняй точный вес, габариты и размеры конкретной модели — их WB берёт из размеров упаковки. Если число неизвестно и не типовое — пропусти.\n- Пропускай только то, что реально неприменимо к этому товару.\n- Не выдумывай уникальные/выдуманные числа и коды.\n\nХарактеристики:\n{}",
         product_name,
         category,
         keywords.join(", "),
@@ -53,7 +53,7 @@ pub async fn fill_characteristics(
     let body = json!({
         "model": model,
         "messages": [
-            {"role":"system","content":"Ты заполняешь характеристики карточек товаров Wildberries. Отвечай только валидным JSON-объектом."},
+            {"role":"system","content":"Ты — эксперт по заполнению карточек Wildberries. Качественная карточка заполнена максимально полно: чем больше релевантных характеристик заполнено стандартными значениями, тем выше карточка в поиске. Отвечай только валидным JSON-объектом."},
             {"role":"user","content": user}
         ],
         "response_format": {"type":"json_object"}
@@ -122,34 +122,32 @@ pub async fn fill_characteristics(
                 _ => continue,
             }
         } else {
-            // text characteristic → array of strings
-            match v {
-                Value::String(s) => {
-                    let s = s.trim();
-                    if s.is_empty() {
-                        continue;
-                    }
-                    json!([s])
-                }
-                Value::Array(a) => {
-                    let mut xs: Vec<String> = a
-                        .iter()
-                        .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if xs.is_empty() {
-                        continue;
-                    }
-                    // respect WB's per-field value limit (maxCount); too many
-                    // values → "имеет слишком много значений" rejection.
-                    if c.max_count > 0 && xs.len() > c.max_count as usize {
-                        xs.truncate(c.max_count as usize);
-                    }
-                    json!(xs)
-                }
-                Value::Number(n) => json!([n.to_string()]),
+            // text characteristic → array of strings. The model sometimes packs
+            // several values into one "a; b; c" string — split those so each maps
+            // to its own dictionary value (a joined string is one invalid value).
+            let mut xs: Vec<String> = match v {
+                Value::String(s) => s
+                    .split(|ch| ch == ';' || ch == '；' || ch == '\n')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect(),
+                Value::Array(a) => a
+                    .iter()
+                    .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                Value::Number(n) => vec![n.to_string()],
                 _ => continue,
+            };
+            if xs.is_empty() {
+                continue;
             }
+            // respect WB's per-field value limit (maxCount); too many values →
+            // "имеет слишком много значений" rejection.
+            if c.max_count > 0 && xs.len() > c.max_count as usize {
+                xs.truncate(c.max_count as usize);
+            }
+            json!(xs)
         };
         out.insert(id, value);
     }

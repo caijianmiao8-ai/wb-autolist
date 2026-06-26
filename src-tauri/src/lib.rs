@@ -63,6 +63,8 @@ pub fn run() {
             commands::read_file_b64,
             commands::search_subjects,
             commands::subject_characteristics,
+            commands::predict_characteristics,
+            commands::update_dimensions,
             commands::wb_colors,
             commands::wb_tnved,
             commands::list_warehouses,

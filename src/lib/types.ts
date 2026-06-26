@@ -217,6 +217,8 @@ export interface WbSubject {
 export interface WbCharacteristic {
   charcID: number;
   name: string;
+  /** Chinese display name (WB locale=zh); empty if WB has no zh label. */
+  nameZh?: string;
   required: boolean;
   unitName: string;
   maxCount: number;

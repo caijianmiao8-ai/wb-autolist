@@ -752,7 +752,7 @@ fn validate_listing(listing: &Listing) -> Vec<String> {
 /// Fill the card's characteristics. WB rarely marks anything `required`, so we
 /// take the required + popular (then a few more) and let the AI produce values;
 /// колор/ТНВЭД get a deterministic fallback if the model skips them.
-async fn build_characteristics(
+pub async fn build_characteristics(
     state: &AppState,
     cfg: &AppConfig,
     listing: &Listing,
@@ -762,28 +762,68 @@ async fn build_characteristics(
     colors: &[WbColor],
     tnved: &Option<String>,
 ) -> Vec<Value> {
-    // candidates: required → popular → rest, deduped, capped
+    let is_color = |n: &str| n.contains("цвет");
+    let is_tnved = |n: &str| n.contains("тнвэд") || n.contains("тн вэд");
+
+    // candidates: required → popular → rest, deduped, capped — but skip
+    // top-level/system/regulatory fields that must never be AI-guessed:
+    //  · бренд/наименование/описание are set as top-level card fields;
+    //  · НДС / штрихкод / ИКПУ / NTIN / ТРУ / код упаковки / артикул OZON /
+    //    код производителя are tax/regulatory identifiers — a wrong value gets
+    //    the whole card rejected, so we leave them empty for the seller.
+    // Цвет и ТН ВЭД остаются в кандидатах — их заполняем детерминированно ниже.
+    let is_system = |n: &str| {
+        const SYS: &[&str] = &[
+            "наименование",
+            "описание",
+            "бренд",
+            "ставка ндс",
+            "штрихкод",
+            "баркод",
+            "икпу",
+            "ntin",
+            "код тру",
+            "код упаковки",
+            "артикул ozon",
+            "код производителя",
+            "количество штук в товаре",
+        ];
+        SYS.iter().any(|s| n.contains(s))
+    };
+
     let mut seen: HashSet<i64> = HashSet::new();
     let mut candidates: Vec<WbCharacteristic> = vec![];
-    for c in charcs.iter().filter(|c| c.required) {
+    let push = |c: &WbCharacteristic, candidates: &mut Vec<WbCharacteristic>, seen: &mut HashSet<i64>| {
+        let n = c.name.to_lowercase();
+        if is_system(&n) {
+            return;
+        }
         if seen.insert(c.charc_id) {
             candidates.push(c.clone());
         }
+    };
+    for c in charcs.iter().filter(|c| c.required) {
+        push(c, &mut candidates, &mut seen);
     }
     for c in charcs.iter().filter(|c| c.popular) {
-        if seen.insert(c.charc_id) {
-            candidates.push(c.clone());
-        }
+        push(c, &mut candidates, &mut seen);
     }
     for c in charcs.iter() {
-        if candidates.len() >= 30 {
+        if candidates.len() >= 60 {
             break;
         }
-        if seen.insert(c.charc_id) {
-            candidates.push(c.clone());
-        }
+        push(c, &mut candidates, &mut seen);
     }
 
+    // AI fills everything except цвет / ТН ВЭД (those come from WB directories).
+    let ai_targets: Vec<WbCharacteristic> = candidates
+        .iter()
+        .filter(|c| {
+            let n = c.name.to_lowercase();
+            !is_color(&n) && !is_tnved(&n)
+        })
+        .cloned()
+        .collect();
     let filled = fill_characteristics(
         &state.http,
         cfg,
@@ -791,7 +831,7 @@ async fn build_characteristics(
         &copy.keywords,
         &copy.title,
         category,
-        &candidates,
+        &ai_targets,
     )
     .await;
 
@@ -799,13 +839,11 @@ async fn build_characteristics(
     let mut out: Vec<Value> = vec![];
     for c in &candidates {
         let name_lc = c.name.to_lowercase();
-        if let Some(v) = filled.get(&c.charc_id) {
-            out.push(json!({ "id": c.charc_id, "value": v }));
-        } else if name_lc.contains("тнвэд") || name_lc.contains("тн вэд") {
+        if is_tnved(&name_lc) {
             if let Some(t) = tnved {
                 out.push(json!({ "id": c.charc_id, "value": t }));
             }
-        } else if name_lc.contains("цвет") {
+        } else if is_color(&name_lc) {
             let col = colors
                 .iter()
                 .find(|col| kw.iter().any(|k| col.name.to_lowercase() == k.to_lowercase()))
@@ -814,6 +852,8 @@ async fn build_characteristics(
             if let Some(col) = col {
                 out.push(json!({ "id": c.charc_id, "value": [col] }));
             }
+        } else if let Some(v) = filled.get(&c.charc_id) {
+            out.push(json!({ "id": c.charc_id, "value": v }));
         }
     }
     out

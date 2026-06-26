@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
   Upload,
@@ -31,11 +32,34 @@ type Row = {
   keywords: string[];
   brand?: string;
   discount: number;
-  basePhotos: string[]; // matched real photos (data URLs)
-  videoName: string | null; // matched video file name (display only in v1)
+  basePhotos: string[]; // matched real photos (data URLs) — NOT persisted (too big)
+  basePhotoPaths: string[]; // matched photo file paths — persisted; re-read on return
+  videoName: string | null; // matched video file name (display)
+  videoPath: string | null; // matched video absolute path (for 配俄语 after generate)
 };
 
 const norm = (s: string) => s.toLowerCase().replace(/[\s_\-．。]+/g, "");
+
+// ── Import-table persistence (survives tab switches; cleared on app restart) ──
+// sessionStorage can't hold the matched photos' base64 (too big), so we store the
+// photo PATHS and re-read them on load. These are module-level so an async import
+// that resolves AFTER the component unmounted can still persist + notify reliably.
+const ROWS_KEY = "wb:batchRows";
+function persistRowsLite(rs: Row[]) {
+  try {
+    sessionStorage.setItem(ROWS_KEY, JSON.stringify(rs.map((r) => ({ ...r, basePhotos: [] }))));
+  } catch {
+    /* quota — skip */
+  }
+}
+function readRowsLite(): Row[] {
+  try {
+    const a = JSON.parse(sessionStorage.getItem(ROWS_KEY) || "[]");
+    return Array.isArray(a) ? a : [];
+  } catch {
+    return [];
+  }
+}
 
 function rowReady(r: Row) {
   return !!r.productName.trim() && r.price > 0;
@@ -64,6 +88,9 @@ export function BatchPanel() {
   const [publishing, setPublishing] = useState(false);
   const [pub, setPub] = useState<Record<string, "wait" | "run" | "ok" | "err">>({});
   const [pubNm, setPubNm] = useState<Record<string, number>>({});
+  // 批量配俄语进度(前端串行复用 dub_start + set_listing_video)
+  const [dubbing, setDubbing] = useState<{ done: number; total: number } | null>(null);
+  const [dubMsg, setDubMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,6 +99,106 @@ export function BatchPanel() {
       .then((s) => setEnv({ dryRun: s.dryRun, wbSandbox: s.wbSandbox }))
       .catch(() => {});
   }, []);
+
+  // Load the import table from storage into state (+ re-read matched photos from
+  // their paths). One loader used on mount AND whenever an async import/match
+  // finishes — see `wb:rows` below. A monotonic id guards against a slow photo
+  // re-read from an earlier call clobbering a newer load (rapid `wb:rows`).
+  const loadIdRef = useRef(0);
+  const loadRows = useCallback(async () => {
+    const myId = ++loadIdRef.current;
+    const lite = readRowsLite();
+    setRows(lite);
+    if (!lite.some((r) => r.basePhotoPaths?.length)) return;
+    const filled = await Promise.all(
+      lite.map(async (r) => {
+        if (!r.basePhotoPaths?.length) return r;
+        const urls: string[] = [];
+        for (const p of r.basePhotoPaths) {
+          try {
+            urls.push(await api.readFileB64(p));
+          } catch {
+            /* file moved/unreadable — skip */
+          }
+        }
+        return urls.length ? { ...r, basePhotos: urls } : r;
+      })
+    );
+    // Only the most recent load applies its photos — a stale in-flight read must
+    // not overwrite a newer table.
+    if (myId === loadIdRef.current) setRows(filled);
+  }, []);
+
+  // Mount: load the saved table, and listen for `wb:rows` — a window event fired
+  // when an Excel import / folder match completes. Because it's a WINDOW event,
+  // it's caught by whatever instance is mounted NOW, even if the import was
+  // started by an earlier instance that unmounted mid-flight (the reported bug:
+  // switching tabs at the instant of import dropped it). The data itself is
+  // already persisted by then, so this just refreshes the live UI.
+  useEffect(() => {
+    void loadRows();
+    const h = () => void loadRows();
+    window.addEventListener("wb:rows", h);
+    return () => window.removeEventListener("wb:rows", h);
+  }, [loadRows]);
+
+  // Persist sync edits (add/edit/remove row). Skip first run so it can't clobber
+  // the saved table before the initial load applies. Async imports/matches persist
+  // themselves directly (below) so they survive an unmount mid-operation.
+  const skipRowPersist = useRef(true);
+  useEffect(() => {
+    if (skipRowPersist.current) {
+      skipRowPersist.current = false;
+      return;
+    }
+    persistRowsLite(rows);
+  }, [rows]);
+
+  // Re-hydrate on mount: the queue lives in the Rust backend, so switching tabs
+  // and coming back must NOT lose an in-flight batch. If jobs are running (or we
+  // were past the import step), restore the step + jobs (+ the review grid).
+  useEffect(() => {
+    let alive = true;
+    let saved = 0;
+    try {
+      saved = Number(sessionStorage.getItem("wb:batchStep") || "0");
+    } catch {
+      /* ignore */
+    }
+    (async () => {
+      const js = await api.listJobs().catch(() => [] as Job[]);
+      if (!alive || !js.length) return;
+      const anyActive = js.some(
+        (j) => j.status === "pending" || j.status === "generating" || j.status === "publishing"
+      );
+      // Fresh visit with only stale finished jobs lingering → stay on import.
+      if (!anyActive && saved < 1) return;
+      setJobs(js);
+      let s = saved >= 1 ? saved : 1;
+      if (s >= 2) {
+        const ls = await api.listJobListings().catch(() => [] as Listing[]);
+        if (alive && ls.length) {
+          setJobListings(ls);
+          setSelected(new Set(ls.filter((l) => listingReady(l)).map((l) => l.id)));
+        } else {
+          s = 1; // listings cleared → fall back to the generate view
+        }
+      }
+      if (alive) setStep(s);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Persist the wizard step so a tab switch returns to the same place.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("wb:batchStep", String(step));
+    } catch {
+      /* ignore */
+    }
+  }, [step]);
 
   const active = jobs.some(
     (j) => j.status === "pending" || j.status === "generating" || j.status === "publishing"
@@ -98,18 +225,23 @@ export function BatchPanel() {
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
       const products = await api.importExcel(Array.from(buf));
-      setRows((prev) => [
-        ...prev,
-        ...products.map((p) => ({
-          productName: p.productName,
-          price: p.price,
-          keywords: p.keywords ?? [],
-          brand: p.brand,
-          discount: p.discount ?? 0,
-          basePhotos: [],
-          videoName: null,
-        })),
-      ]);
+      const imported: Row[] = products.map((p) => ({
+        productName: p.productName,
+        price: p.price,
+        keywords: p.keywords ?? [],
+        brand: p.brand,
+        discount: p.discount ?? 0,
+        basePhotos: [],
+        basePhotoPaths: [],
+        videoName: null,
+        videoPath: null,
+      }));
+      // Persist FIRST (module-level, so it lands even if this handler resolved
+      // after the component unmounted), then notify whatever instance is mounted
+      // to refresh from storage. This is what stops a tab-switch at the instant of
+      // import from dropping the rows.
+      persistRowsLite([...readRowsLite(), ...imported]);
+      window.dispatchEvent(new Event("wb:rows"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "导入失败");
     } finally {
@@ -121,7 +253,16 @@ export function BatchPanel() {
   function addRow() {
     setRows((rs) => [
       ...rs,
-      { productName: "", price: 1990, keywords: [], discount: 0, basePhotos: [], videoName: null },
+      {
+        productName: "",
+        price: 1990,
+        keywords: [],
+        discount: 0,
+        basePhotos: [],
+        basePhotoPaths: [],
+        videoName: null,
+        videoPath: null,
+      },
     ]);
   }
   function updateRow(i: number, patch: Partial<Row>) {
@@ -150,25 +291,36 @@ export function BatchPanel() {
             (f) => f.kind === "video" && (norm(f.stem) === key || norm(f.stem).startsWith(key))
           );
           let basePhotos = r.basePhotos;
+          let basePhotoPaths = r.basePhotoPaths;
           if (imgs.length) {
             const urls: string[] = [];
+            const paths: string[] = [];
             for (const f of imgs.slice(0, 4)) {
               try {
                 urls.push(await api.readFileB64(f.path));
+                paths.push(f.path);
               } catch {
                 /* skip unreadable */
               }
             }
             if (urls.length) {
               basePhotos = urls;
+              basePhotoPaths = paths;
               imgHit++;
             }
           }
           if (vid) vidHit++;
-          return { ...r, basePhotos, videoName: vid ? vid.name : r.videoName };
+          return {
+            ...r,
+            basePhotos,
+            basePhotoPaths,
+            videoName: vid ? vid.name : r.videoName,
+            videoPath: vid ? vid.path : r.videoPath,
+          };
         })
       );
       setRows(next);
+      persistRowsLite(next); // survive a tab switch mid-match (paths are persisted)
       setMatchMsg(
         `已关联文件夹:${files.length} 个素材 · 匹配到 ${imgHit} 行实拍图、${vidHit} 行视频。未匹配的行将由 AI 出图。`
       );
@@ -197,6 +349,9 @@ export function BatchPanel() {
         brand: r.brand,
         basePhotos: r.basePhotos.length ? r.basePhotos : undefined,
       }));
+      // 入队前清掉上一批【已完成/失败】的旧任务,免得生成进度列表混入历史记录
+      // (它们产出的草稿仍在「上架记录 › 草稿箱」,不会丢)。在途的不会被清。
+      await api.clearJobs("finished").catch(() => {});
       await api.enqueueJobs(payload, false); // 只生成草稿,不自动上架
       setJobs(await api.listJobs());
       setStep(1);
@@ -213,6 +368,39 @@ export function BatchPanel() {
     // pre-select all 就绪 cards
     setSelected(new Set(ls.filter((l) => listingReady(l)).map((l) => l.id)));
     setStep(2);
+    void dubMatchedVideos(ls); // 后台串行配俄语,卡片角标随完成更新(不阻塞审核)
+  }
+
+  // Dub each matched English video → RU and attach to its listing. Frontend-
+  // orchestrated (reuses dub_start + set_listing_video); serial because the dub
+  // backend allows one job at a time. Cards show the 俄 badge as each finishes.
+  async function dubMatchedVideos(listings: Listing[]) {
+    const tasks = listings
+      .map((l) => {
+        const row = rows.find((r) => r.productName === l.productName && r.videoPath);
+        return row?.videoPath && !l.videoRu ? { id: l.id, path: row.videoPath } : null;
+      })
+      .filter((t): t is { id: string; path: string } => t !== null);
+    if (!tasks.length) return;
+    const pf = await api.dubPreflight().catch(() => null);
+    if (!pf?.ready) {
+      setDubMsg("配音环境未就绪,视频未配 —— 可到单品页单独配。");
+      return;
+    }
+    setDubMsg(null);
+    setDubbing({ done: 0, total: tasks.length });
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      try {
+        const out = await api.dubStart({ inputPath: t.path, quality: "standard", voiceMode: "clone" });
+        const updated = await api.setListingVideo(t.id, out);
+        setJobListings((cur) => cur.map((l) => (l.id === t.id ? updated : l)));
+      } catch {
+        /* skip this one; others continue */
+      }
+      setDubbing({ done: i + 1, total: tasks.length });
+    }
+    setDubbing(null);
   }
 
   async function publishSelected() {
@@ -308,6 +496,7 @@ export function BatchPanel() {
             destName={destName}
             envKind={envKindNow}
             onReview={toReview}
+            onClearFinished={async () => setJobs(await api.clearJobs("finished"))}
           />
         )}
         {step === 2 && (
@@ -318,6 +507,8 @@ export function BatchPanel() {
             selected={selected}
             setSelected={setSelected}
             onPublish={publishSelected}
+            dubbing={dubbing}
+            dubMsg={dubMsg}
           />
         )}
         {step === 3 && (
@@ -332,7 +523,68 @@ export function BatchPanel() {
       </div>
 
       <input ref={fileRef} type="file" accept=".xlsx" hidden onChange={onFile} />
+
+      {/* Blocking progress overlay: import + folder-match both call the AI and can
+          take ~10s. Covering the whole viewport (above the nav) both reassures the
+          user it's working AND prevents a tab switch mid-operation (防呆). */}
+      <ImportOverlay
+        active={importing || matching}
+        label={importing ? "正在导入并用 AI 整理表格…" : "正在匹配素材文件夹…"}
+      />
     </div>
+  );
+}
+
+// Full-screen blocking progress while an async import/match runs. The bar eases
+// toward ~92% over time and the elapsed seconds tick up, so a 10s AI call never
+// looks frozen; it snaps away when the operation finishes (active → false).
+//
+// IMPORTANT: rendered via a PORTAL to document.body. The panel root carries
+// `animate-fade-up`, whose fill-mode leaves a lingering `transform` on the div —
+// and a transformed ancestor becomes the containing block for `position: fixed`,
+// which would otherwise trap this overlay inside the content area (below the nav)
+// and let nav clicks through. Portaling to <body> escapes that ancestor so the
+// overlay truly covers the whole viewport (incl. the nav) and blocks navigation.
+function ImportOverlay({ active, label }: { active: boolean; label: string }) {
+  const [pct, setPct] = useState(0);
+  const [sec, setSec] = useState(0);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    if (!active) {
+      setPct(0);
+      setSec(0);
+      return;
+    }
+    const t0 = Date.now();
+    setPct(8);
+    const id = setInterval(() => {
+      const elapsed = (Date.now() - t0) / 1000;
+      setSec(Math.floor(elapsed));
+      setPct(Math.min(92, 8 + 84 * (1 - Math.exp(-elapsed / 8))));
+    }, 200);
+    return () => clearInterval(id);
+  }, [active]);
+
+  if (!active || !mounted) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+      <div className="card w-[min(92vw,380px)] p-6 text-center">
+        <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-wb-pink" />
+        <div className="text-sm font-medium text-slate-800 dark:text-slate-100">{label}</div>
+        <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+          已用时 {sec}s · 通常 5–15 秒（按商品数量而定）
+        </div>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-900/[0.08] dark:bg-white/10">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-wb-pink to-wb-purple transition-[width] duration-200 ease-out"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <div className="mt-3 text-[11px] text-slate-400">整理完成前请勿离开此页</div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -478,7 +730,7 @@ function ImportStep({
 
       <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-400">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        素材按「商品名 = 文件名」自动匹配:匹配到实拍图就用实拍、否则 AI 出图;匹配到的视频会显示在「视频」列(配俄语目前在单品页做)。缺必填的行(红/黄)不会进生成。
+        素材按「商品名 = 文件名」自动匹配:匹配到实拍图就用实拍、否则 AI 出图;匹配到的视频会在生成后自动配成俄语并挂到卡片上(在审核步骤逐条配音)。缺必填的行(红/黄)不会进生成。
       </p>
       {matchMsg && (
         <p className="mt-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">{matchMsg}</p>
@@ -502,6 +754,7 @@ function GenerateStep({
   destName,
   envKind,
   onReview,
+  onClearFinished,
 }: {
   jobs: Job[];
   rows: Row[];
@@ -509,7 +762,9 @@ function GenerateStep({
   destName: string;
   envKind: string;
   onReview: () => void;
+  onClearFinished: () => void;
 }) {
+  const finishedCount = jobs.filter((j) => j.status === "done" || j.status === "error").length;
   const imgs = rows.reduce((n, r) => n + (r.basePhotos.length ? r.basePhotos.length : 3), 0);
   const vids = rows.filter((r) => r.videoName).length;
   const mins = Math.ceil(imgs * 2.5);
@@ -537,6 +792,17 @@ function GenerateStep({
         <b>不会自动上架</b>，生成完到下一步逐个审核。
       </div>
 
+      <div className="mb-1.5 flex items-center justify-between px-1">
+        <span className="text-xs text-slate-500 dark:text-slate-400">生成进度</span>
+        {finishedCount > 0 && (
+          <button
+            onClick={onClearFinished}
+            className="text-[11px] text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
+          >
+            清空已完成({finishedCount})
+          </button>
+        )}
+      </div>
       <div className="card divide-y divide-slate-900/[0.06] p-0 dark:divide-white/[0.06]">
         {jobs.length === 0 ? (
           <div className="px-4 py-6 text-center text-sm text-slate-500">准备入队…</div>
@@ -592,6 +858,8 @@ function ReviewStep({
   selected,
   setSelected,
   onPublish,
+  dubbing,
+  dubMsg,
 }: {
   listings: Listing[];
   lang: "ru" | "zh" | "both";
@@ -599,7 +867,10 @@ function ReviewStep({
   selected: Set<string>;
   setSelected: React.Dispatch<React.SetStateAction<Set<string>>>;
   onPublish: () => void;
+  dubbing: { done: number; total: number } | null;
+  dubMsg: string | null;
 }) {
+  const [detail, setDetail] = useState<Listing | null>(null);
   const ready = listings.filter(listingReady);
   const failed = listings.filter((l) => !listingReady(l));
   const showRu = lang !== "zh";
@@ -653,6 +924,18 @@ function ReviewStep({
         </button>
       </div>
 
+      {dubbing && (
+        <div className="mb-3 flex items-center gap-2 rounded-xl border border-wb-pink/30 bg-wb-pink/[0.06] px-4 py-2.5 text-xs text-wb-pink">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          视频配俄语中 {dubbing.done}/{dubbing.total} …(每条约 1–2 分钟,完成后卡片右上出现「俄」角标)
+        </div>
+      )}
+      {dubMsg && (
+        <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/[0.08] px-4 py-2.5 text-xs text-amber-700 dark:text-amber-200">
+          {dubMsg}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {listings.map((l) => {
           const ok = listingReady(l);
@@ -698,7 +981,24 @@ function ReviewStep({
                     {finalP.toLocaleString()} ₽
                   </span>
                   {ok ? (
-                    <label className="flex cursor-pointer items-center gap-1 text-[10.5px] text-slate-500">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-300">
+                      <CheckCircle2 className="h-3 w-3" /> 就绪
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                      待修 / 失败
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t border-slate-900/[0.06] pt-2 dark:border-white/[0.06]">
+                  <button
+                    onClick={() => setDetail(l)}
+                    className="text-[10.5px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  >
+                    查看详情
+                  </button>
+                  {ok ? (
+                    <label className="flex cursor-pointer items-center gap-1 text-[10.5px] text-slate-600 dark:text-slate-300">
                       <input
                         type="checkbox"
                         className="h-3.5 w-3.5 accent-wb-pink"
@@ -722,6 +1022,113 @@ function ReviewStep({
         <button className="btn-primary" onClick={onPublish} disabled={selected.size === 0}>
           <Rocket className="h-4 w-4" /> 发布选中 {selected.size} 张
         </button>
+      </div>
+
+      {detail && <ReviewDetailModal listing={detail} onClose={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+// 审核「查看详情」弹窗 —— 只读看全图 + 俄/中文案,不离开批量流程。
+function ReviewDetailModal({ listing, onClose }: { listing: Listing; onClose: () => void }) {
+  const c = listing.copy;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="card flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden p-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-900/[0.06] px-5 py-3.5 dark:border-white/[0.06]">
+          <div className="min-w-0 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+            {c?.title || listing.productName}
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-7 w-7 place-items-center rounded-lg text-slate-500 hover:bg-slate-900/[0.05] dark:hover:bg-white/5"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {listing.images.length > 0 && (
+            <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {listing.images.map((img) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={img.id}
+                  src={img.url}
+                  alt={img.kind}
+                  className="aspect-[3/4] w-full rounded-lg border border-slate-900/10 object-cover dark:border-white/10"
+                />
+              ))}
+            </div>
+          )}
+          <div className="space-y-3 text-sm">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+              <span>
+                售价 <b className="text-wb-pink">{listing.price.toLocaleString()} ₽</b>
+                {listing.discount ? ` · -${listing.discount}%` : ""}
+              </span>
+              {c?.categoryHint && <span>类目: {c.categoryHint}</span>}
+              {listing.videoRu && <span className="text-emerald-600 dark:text-emerald-400">✓ 含俄语视频</span>}
+            </div>
+            {c && (
+              <>
+                <div>
+                  <div className="label">标题</div>
+                  <p className="rounded-lg bg-slate-900/[0.04] px-3 py-2 text-slate-900 dark:bg-white/5 dark:text-slate-100">
+                    {c.title}
+                  </p>
+                  {c.titleZh && <p className="mt-1 px-3 text-xs text-slate-500 dark:text-slate-400">{c.titleZh}</p>}
+                </div>
+                <div>
+                  <div className="label">描述</div>
+                  <p className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900/[0.04] px-3 py-2 leading-relaxed text-slate-700 dark:bg-white/5 dark:text-slate-300">
+                    {c.description}
+                  </p>
+                  {c.descriptionZh && (
+                    <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap px-3 text-xs text-slate-500 dark:text-slate-400">
+                      {c.descriptionZh}
+                    </p>
+                  )}
+                </div>
+                {c.bullets.length > 0 && (
+                  <div>
+                    <div className="label">卖点</div>
+                    <ul className="space-y-1">
+                      {c.bullets.map((b, i) => (
+                        <li key={i} className="flex items-start gap-2 text-slate-700 dark:text-slate-300">
+                          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                          <span>
+                            {b}
+                            {c.bulletsZh?.[i] && (
+                              <span className="block text-xs text-slate-500 dark:text-slate-400">
+                                {c.bulletsZh[i]}
+                              </span>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+            {listing.error && (
+              <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-300">
+                {listing.error}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0 border-t border-slate-900/[0.06] px-5 py-3 text-right dark:border-white/[0.06]">
+          <button className="btn-ghost px-4 py-1.5 text-xs" onClick={onClose}>
+            关闭
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -772,7 +1179,7 @@ function PublishStep({
         </div>
         <div className="flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-500/[0.08] px-3 py-2.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-200">
           <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          WB 价格接口限流(约每分钟 1 张定价),{listings.length} 张约 {listings.length} 分钟。建卡+传图更快,定价是瓶颈,后台慢慢推即可。
+          建卡 + 传图/视频会先逐张完成。<b>新卡通常要等 WB 审核(常 24h 内)通过后才能定价</b> —— 届时到「商品管理」给它们补价;WB 也会限制改价频率,逐张排队即可。
         </div>
       </div>
 

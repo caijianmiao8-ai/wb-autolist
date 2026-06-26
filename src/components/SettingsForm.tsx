@@ -15,6 +15,7 @@ import {
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { EnvBadge } from "./EnvBadge";
+import { TemplateEditor } from "./TemplateEditor";
 import { envKind } from "@/lib/env";
 import type { Warehouse } from "@/lib/types";
 
@@ -48,6 +49,7 @@ export function SettingsForm() {
   const [reveal, setReveal] = useState(false);
   const [balance, setBalance] = useState<{ usd: number; rmb: number } | null>(null);
   const [advanced, setAdvanced] = useState(false);
+  const [showTpl, setShowTpl] = useState(false);
   // per-row inline editors
   const [editWb, setEditWb] = useState(false);
   const [editAi, setEditAi] = useState(false);
@@ -285,7 +287,7 @@ export function SettingsForm() {
                     {balance && (
                       <span className="text-slate-500 dark:text-slate-400">
                         {" "}
-                        · 余额 ¥{balance.rmb.toFixed(0)} (${balance.usd.toFixed(2)})
+                        · 余额 ${balance.usd.toFixed(2)}
                       </span>
                     )}
                   </span>
@@ -297,7 +299,7 @@ export function SettingsForm() {
                 <div className="flex gap-1.5">
                   <button
                     className="btn-ghost px-3 py-1.5 text-xs"
-                    onClick={() => api.openUrl("https://conduit-api.aurixel.ai")}
+                    onClick={() => api.openUrl("https://aurixel.ai")}
                   >
                     充值
                   </button>
@@ -492,6 +494,25 @@ export function SettingsForm() {
                   {reveal ? "隐藏密钥明文" : "显示密钥明文"}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* 图文模板 · 可改提示词(高级,默认折叠) */}
+          <button
+            onClick={() => setShowTpl((v) => !v)}
+            className="mt-3 flex w-full items-center justify-between rounded-xl border border-slate-900/[0.1] bg-white px-4 py-3 text-sm text-slate-600 hover:bg-slate-900/[0.02] dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300"
+          >
+            <span className="flex items-center gap-2">
+              <SettingsIcon className="h-4 w-4 text-wb-purple" /> 图文模板 · 提示词
+              <span className="text-[10.5px] text-slate-400">(高级·每档可改,即时生效)</span>
+            </span>
+            <ChevronDown
+              className={clsx("h-4 w-4 text-slate-400 transition-transform", showTpl && "rotate-180")}
+            />
+          </button>
+          {showTpl && (
+            <div className="mt-2">
+              <TemplateEditor />
             </div>
           )}
         </div>

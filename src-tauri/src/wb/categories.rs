@@ -177,7 +177,19 @@ pub async fn get_characteristics(
     ctx: &WbCtx,
     subject_id: i64,
 ) -> Result<Vec<WbCharacteristic>> {
-    let key = ck(ctx, &format!("charcs:{}", subject_id));
+    get_characteristics_locale(state, ctx, subject_id, "ru").await
+}
+
+/// Characteristics dictionary in a specific WB locale (ru/zh/en). The pipeline
+/// uses "ru" (it matches цвет/тнвэд on the Russian name); the editor also pulls
+/// "zh" for bilingual labels. Cached per (env, subject, locale).
+pub async fn get_characteristics_locale(
+    state: &AppState,
+    ctx: &WbCtx,
+    subject_id: i64,
+    locale: &str,
+) -> Result<Vec<WbCharacteristic>> {
+    let key = ck(ctx, &format!("charcs:{}:{}", subject_id, locale));
     {
         let c = state.caches.lock().await;
         if let Some(hit) = c.charcs.get(&key) {
@@ -187,7 +199,7 @@ pub async fn get_characteristics(
     let v = wb_fetch(
         state,
         ctx,
-        WbReq::get(&format!("/content/v2/object/charcs/{}", subject_id)).q("locale", "ru"),
+        WbReq::get(&format!("/content/v2/object/charcs/{}", subject_id)).q("locale", locale),
     )
     .await?;
     let data: Vec<WbCharacteristic> = data_array(&v);
