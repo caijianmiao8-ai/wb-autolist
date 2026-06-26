@@ -67,8 +67,13 @@ jobs:
           releaseDraft: false
           prerelease: false
 
-      # Always keep artifacts too (handy for manual/dev builds that aren't tagged).
+      # Keep artifacts for MANUAL/dev builds only — tag builds already attach the
+      # installers to the GitHub Release (the real download page). Skipping on tags
+      # avoids the artifact-storage quota failing an otherwise-successful release
+      # build; continue-on-error keeps a quota hit from failing manual runs too.
       - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        continue-on-error: true
         with:
           name: wb-autolist-${{ matrix.name }}
           path: |
