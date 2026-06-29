@@ -120,11 +120,20 @@ fn bundled_bin(app: &AppHandle, name: &str) -> Option<PathBuf> {
         name.to_string()
     };
     let p = app.path().resource_dir().ok()?.join("bin").join(exe);
-    if p.is_file() {
-        Some(p)
-    } else {
-        None
+    if !p.is_file() {
+        return None;
     }
+    // Strip Windows' \\?\ verbatim prefix that resource_dir() returns: uv/uvx
+    // mishandles it (derives its own root/Python from argv[0] and exits 1 → the
+    // dub's Demucs step silently degrades). node/ffmpeg tolerate it, uv does not.
+    #[cfg(windows)]
+    {
+        let s = p.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return Some(PathBuf::from(stripped.to_string()));
+        }
+    }
+    Some(p)
 }
 
 /// 找 node:env DUB_NODE → 打包资源 → ~/.local/node/bin/node(开发机) → PATH 的 `node`。

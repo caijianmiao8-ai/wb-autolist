@@ -2139,7 +2139,10 @@ function VideoPanel({
           setNotice(
             `配音引擎未生效，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，到「设置→配音引擎」先下载，再用「高质量」重配。`
           );
-          setDetail(w.slice(0, 200)); // raw reason — helps diagnose why it fell back
+          // Show the actual error tail (the exception line), not the long binary
+          // path prefix — strip "…skipped (" and ") — raw audio…" so we see WHY.
+          const inner = w.replace(/^[^(]*\(/, "").replace(/\)\s*—.*$/, "").trim();
+          setDetail((inner || w).slice(-300));
         }
       });
       const out = await api.dubStart({
