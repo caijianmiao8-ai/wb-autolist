@@ -93,6 +93,7 @@ export function BatchPanel() {
   const [dubbing, setDubbing] = useState<{ done: number; total: number } | null>(null);
   const [dubMsg, setDubMsg] = useState<string | null>(null);
   const [dubPreset, setDubPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
+  const dubCancelRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -390,8 +391,13 @@ export function BatchPanel() {
       return;
     }
     setDubMsg(null);
+    dubCancelRef.current = false;
     setDubbing({ done: 0, total: tasks.length });
     for (let i = 0; i < tasks.length; i++) {
+      if (dubCancelRef.current) {
+        setDubMsg(`已取消视频配音（已完成 ${i}/${tasks.length}）。可到单品页单独补配。`);
+        break;
+      }
       const t = tasks[i];
       try {
         const out = await api.dubStart({
@@ -402,11 +408,16 @@ export function BatchPanel() {
         const updated = await api.setListingVideo(t.id, out);
         setJobListings((cur) => cur.map((l) => (l.id === t.id ? updated : l)));
       } catch {
-        /* skip this one; others continue */
+        /* skip this one (incl. user cancel of the current job); others continue */
       }
       setDubbing({ done: i + 1, total: tasks.length });
     }
     setDubbing(null);
+  }
+
+  function cancelDubbing() {
+    dubCancelRef.current = true;
+    api.dubCancel().catch(() => {});
   }
 
   async function publishSelected() {
@@ -518,6 +529,7 @@ export function BatchPanel() {
             onPublish={publishSelected}
             dubbing={dubbing}
             dubMsg={dubMsg}
+            onCancelDub={cancelDubbing}
           />
         )}
         {step === 3 && (
@@ -903,6 +915,7 @@ function ReviewStep({
   onPublish,
   dubbing,
   dubMsg,
+  onCancelDub,
 }: {
   listings: Listing[];
   lang: "ru" | "zh" | "both";
@@ -912,6 +925,7 @@ function ReviewStep({
   onPublish: () => void;
   dubbing: { done: number; total: number } | null;
   dubMsg: string | null;
+  onCancelDub: () => void;
 }) {
   const [detail, setDetail] = useState<Listing | null>(null);
   const ready = listings.filter(listingReady);
@@ -969,8 +983,16 @@ function ReviewStep({
 
       {dubbing && (
         <div className="mb-3 flex items-center gap-2 rounded-xl border border-wb-pink/30 bg-wb-pink/[0.06] px-4 py-2.5 text-xs text-wb-pink">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          视频配俄语中 {dubbing.done}/{dubbing.total} …(每条约 1–2 分钟,完成后卡片右上出现「俄」角标)
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+          <span className="min-w-0 flex-1">
+            视频配俄语中 {dubbing.done}/{dubbing.total} …(每条约 1–2 分钟,完成后卡片右上出现「俄」角标)
+          </span>
+          <button
+            onClick={onCancelDub}
+            className="shrink-0 rounded-md border border-wb-pink/40 px-2 py-0.5 text-[11px] hover:bg-wb-pink/10"
+          >
+            取消配音
+          </button>
         </div>
       )}
       {dubMsg && (

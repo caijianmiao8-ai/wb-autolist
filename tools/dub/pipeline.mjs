@@ -301,7 +301,7 @@ export async function runPipeline(cfg, args) {
     const tSep = now();
     stemsPromise = (async () => {
       try {
-        const stems = await ff.separateBackground(input, workDir, { uvx: cfg.DEMUCS_UVX });
+        const stems = await ff.separateBackground(input, workDir, { uvx: cfg.DEMUCS_UVX, idleMs: cfg.STEP_IDLE_MS });
         bgPath = cfg.KEEP_BACKGROUND ? stems.background : null;
         vocalsPath = stems.vocals;
         capture({ stage: 'separate', ok: true, ms: now() - tSep });
@@ -612,7 +612,7 @@ export async function runPipeline(cfg, args) {
         const oPath = join(segDir, 'voiceselect_out.json');
         await writeFile(mPath, JSON.stringify(manifest));
         try {
-          await runBin(cfg.DEMUCS_UVX || join(homedir(), '.local/bin/uvx'), ['--with', 'resemblyzer', '--with', 'numpy<2', 'python', join(__dir, 'voiceselect.py'), mPath, oPath]);
+          await runBin(cfg.DEMUCS_UVX || join(homedir(), '.local/bin/uvx'), ['--with', 'resemblyzer', '--with', 'numpy<2', 'python', join(__dir, 'voiceselect.py'), mPath, oPath], { idleMs: cfg.STEP_IDLE_MS });
           const best = JSON.parse(await readFile(oPath, 'utf8')).best || {};
           let n = 0;
           for (const rec of recs) {

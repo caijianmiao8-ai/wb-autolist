@@ -2064,11 +2064,19 @@ function VideoPanel({
   const [stage, setStage] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [preset, setPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
+  const canceling = useRef(false);
   const done = !!listing.videoRu;
+
+  function cancel() {
+    canceling.current = true;
+    setStage("正在取消…");
+    api.dubCancel().catch(() => {});
+  }
 
   async function dub() {
     setBusy(true);
     setErr(null);
+    canceling.current = false;
     setStage("自检…");
     let un: (() => void) | null = null;
     try {
@@ -2089,11 +2097,12 @@ function VideoPanel({
       });
       onUpdate(await api.setListingVideo(listing.id, out));
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "配音失败");
+      if (!canceling.current) setErr(e instanceof Error ? e.message : "配音失败");
     } finally {
       un?.();
       setBusy(false);
       setStage("");
+      canceling.current = false;
     }
   }
 
@@ -2126,7 +2135,13 @@ function VideoPanel({
       ) : busy ? (
         <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-wb-pink" /> 配音中…
-          <span className="text-slate-400">{stage}</span>
+          <span className="min-w-0 flex-1 truncate text-slate-400">{stage}</span>
+          <button
+            onClick={cancel}
+            className="shrink-0 text-[11px] text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
+          >
+            取消
+          </button>
         </div>
       ) : (
         <div className="space-y-2">

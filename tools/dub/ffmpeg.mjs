@@ -20,24 +20,56 @@ export const FFMPEG = process.env.FFMPEG_PATH || join(homedir(), '.local/bin/ffm
 export const FFPROBE = process.env.FFPROBE_PATH || join(homedir(), '.local/bin/ffprobe');
 
 /** Run a binary with args; resolve {stdout,stderr} on rc 0, reject otherwise. */
-export function run(bin, args, { onLog } = {}) {
+// `idleMs`: a STALL watchdog. If the child emits no stdout/stderr for this long,
+// kill it and reject. Used for the heavy network steps (Demucs/voice-select via
+// uvx) so a dead/stalled first-run model download can't hang the dub forever —
+// the caller catches the reject and degrades gracefully. Progress output (uv's
+// download bar, demucs ticks) resets the timer, so a slow-but-moving download is
+// never killed. 0/undefined = no watchdog (ffmpeg ops are fast).
+export function run(bin, args, { onLog, idleMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
+    let timer = null;
+    let stalled = false;
+    const bump = () => {
+      if (!idleMs) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        stalled = true;
+        try {
+          p.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      }, idleMs);
+    };
+    const clear = () => timer && clearTimeout(timer);
+    bump();
     p.stdout.on('data', (d) => {
       out += d;
+      bump();
     });
     p.stderr.on('data', (d) => {
       err += d;
+      bump();
       if (onLog) onLog(d.toString());
     });
-    p.on('error', reject); // e.g. ENOENT if binary missing
-    p.on('close', (code) =>
-      code === 0
-        ? resolve({ stdout: out, stderr: err })
-        : reject(new Error(`${bin} exited ${code}\n${err.slice(-1500)}`))
-    );
+    p.on('error', (e) => {
+      clear();
+      reject(e);
+    }); // e.g. ENOENT if binary missing
+    p.on('close', (code) => {
+      clear();
+      if (stalled) {
+        reject(new Error(`${bin} stalled (no output for ${Math.round(idleMs / 1000)}s) — killed`));
+      } else if (code === 0) {
+        resolve({ stdout: out, stderr: err });
+      } else {
+        reject(new Error(`${bin} exited ${code}\n${err.slice(-1500)}`));
+      }
+    });
   });
 }
 
@@ -324,7 +356,7 @@ export function makeFf(cfg = {}) {
     const outDir = join(workDir, 'demucs');
     // --mp3: demucs' default WAV writer needs torchcodec (often absent); mp3 uses
     // lameenc and Just Works. Lossy is fine — it gets re-encoded to aac at mux.
-    await run(uvx, ['--from', 'demucs', 'demucs', '--two-stems=vocals', '--mp3', '-o', outDir, full]);
+    await run(uvx, ['--from', 'demucs', 'demucs', '--two-stems=vocals', '--mp3', '-o', outDir, full], { idleMs: opts.idleMs || 0 });
     const bg = join(outDir, 'htdemucs', 'orig_full', 'no_vocals.mp3');
     const vocals = join(outDir, 'htdemucs', 'orig_full', 'vocals.mp3');
     if (!existsSync(bg)) throw new Error(`demucs background stem not found at ${bg}`);
