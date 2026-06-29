@@ -530,6 +530,7 @@ export function BatchPanel() {
             dubbing={dubbing}
             dubMsg={dubMsg}
             onCancelDub={cancelDubbing}
+            dubHeavy={dubPreset !== "fast"}
           />
         )}
         {step === 3 && (
@@ -916,6 +917,7 @@ function ReviewStep({
   dubbing,
   dubMsg,
   onCancelDub,
+  dubHeavy,
 }: {
   listings: Listing[];
   lang: "ru" | "zh" | "both";
@@ -926,6 +928,7 @@ function ReviewStep({
   dubbing: { done: number; total: number } | null;
   dubMsg: string | null;
   onCancelDub: () => void;
+  dubHeavy: boolean;
 }) {
   const [detail, setDetail] = useState<Listing | null>(null);
   const ready = listings.filter(listingReady);
@@ -993,6 +996,11 @@ function ReviewStep({
           >
             取消配音
           </button>
+        </div>
+      )}
+      {dubbing && dubHeavy && (
+        <div className="mb-3 rounded-xl bg-amber-500/[0.08] px-4 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-200">
+          首次配音会联网下载配音引擎（约 0.5–1GB，<b>仅首次</b>），可能要几分钟、进度看着不动属正常；可随时「取消配音」。
         </div>
       )}
       {dubMsg && (

@@ -2133,15 +2133,23 @@ function VideoPanel({
           </button>
         </div>
       ) : busy ? (
-        <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-wb-pink" /> 配音中…
-          <span className="min-w-0 flex-1 truncate text-slate-400">{stage}</span>
-          <button
-            onClick={cancel}
-            className="shrink-0 text-[11px] text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
-          >
-            取消
-          </button>
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-wb-pink" /> 配音中…
+            <span className="min-w-0 flex-1 truncate text-slate-400">{stage}</span>
+            <button
+              onClick={cancel}
+              className="shrink-0 text-[11px] text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
+            >
+              取消
+            </button>
+          </div>
+          {preset !== "fast" && (
+            <p className="rounded-md bg-amber-500/[0.08] px-2 py-1 text-[10.5px] leading-relaxed text-amber-700 dark:text-amber-200">
+              首次使用「{DUB_PRESETS.find((p) => p.id === preset)?.label}」会联网下载配音引擎（约
+              0.5–1GB，<b>仅首次</b>），可能要几分钟、进度可能看着不动属正常；完成前别关，可随时「取消」。
+            </p>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
