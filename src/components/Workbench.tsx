@@ -2070,6 +2070,7 @@ function VideoPanel({
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [preset, setPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
   const canceling = useRef(false);
   const done = !!listing.videoRu;
@@ -2083,8 +2084,10 @@ function VideoPanel({
   async function dub() {
     setBusy(true);
     setErr(null);
+    setNotice(null);
     canceling.current = false;
     setStage("自检…");
+    const warns: string[] = [];
     let un: (() => void) | null = null;
     try {
       const pf = await api.dubPreflight();
@@ -2096,13 +2099,27 @@ function VideoPanel({
         if (!pf.cliFound) miss.push("配音脚本");
         throw new Error("运行环境未就绪:缺 " + miss.join("、"));
       }
-      un = await listen<{ stage: string }>("dub:progress", (e) => setStage(e.payload.stage));
+      un = await listen<{ stage: string; warn?: string }>("dub:progress", (e) => {
+        setStage(e.payload.stage);
+        if (e.payload.warn) warns.push(e.payload.warn);
+      });
       const out = await api.dubStart({
         inputPath: videoPath,
         voiceMode: "clone",
         ...dubPresetOptions(preset),
       });
       onUpdate(await api.setListingVideo(listing.id, out));
+      // Surface any auto-degrade (engine timeout / skipped step) so the user knows
+      // the result was downgraded rather than silently getting lower quality.
+      const deg = warns.filter((w) => /skipped|stall|raw audio|single renders/i.test(w));
+      if (deg.length) {
+        const lost: string[] = [];
+        if (deg.some((w) => /stem|background|raw audio/i.test(w))) lost.push("未保留背景音乐");
+        if (deg.some((w) => /voice-select|single renders/i.test(w))) lost.push("音色一致性略降");
+        setNotice(
+          `配音已生成，但配音引擎等待超时/未就绪，已自动降级（${lost.join("、") || "降级出片"}）。如需最佳效果，联网后用「高质量」重配。`
+        );
+      }
     } catch (e) {
       if (!canceling.current) setErr(e instanceof Error ? e.message : "配音失败");
     } finally {
@@ -2114,6 +2131,7 @@ function VideoPanel({
   }
 
   async function reDub() {
+    setNotice(null);
     onUpdate(await api.setListingVideo(listing.id, ""));
   }
 
@@ -2187,6 +2205,11 @@ function VideoPanel({
         </div>
       )}
       {err && <p className="mt-2 break-words text-[11px] text-rose-600 dark:text-rose-400">{err}</p>}
+      {notice && (
+        <p className="mt-2 break-words rounded-md bg-amber-500/[0.1] px-2 py-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+          ⚠️ {notice}
+        </p>
+      )}
       {!done && !busy && (
         <p className="mt-2 text-[11px] text-slate-400">
           {DUB_PRESETS.find((p) => p.id === preset)?.hint} · 消耗 Aurixel
