@@ -498,11 +498,15 @@ pub async fn subject_characteristics(
     let st = state.inner().clone();
     let cfg = get_config(&st.paths);
     let ctx = content_ctx(&cfg);
-    let mut ru = get_characteristics(&st, &ctx, subject_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Fetch ru + zh concurrently (separate cache keys, no conflict) so the editor
+    // opens faster than two sequential WB round-trips.
+    let (ru_res, zh_res) = tokio::join!(
+        get_characteristics(&st, &ctx, subject_id),
+        crate::wb::categories::get_characteristics_locale(&st, &ctx, subject_id, "zh"),
+    );
+    let mut ru = ru_res.map_err(|e| e.to_string())?;
     // Best-effort Chinese names; on any failure the editor just shows Russian.
-    if let Ok(zh) = crate::wb::categories::get_characteristics_locale(&st, &ctx, subject_id, "zh").await {
+    if let Ok(zh) = zh_res {
         let zh_map: std::collections::HashMap<i64, String> =
             zh.into_iter().map(|c| (c.charc_id, c.name)).collect();
         for c in &mut ru {

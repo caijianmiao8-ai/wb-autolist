@@ -1198,15 +1198,16 @@ function ParamsEditor({ listing }: { listing: Listing }) {
   async function loadFor(sid: number, sname: string) {
     setLoading(true);
     setErr(null);
+    const fmt = (v: unknown) =>
+      Array.isArray(v) ? (v as unknown[]).join(", ") : String(v ?? "");
     try {
+      // Only the category dictionary blocks the form (fast). Show it right away.
       const [cs, cols] = await Promise.all([
         api.subjectCharacteristics(sid),
         api.wbColors().catch(() => [] as WbColor[]),
       ]);
       setCharcs(cs);
       setColors(cols);
-      const fmt = (v: unknown) =>
-        Array.isArray(v) ? (v as unknown[]).join(", ") : String(v ?? "");
       const saved = listing.characteristics ?? [];
       const pre: Record<number, string> = {};
       saved.forEach((c) => {
@@ -1216,32 +1217,38 @@ function ParamsEditor({ listing }: { listing: Listing }) {
       setSubjectId(sid);
       setSubjectName(sname);
       setLoaded(true);
-      // No user-confirmed values yet → pre-fill the AI's standard suggestions
-      // (same values publish would auto-fill) so the seller sees ~20 filled
-      // rows to review instead of an empty form.
-      if (saved.length === 0) {
-        setPredicting(true);
-        try {
-          const pred = await api.predictCharacteristics(listing.id, sid);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "读取类目特征失败");
+      setLoading(false);
+      return;
+    }
+    setLoading(false); // form is interactive now
+
+    // Background (don't block the form): AI pre-fill of ~20 standard values, and
+    // the TNVED lookup. The「AI 正在填充」indicator covers the predict.
+    if ((listing.characteristics ?? []).length === 0) {
+      setPredicting(true);
+      api
+        .predictCharacteristics(listing.id, sid)
+        .then((pred) => {
           const pv: Record<number, string> = {};
           pred.forEach((c) => {
             pv[c.id] = fmt(c.value);
           });
-          setValues(pv);
-        } catch {
+          setValues((cur) => (Object.keys(cur).length ? cur : pv));
+        })
+        .catch(() => {
           /* non-fatal: leave blank, publish still auto-fills */
-        } finally {
-          setPredicting(false);
-        }
-      }
-      if (!tnved) {
-        const t = await api.wbTnved(sid).catch(() => null);
-        if (t) setTnved(t);
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "读取类目特征失败");
-    } finally {
-      setLoading(false);
+        })
+        .finally(() => setPredicting(false));
+    }
+    if (!tnved) {
+      api
+        .wbTnved(sid)
+        .then((t) => {
+          if (t) setTnved(t);
+        })
+        .catch(() => {});
     }
   }
 
