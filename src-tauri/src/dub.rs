@@ -654,13 +654,18 @@ pub fn dub_engine_status(state: State<Arc<AppState>>) -> EngineStatus {
     }
 }
 
-/// 预下载 / 预热配音引擎(Demucs + voice-select 模型),让首次配音不再卡在下载。
-/// 跑一次 `node cli.mjs --prepare-engine`(本地 uvx,带失速看门狗 + 无黑窗)。成功
-/// 后落一个 sentinel 文件,设置页据此显示「已就绪」。一次只允许一个(与配音共用闸)。
-#[tauri::command]
-pub async fn dub_prepare_engine(
+/// 共享:跑一个 `node cli.mjs <sub_arg>` 的引擎任务(本地 uvx,失速看门狗 + 无黑窗 +
+/// apply_uv_env 把 ffmpeg 上 PATH),把进度行转成 `dub:engine` 事件,见到 `ready_marker`
+/// 即判成功并落 sentinel。一次只允许一个(与配音共用 cancel_slot 闸)。
+/// 预下载(--prepare-engine)与功能自检(--selftest)都走它。
+async fn run_engine_task(
     app: AppHandle,
-    state: State<'_, Arc<AppState>>,
+    data_dir: PathBuf,
+    sub_arg: &str,
+    ready_marker: &str,
+    busy_msg: &str,
+    ok_msg: &str,
+    fail_default: &str,
 ) -> Result<(), String> {
     let cli = resolve_cli(&app).ok_or("找不到配音脚本(打包资源缺失)")?;
     let node = resolve_node(&app);
@@ -671,10 +676,10 @@ pub async fn dub_prepare_engine(
         return Err("缺 Node 运行时".into());
     }
     if !bin_ok(&uvx) {
-        return Err("缺 uvx(下载引擎所需)".into());
+        return Err("缺 uvx(配音引擎所需)".into());
     }
 
-    // 防呆:已有配音或下载在跑则拒(共用 cancel_slot,一次一个 uvx 任务)。
+    // 防呆:已有配音或下载/测试在跑则拒(共用 cancel_slot,一次一个 uvx 任务)。
     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
     {
         let mut slot = cancel_slot().lock().unwrap();
@@ -686,24 +691,24 @@ pub async fn dub_prepare_engine(
     {
         let mut g = engine_state().lock().unwrap();
         g.0 = true;
-        g.1 = "正在准备配音引擎…".into();
+        g.1 = busy_msg.to_string();
     }
-    let _ = app.emit("dub:engine", json!({"preparing": true, "msg": "正在准备配音引擎…"}));
+    let _ = app.emit("dub:engine", json!({"preparing": true, "msg": busy_msg}));
 
     let mut cmd = tokio::process::Command::new(&node);
     cmd.arg(cli.to_string_lossy().to_string())
-        .arg("--prepare-engine")
+        .arg(sub_arg)
         .env("FFMPEG_PATH", &ffmpeg)
         .env("FFPROBE_PATH", &ffprobe)
         .env("DEMUCS_UVX", &uvx)
         .env(
             "DUB_ENV_PATH",
-            state.paths.data_dir.join(".dub.env").to_string_lossy().to_string(),
+            data_dir.join(".dub.env").to_string_lossy().to_string(),
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    apply_uv_env(&mut cmd, &state.paths.data_dir, &ffmpeg);
+    apply_uv_env(&mut cmd, &data_dir, &ffmpeg);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
@@ -737,7 +742,7 @@ pub async fn dub_prepare_engine(
                 match line {
                     Ok(Some(l)) => {
                         let t = l.trim();
-                        if t == "ENGINE_READY=1" { ready = true; continue; }
+                        if t == ready_marker { ready = true; continue; }
                         if t.is_empty() { continue; }
                         engine_state().lock().unwrap().1 = t.to_string();
                         let _ = app_ev.emit("dub:engine", json!({"preparing": true, "msg": t}));
@@ -761,16 +766,56 @@ pub async fn dub_prepare_engine(
     }
     let ok = ready && status.map(|s| s.success()).unwrap_or(false);
     if ok {
-        let _ = std::fs::write(state.paths.data_dir.join(".dub_engine_ready_v2"), b"ready");
-        engine_state().lock().unwrap().1 = "配音引擎已就绪".into();
-        let _ = app.emit("dub:engine", json!({"preparing": false, "ready": true, "msg": "配音引擎已就绪"}));
+        let _ = std::fs::write(data_dir.join(".dub_engine_ready_v2"), b"ready");
+        engine_state().lock().unwrap().1 = ok_msg.to_string();
+        let _ = app.emit("dub:engine", json!({"preparing": false, "ready": true, "msg": ok_msg}));
         Ok(())
     } else {
-        let msg = first_error_line(&stderr_txt).unwrap_or_else(|| "下载失败,可重试".into());
+        let msg = first_error_line(&stderr_txt).unwrap_or_else(|| fail_default.to_string());
         engine_state().lock().unwrap().1 = format!("失败:{}", msg);
         let _ = app.emit("dub:engine", json!({"preparing": false, "ready": false, "msg": msg, "error": true}));
         Err(msg)
     }
+}
+
+/// 预下载 / 预热配音引擎(Demucs + voice-select 模型),让首次配音不再卡在下载。
+#[tauri::command]
+pub async fn dub_prepare_engine(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let data_dir = state.paths.data_dir.clone();
+    run_engine_task(
+        app,
+        data_dir,
+        "--prepare-engine",
+        "ENGINE_READY=1",
+        "正在准备配音引擎…",
+        "配音引擎已就绪",
+        "下载失败,可重试",
+    )
+    .await
+}
+
+/// 真·功能自检:真跑一次 Demucs 背景分离(短测试音频,走和配音**完全相同**的代码路径)。
+/// `uvx --version` 通过 ≠ demucs 真能加载/分离音频(历史上正是这一步静默失败、却让旧版
+/// 「测试」误报就绪),所以「测试」必须真跑一次才准。通过即视为引擎就绪(落 sentinel)。
+#[tauri::command]
+pub async fn dub_selftest(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let data_dir = state.paths.data_dir.clone();
+    run_engine_task(
+        app,
+        data_dir,
+        "--selftest",
+        "SELFTEST_OK",
+        "测试中:真跑一次背景分离(首次会下载引擎)…",
+        "配音引擎测试通过 ✓",
+        "测试未通过",
+    )
+    .await
 }
 
 /// 用系统默认程序打开文件(成片预览)。

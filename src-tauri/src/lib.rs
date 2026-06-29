@@ -84,6 +84,7 @@ pub fn run() {
             dub::dub_start,
             dub::dub_cancel,
             dub::dub_prepare_engine,
+            dub::dub_selftest,
             dub::dub_engine_status,
             dub::pick_folder,
             dub::open_path,

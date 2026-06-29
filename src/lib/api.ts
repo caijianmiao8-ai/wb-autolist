@@ -205,6 +205,9 @@ export const api = {
   dubCancel: () => invoke<boolean>("dub_cancel"),
   /** Pre-download/warm the dub engine (Demucs + voice-select). Streams `dub:engine`. */
   dubPrepareEngine: () => invoke<void>("dub_prepare_engine"),
+  /** REAL functional test: runs one actual Demucs separation through the dub path.
+   *  Rejects with the true reason if it can't separate. Streams `dub:engine`. */
+  dubSelftest: () => invoke<void>("dub_selftest"),
   /** Engine state (downloading / ready / last progress) — for Settings + re-hydrate. */
   dubEngineStatus: () => invoke<EngineStatus>("dub_engine_status"),
   /** Open a local file with the OS default app. */

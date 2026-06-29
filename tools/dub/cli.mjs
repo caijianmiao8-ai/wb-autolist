@@ -20,12 +20,12 @@
 //   --src-lang en  --target-lang ru
 //   -h, --help
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, extname, resolve } from 'node:path';
 import { loadConfig, redactedConfig, assertSecrets, parseSpeakerVoices, resolveVoice } from './config.mjs';
 import { runPipeline } from './pipeline.mjs';
-import { run } from './ffmpeg.mjs';
+import { run, makeFf } from './ffmpeg.mjs';
 
 // Pre-download / warm the local dubbing engine (Demucs + PyTorch, and the
 // voice-select model) so the FIRST real dub doesn't stall on a big download.
@@ -73,6 +73,37 @@ async function prepareEngine() {
     // the first line otherwise, dropping the verbose uv reason.
     console.error('FAILED: ' + String(e?.message || e).replace(/[\r\n]+/g, ' | ').replace(/\s{2,}/g, ' ').trim());
     process.exit(1);
+  }
+}
+
+// Real functional self-test for Settings→「测试」. Actually runs ONE Demucs
+// background separation on a short generated clip, through the SAME path the dub
+// uses (separateBackground → uvx demucs, with ffmpeg on PATH via apply_uv_env).
+// `uvx --version` passing tells you NOTHING about whether demucs can load+separate
+// audio — that's the step that historically failed silently. Prints SELFTEST_OK on
+// success, or FAILED:<flattened reason> on failure.
+async function selfTest() {
+  const cfg = loadConfig({});
+  const ff = makeFf(cfg);
+  const t0 = Date.now();
+  const line = (m) => console.log(`${m}  (+${Math.round((Date.now() - t0) / 1000)}s)`);
+  const work = mkdtempSync(join(tmpdir(), 'wb-dub-selftest-'));
+  try {
+    line('生成测试音频…');
+    const wav = join(work, 'selftest.wav');
+    // ~8s of pink noise: non-silent + long enough to dodge demucs' short/silent
+    // reflect-pad assert, small enough to separate in seconds.
+    await ff.ffmpeg(['-y', '-f', 'lavfi', '-i', 'anoisesrc=d=8:c=pink:r=44100:a=0.3', '-ac', '2', '-ar', '44100', wav], { idleMs: 60000 });
+    line('运行 Demucs 背景分离(首次会下载引擎,请耐心)…');
+    const { background } = await ff.separateBackground(wav, work, { uvx: cfg.DEMUCS_UVX, idleMs: cfg.STEP_IDLE_MS });
+    if (!background || !existsSync(background)) throw new Error('分离完成但未产出背景音轨');
+    line('✅ 背景分离成功,引擎可用');
+    console.log('SELFTEST_OK');
+  } catch (e) {
+    console.error('FAILED: ' + String(e?.message || e).replace(/[\r\n]+/g, ' | ').replace(/\s{2,}/g, ' ').trim());
+    process.exit(1);
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
 
@@ -133,6 +164,10 @@ async function main() {
   const a = parseArgs(process.argv.slice(2));
   if (a['prepare-engine']) {
     await prepareEngine();
+    return;
+  }
+  if (a.selftest) {
+    await selfTest();
     return;
   }
   if (a.help || a._.length === 0) {

@@ -583,6 +583,9 @@ function DubEngineRow() {
   const [preparing, setPreparing] = useState(false);
   const [msg, setMsg] = useState("");
   const [elapsed, setElapsed] = useState(0);
+  // Result of the REAL functional self-test (actual Demucs separation), not just
+  // the binary-presence preflight. ok=true 才是真的「可配音」。
+  const [testResult, setTestResult] = useState<{ ok: boolean; reason?: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -625,13 +628,32 @@ function DubEngineRow() {
   }, [preparing]);
 
   async function test() {
+    // 1) instant preflight — are the binaries / key / script even present?
+    setTestResult(null);
     setTesting(true);
+    let p: DubPreflight | null = null;
     try {
-      setPre(await api.dubPreflight());
+      p = await api.dubPreflight();
+      setPre(p);
     } catch {
-      /* ignore */
-    } finally {
       setTesting(false);
+      return;
+    }
+    setTesting(false);
+    // missing core pieces → preflight message already says what; don't bother separating.
+    if (!p || !p.node || !p.ffmpeg || !p.ffprobe || !p.cliFound) return;
+    // 2) the ACCURATE part: actually run one Demucs separation through the dub path.
+    //    (uvx --version passing ≠ demucs can separate — that's what fooled us before.)
+    setPreparing(true);
+    setMsg("测试中：真跑一次背景分离…");
+    try {
+      await api.dubSelftest();
+      setTestResult({ ok: true });
+    } catch (e) {
+      setTestResult({ ok: false, reason: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPreparing(false);
+      api.dubEngineStatus().then(setStatus).catch(() => {});
     }
   }
 
@@ -716,13 +738,32 @@ function DubEngineRow() {
         <p
           className={clsx(
             "mt-2 text-[11px]",
-            missing.length ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+            missing.length ? "text-amber-600 dark:text-amber-400" : "text-slate-500 dark:text-slate-400"
           )}
         >
-          {missing.length ? `缺：${missing.join("、")}` : "✓ Node / FFmpeg / uvx 均就绪，可配音"}
+          {missing.length ? `缺：${missing.join("、")}` : "运行组件齐全（能否真分离以「测试」结果为准）"}
           {!pre.aurixelKey && "（还需在上面配 Aurixel 密钥）"}
         </p>
       )}
+
+      {!preparing &&
+        testResult &&
+        (testResult.ok ? (
+          <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+            ✓ 测试通过：已真跑一次背景分离，「高质量」配音可用
+          </p>
+        ) : (
+          <div className="mt-1">
+            <p className="text-[11px] text-rose-600 dark:text-rose-400">
+              ✗ 测试未通过 —— 这样配音会降级（无背景音乐）。原因↓
+            </p>
+            {testResult.reason && (
+              <pre className="mt-1 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words rounded-md bg-rose-500/[0.06] px-2 py-1 text-[10px] leading-relaxed text-rose-700/80 dark:text-rose-300/70">
+                {testResult.reason}
+              </pre>
+            )}
+          </div>
+        ))}
     </div>
   );
 }
