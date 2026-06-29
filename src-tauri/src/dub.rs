@@ -20,6 +20,20 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::oneshot;
 
+/// Windows: suppress the console window that spawning a console-subsystem binary
+/// (node / uvx / python / ffmpeg) pops up from a GUI app — it looks alarming to
+/// users. 0x08000000 = CREATE_NO_WINDOW. No-op elsewhere.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+fn hide_window(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+#[cfg(not(windows))]
+fn hide_window(_cmd: &mut std::process::Command) {}
+
 /// 一次只允许一个配音任务(单用户桌面;前端也会锁住表单)。存放取消句柄;
 /// `Some` 即代表「有任务在跑」。
 fn cancel_slot() -> &'static Mutex<Option<oneshot::Sender<()>>> {
@@ -91,13 +105,10 @@ fn bin_ok(path: &str) -> bool {
     if Path::new(path).is_file() {
         return true;
     }
-    std::process::Command::new(path)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let mut c = std::process::Command::new(path);
+    c.arg("--version").stdout(Stdio::null()).stderr(Stdio::null());
+    hide_window(&mut c); // no console flash on the Windows preflight checks
+    c.status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// 打包进安装包的二进制:resource_dir/bin/{name}{.exe}。让客户(Windows)开箱即用
@@ -446,6 +457,10 @@ pub async fn dub_start(
             cmd.env("AURIXEL_VOICE", v);
         }
     }
+    // No console window when launching node.exe on Windows (it would otherwise pop
+    // a cmd window; node's own children are hidden via windowsHide in ffmpeg.mjs).
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
 
     // 占闸(原子):已有任务则拒。然后起子进程。
     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
@@ -552,9 +567,12 @@ pub fn open_path(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let spawned = std::process::Command::new("open").arg(&path).spawn();
     #[cfg(target_os = "windows")]
-    let spawned = std::process::Command::new("cmd")
-        .args(["/C", "start", "", &path])
-        .spawn();
+    let spawned = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", &path]);
+        hide_window(&mut c); // don't flash a cmd window when opening the result
+        c.spawn()
+    };
     #[cfg(target_os = "linux")]
     let spawned = std::process::Command::new("xdg-open").arg(&path).spawn();
     spawned.map(|_| ()).map_err(|e| e.to_string())

@@ -28,7 +28,9 @@ export const FFPROBE = process.env.FFPROBE_PATH || join(homedir(), '.local/bin/f
 // never killed. 0/undefined = no watchdog (ffmpeg ops are fast).
 export function run(bin, args, { onLog, idleMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // windowsHide: don't pop a console window for each ffmpeg/uvx/python child
+    // spawned on Windows (alarming for GUI users).
+    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
     let err = '';
     let timer = null;
