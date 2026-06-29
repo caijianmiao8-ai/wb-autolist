@@ -64,12 +64,25 @@ export function run(bin, args, { onLog, idleMs = 0 } = {}) {
     }); // e.g. ENOENT if binary missing
     p.on('close', (code) => {
       clear();
+      // Surface BOTH streams on failure. uv/uvx can exit non-zero writing nothing
+      // to stderr (its diagnostics sometimes land on stdout, or it dies before
+      // logging) — stderr-only error messages then read as a bare "exited 1" and
+      // hide the real cause. Tag each stream so a degrade "详情" is self-explaining.
+      const diag = () => {
+        const e = (err || '').trim();
+        const o = (out || '').trim();
+        const parts = [];
+        if (e) parts.push(`stderr: ${e.slice(-1800)}`);
+        if (o) parts.push(`stdout: ${o.slice(-1800)}`);
+        if (!parts.length) parts.push('(no stdout/stderr output)');
+        return '\n' + parts.join('\n');
+      };
       if (stalled) {
-        reject(new Error(`${bin} stalled (no output for ${Math.round(idleMs / 1000)}s) — killed`));
+        reject(new Error(`${bin} stalled (no output for ${Math.round(idleMs / 1000)}s) — killed${diag()}`));
       } else if (code === 0) {
         resolve({ stdout: out, stderr: err });
       } else {
-        reject(new Error(`${bin} exited ${code}\n${err.slice(-1500)}`));
+        reject(new Error(`${bin} exited ${code}${diag()}`));
       }
     });
   });
@@ -358,7 +371,31 @@ export function makeFf(cfg = {}) {
     const outDir = join(workDir, 'demucs');
     // --mp3: demucs' default WAV writer needs torchcodec (often absent); mp3 uses
     // lameenc and Just Works. Lossy is fine — it gets re-encoded to aac at mux.
-    await run(uvx, ['--from', 'demucs', 'demucs', '--two-stems=vocals', '--mp3', '-o', outDir, full], { idleMs: opts.idleMs || 0 });
+    // `-v`: uv verbose — logs interpreter discovery + resolution to stderr, so when
+    // it fails (esp. the silent "exited 1" some Windows setups produce) the reason
+    // is captured instead of an empty error. Also keeps the stall watchdog fed.
+    try {
+      await run(uvx, ['-v', '--from', 'demucs', 'demucs', '--two-stems=vocals', '--mp3', '-o', outDir, full], { idleMs: opts.idleMs || 0 });
+    } catch (e) {
+      // Self-diagnose so the degrade "详情" explains WHY uvx failed. uvx == `uv tool
+      // run`; its sibling `uv` does the Python discovery. Probe both: does the
+      // binary even run, and can uv see/obtain a Python? (No-Python is the usual
+      // first-run failure on a fresh, unsigned, network-restricted box.)
+      const uvBin = uvx.replace(/uvx(\.exe)?$/i, (_m, ext) => 'uv' + (ext || ''));
+      const probe = async (label, bin, args) => {
+        try {
+          const r = await run(bin, args, { idleMs: 30000 });
+          return `\n[${label}] ${((r.stdout || '') + (r.stderr || '')).trim().slice(0, 500) || 'ok'}`;
+        } catch (pe) {
+          return `\n[${label} FAILED] ${String(pe?.message || pe).replace(/\s+/g, ' ').slice(0, 400)}`;
+        }
+      };
+      let diag = '';
+      diag += await probe('uv --version', uvBin, ['--version']);
+      diag += await probe('uv python list', uvBin, ['python', 'list']);
+      e.message = `${e.message}${diag}`;
+      throw e;
+    }
     const bg = join(outDir, 'htdemucs', 'orig_full', 'no_vocals.mp3');
     const vocals = join(outDir, 'htdemucs', 'orig_full', 'vocals.mp3');
     if (!existsSync(bg)) throw new Error(`demucs background stem not found at ${bg}`);

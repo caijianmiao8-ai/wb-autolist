@@ -94,6 +94,7 @@ export function BatchPanel() {
   const [dubbing, setDubbing] = useState<{ done: number; total: number } | null>(null);
   const [dubMsg, setDubMsg] = useState<string | null>(null);
   const [dubDegrade, setDubDegrade] = useState<string | null>(null);
+  const [dubDegradeDetail, setDubDegradeDetail] = useState<string | null>(null);
   const [dubPreset, setDubPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
   const dubCancelRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -394,6 +395,7 @@ export function BatchPanel() {
     }
     setDubMsg(null);
     setDubDegrade(null);
+    setDubDegradeDetail(null);
     dubCancelRef.current = false;
     setDubbing({ done: 0, total: tasks.length });
     // Watch for auto-degrade across the whole batch (engine timeout → skip
@@ -414,6 +416,12 @@ export function BatchPanel() {
         setDubDegrade(
           `⚠️ ${degradedItems} 个视频因配音引擎超时/未就绪已自动降级（${[...lost].join("、")}）。成片仍生成；如需最佳效果，到「设置→配音引擎」先下载，再重配。`
         );
+        // Capture the FULL reason (uvx -v logs + uv/python self-test) for diagnosis.
+        let inner = w;
+        const k = inner.indexOf("skipped (");
+        if (k >= 0) inner = inner.slice(k + "skipped (".length);
+        inner = inner.replace(/\)\s*—\s*raw audio[\s\S]*$/, "").trim();
+        if (inner) setDubDegradeDetail(inner.slice(0, 4000));
       }
     });
     try {
@@ -560,6 +568,7 @@ export function BatchPanel() {
             onCancelDub={cancelDubbing}
             dubHeavy={dubPreset !== "fast"}
             dubDegrade={dubDegrade}
+            dubDegradeDetail={dubDegradeDetail}
           />
         )}
         {step === 3 && (
@@ -948,6 +957,7 @@ function ReviewStep({
   onCancelDub,
   dubHeavy,
   dubDegrade,
+  dubDegradeDetail,
 }: {
   listings: Listing[];
   lang: "ru" | "zh" | "both";
@@ -960,6 +970,7 @@ function ReviewStep({
   onCancelDub: () => void;
   dubHeavy: boolean;
   dubDegrade: string | null;
+  dubDegradeDetail: string | null;
 }) {
   const [detail, setDetail] = useState<Listing | null>(null);
   const ready = listings.filter(listingReady);
@@ -1042,6 +1053,11 @@ function ReviewStep({
       {dubDegrade && (
         <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.12] px-4 py-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
           {dubDegrade}
+          {dubDegradeDetail && (
+            <pre className="mt-1.5 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words rounded-md bg-amber-900/[0.06] px-2 py-1 text-[10px] leading-relaxed text-amber-700/80 dark:text-amber-300/70">
+              详情：{dubDegradeDetail}
+            </pre>
+          )}
         </div>
       )}
 

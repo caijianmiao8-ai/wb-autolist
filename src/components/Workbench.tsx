@@ -2139,10 +2139,14 @@ function VideoPanel({
           setNotice(
             `配音引擎未生效，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，到「设置→配音引擎」先下载，再用「高质量」重配。`
           );
-          // Show the actual error tail (the exception line), not the long binary
-          // path prefix — strip "…skipped (" and ") — raw audio…" so we see WHY.
-          const inner = w.replace(/^[^(]*\(/, "").replace(/\)\s*—.*$/, "").trim();
-          setDetail((inner || w).slice(-300));
+          // Show the FULL captured reason (uvx -v logs + the uv/python self-test),
+          // not just a tail — strip the "stem separation skipped (" wrapper and the
+          // " — raw audio…" suffix so we see exactly WHY. Rendered scrollable below.
+          let inner = w;
+          const k = inner.indexOf("skipped (");
+          if (k >= 0) inner = inner.slice(k + "skipped (".length);
+          inner = inner.replace(/\)\s*—\s*raw audio[\s\S]*$/, "").trim();
+          setDetail((inner || w).slice(0, 4000));
         }
       });
       const out = await api.dubStart({
@@ -2243,9 +2247,9 @@ function VideoPanel({
         </p>
       )}
       {detail && (
-        <p className="mt-1 break-words text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+        <pre className="mt-1 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-500/[0.06] px-2 py-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
           详情：{detail}
-        </p>
+        </pre>
       )}
       {!done && !busy && (
         <p className="mt-2 text-[11px] text-slate-400">

@@ -46,9 +46,12 @@ async function prepareEngine() {
     // (ffmpeg.mjs separateBackground), so this warms the EXACT uv tool-env the dub
     // will reuse — `--with demucs` is a different cache key and would NOT help.
     // python -c get_model also fetches the htdemucs weights.
+    // `-v`: verbose uv — logs Python discovery + download so a failure here (the
+    // path the user is guided to via Settings→下载引擎) carries a real reason, not a
+    // bare "exited 1". Same instrumentation as the dub-time demucs call.
     await run(
       cfg.DEMUCS_UVX,
-      ['--from', 'demucs', 'python', '-c', 'from demucs.pretrained import get_model; get_model("htdemucs"); print("demucs-ok")'],
+      ['-v', '--from', 'demucs', 'python', '-c', 'from demucs.pretrained import get_model; get_model("htdemucs"); print("demucs-ok")'],
       { idleMs: cfg.STEP_IDLE_MS }
     );
     line('Demucs 就绪');
@@ -56,7 +59,7 @@ async function prepareEngine() {
       line('准备声纹择优模型（resemblyzer）…');
       await run(
         cfg.DEMUCS_UVX,
-        ['--with', 'resemblyzer', '--with', 'numpy<2', 'python', '-c', 'from resemblyzer import VoiceEncoder; VoiceEncoder(); print("vs-ok")'],
+        ['-v', '--with', 'resemblyzer', '--with', 'numpy<2', 'python', '-c', 'from resemblyzer import VoiceEncoder; VoiceEncoder(); print("vs-ok")'],
         { idleMs: cfg.STEP_IDLE_MS }
       );
       line('声纹择优就绪');
@@ -66,7 +69,9 @@ async function prepareEngine() {
     console.log('ENGINE_READY=1');
     line('✅ 配音引擎已就绪，之后配音不再等待下载');
   } catch (e) {
-    console.error('FAILED: ' + String(e?.message || e));
+    // Flatten newlines: the Rust side reads this line-by-line and would keep only
+    // the first line otherwise, dropping the verbose uv reason.
+    console.error('FAILED: ' + String(e?.message || e).replace(/[\r\n]+/g, ' | ').replace(/\s{2,}/g, ' ').trim());
     process.exit(1);
   }
 }
@@ -209,8 +214,12 @@ async function main() {
   const onEvent = (ev) => {
     const tag = ev.ok ? 'ok ' : 'ERR';
     let line = `  [${tag}] ${ev.stage.padEnd(18)} ${String(ev.ms).padStart(6)}ms`;
-    if (ev.warn) line += `  WARN ${ev.warn}`;
-    if (ev.error) line += `  ${ev.error}`;
+    // FLATTEN newlines → " | ": the Rust side reads our stdout line-by-line, so a
+    // multi-line warn (the verbose uvx diagnostic + uv/python self-test) would be
+    // truncated to its first line and the real reason lost. Keep it one line.
+    const flat = (s) => String(s).replace(/[\r\n]+/g, ' | ').replace(/\s{2,}/g, ' ').trim();
+    if (ev.warn) line += `  WARN ${flat(ev.warn)}`;
+    if (ev.error) line += `  ${flat(ev.error)}`;
     console.log(line);
   };
 

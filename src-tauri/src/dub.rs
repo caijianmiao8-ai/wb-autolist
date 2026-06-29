@@ -186,6 +186,33 @@ fn resolve_ffbin(app: &AppHandle, name: &str) -> String {
     name.into()
 }
 
+/// 给配音/预下载子进程注入稳健的 uv 环境(v1.0.9):
+///  - 把 uv 的 缓存 / 托管 Python / 工具 目录钉到 app 自己的数据目录:ASCII、可写、
+///    与可能被 OneDrive 重定向的 %LOCALAPPDATA% 隔离,也避开早期 \\?\ 失败留下的半成品
+///    缓存(损坏的托管 python.exe 会让 uvx re-exec 时被加载器秒杀、空输出退 1)。
+///  - UV_NATIVE_TLS=1:用系统(schannel)证书库,企业/杀软 TLS 拦截下仍能下载。
+///  - 关进度条/颜色:让诊断干净落到我们捕获的管道,而非交互式 reporter。
+///  - 清掉可能被企业 GPO 注入的 UV_PYTHON / UV_PYTHON_DOWNLOADS(会让 uv 选到不存在的
+///    解释器或禁掉下载而静默失败)。
+/// 全部为附加 / 隔离改动,健康机无行为副作用;预下载与配音必须用同一份环境(同一缓存)。
+fn apply_uv_env(cmd: &mut tokio::process::Command, data_dir: &Path) {
+    let uv_root = data_dir.join("uv");
+    let cache = uv_root.join("cache");
+    let py = uv_root.join("python");
+    let tools = uv_root.join("tools");
+    for d in [&cache, &py, &tools] {
+        let _ = std::fs::create_dir_all(d);
+    }
+    cmd.env("UV_CACHE_DIR", &cache)
+        .env("UV_PYTHON_INSTALL_DIR", &py)
+        .env("UV_TOOL_DIR", &tools)
+        .env("UV_NATIVE_TLS", "1")
+        .env("UV_NO_PROGRESS", "1")
+        .env("NO_COLOR", "1")
+        .env_remove("UV_PYTHON")
+        .env_remove("UV_PYTHON_DOWNLOADS");
+}
+
 /// 找配音脚本:env DUB_CLI → 打包资源 resource_dir/tools/dub/cli.mjs →
 /// 开发期 <crate>/../tools/dub/cli.mjs。
 fn resolve_cli(app: &AppHandle) -> Option<PathBuf> {
@@ -461,6 +488,7 @@ pub async fn dub_start(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    apply_uv_env(&mut cmd, &state.paths.data_dir);
     if voice_mode == "preset" {
         if let Some(v) = opt_str(&options.preset_voice) {
             cmd.env("AURIXEL_VOICE", v);
@@ -592,7 +620,11 @@ pub fn dub_engine_status(state: State<Arc<AppState>>) -> EngineStatus {
         let g = engine_state().lock().unwrap();
         (g.0, g.1.clone())
     };
-    let ready = state.paths.data_dir.join(".dub_engine_ready").is_file();
+    // v1.0.9: bumped sentinel — uv's cache/python dirs are now pinned under the app
+    // data dir (apply_uv_env), so a pre-v1.0.9 "ready" (which warmed %LOCALAPPDATA%\uv)
+    // no longer reflects the dir the dub actually uses. Force a re-warm into the new
+    // location instead of falsely reporting ready.
+    let ready = state.paths.data_dir.join(".dub_engine_ready_v2").is_file();
     EngineStatus {
         preparing,
         ready,
@@ -649,6 +681,7 @@ pub async fn dub_prepare_engine(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    apply_uv_env(&mut cmd, &state.paths.data_dir);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
@@ -706,7 +739,7 @@ pub async fn dub_prepare_engine(
     }
     let ok = ready && status.map(|s| s.success()).unwrap_or(false);
     if ok {
-        let _ = std::fs::write(state.paths.data_dir.join(".dub_engine_ready"), b"ready");
+        let _ = std::fs::write(state.paths.data_dir.join(".dub_engine_ready_v2"), b"ready");
         engine_state().lock().unwrap().1 = "配音引擎已就绪".into();
         let _ = app.emit("dub:engine", json!({"preparing": false, "ready": true, "msg": "配音引擎已就绪"}));
         Ok(())
