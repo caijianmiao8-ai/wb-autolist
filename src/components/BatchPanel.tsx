@@ -95,6 +95,8 @@ export function BatchPanel() {
   const [dubMsg, setDubMsg] = useState<string | null>(null);
   const [dubDegrade, setDubDegrade] = useState<string | null>(null);
   const [dubDegradeDetail, setDubDegradeDetail] = useState<string | null>(null);
+  // Calm note for a per-speaker clone fallback (preset voice) — NOT an engine failure.
+  const [dubCloneNote, setDubCloneNote] = useState<string | null>(null);
   const [dubPreset, setDubPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
   const dubCancelRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -396,6 +398,7 @@ export function BatchPanel() {
     setDubMsg(null);
     setDubDegrade(null);
     setDubDegradeDetail(null);
+    setDubCloneNote(null);
     dubCancelRef.current = false;
     setDubbing({ done: 0, total: tasks.length });
     // Watch for auto-degrade across the whole batch (engine timeout → skip
@@ -405,16 +408,18 @@ export function BatchPanel() {
     let sawDegradeThisItem = false;
     const un = await listen<{ warn?: string }>("dub:progress", (e) => {
       const w = e.payload.warn;
-      if (w && /skipped|stall|raw audio|single renders|preset voice/i.test(w)) {
+      if (!w) return;
+      // GENUINE engine degrade (background/voice-select dropped, raw audio, stall) —
+      // downloading/retry can help → persistent alarm banner + reason.
+      if (/stem|background|raw audio|voice-select|single renders|stall/i.test(w)) {
         if (/stem|background|raw audio/i.test(w)) lost.add("未保留背景音乐");
         if (/voice-select|single renders/i.test(w)) lost.add("音色一致性略降");
-        if (/clone skipped|preset voice/i.test(w)) lost.add("未能克隆原声");
         if (!sawDegradeThisItem) {
           sawDegradeThisItem = true;
           degradedItems++;
         }
         setDubDegrade(
-          `⚠️ ${degradedItems} 个视频因配音引擎超时/未就绪已自动降级（${[...lost].join("、")}）。成片仍生成；如需最佳效果，到「设置→配音引擎」先下载，再重配。`
+          `⚠️ ${degradedItems} 个视频因配音引擎超时/未就绪已自动降级（${[...lost].join("、")}）。成片仍生成；如需最佳效果，到「设置→配音引擎」先点「测试」确认，再重配。`
         );
         // Capture the FULL reason (uvx -v logs + uv/python self-test) for diagnosis.
         let inner = w;
@@ -422,7 +427,17 @@ export function BatchPanel() {
         if (k >= 0) inner = inner.slice(k + "skipped (".length);
         inner = inner.replace(/\)\s*—\s*raw audio[\s\S]*$/, "").trim();
         if (inner) setDubDegradeDetail(inner.slice(0, 4000));
+        return;
       }
+      // Per-speaker CLONE fallback (a secondary speaker used a preset voice). NOT an
+      // engine failure (download won't help) → calm, non-alarming note.
+      if (/preset voice|couldn't clone/i.test(w)) {
+        setDubCloneNote(
+          "部分视频检测到次要说话人但其清晰语音不足，已用预设音色顶替（主播仍为克隆原声）。若都是单人讲解，告诉我可改为全程同一音色。"
+        );
+        return;
+      }
+      // "[voice-folded]" → minor speaker folded into the main cloned voice (desired). No UI.
     });
     try {
       for (let i = 0; i < tasks.length; i++) {
@@ -569,6 +584,7 @@ export function BatchPanel() {
             dubHeavy={dubPreset !== "fast"}
             dubDegrade={dubDegrade}
             dubDegradeDetail={dubDegradeDetail}
+            dubCloneNote={dubCloneNote}
           />
         )}
         {step === 3 && (
@@ -958,6 +974,7 @@ function ReviewStep({
   dubHeavy,
   dubDegrade,
   dubDegradeDetail,
+  dubCloneNote,
 }: {
   listings: Listing[];
   lang: "ru" | "zh" | "both";
@@ -971,6 +988,7 @@ function ReviewStep({
   dubHeavy: boolean;
   dubDegrade: string | null;
   dubDegradeDetail: string | null;
+  dubCloneNote: string | null;
 }) {
   const [detail, setDetail] = useState<Listing | null>(null);
   const ready = listings.filter(listingReady);
@@ -1058,6 +1076,11 @@ function ReviewStep({
               详情：{dubDegradeDetail}
             </pre>
           )}
+        </div>
+      )}
+      {dubCloneNote && (
+        <div className="mb-3 rounded-xl bg-sky-500/[0.08] px-4 py-2.5 text-xs leading-relaxed text-sky-700 dark:text-sky-300">
+          ℹ️ {dubCloneNote}
         </div>
       )}
 

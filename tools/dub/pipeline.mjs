@@ -442,6 +442,7 @@ export async function runPipeline(cfg, args) {
   // stable anchor for pitch normalization, so per-call clone drift can't make two
   // speakers' voices converge ("mother sounds like the child").
   const refSample = {}; // each speaker's reference clip path (for voice-select embedding)
+  const cloneFail = {}; // why a speaker couldn't be cloned (reported with the fallback)
   if (tts && tts.supportsCloning) {
     cloneMap = {};
     await stageC('enroll(clone)', async () => {
@@ -464,21 +465,38 @@ export async function runPipeline(cfg, args) {
           cloneMap[spk] = await tts.enroll(samplePath, { name: spk });
         } catch (e) {
           cloneMap[spk] = null;
-          capture({ stage: 'enroll(clone)', ok: true, ms: 0, warn: `${spk}: clone skipped — ${e.message}` });
+          cloneFail[spk] = e.message; // remember WHY; surfaced with the fallback decision below
         }
       }
-      // Speakers we couldn't clone get a DISTINCT preset voice (not the dominant
-      // speaker's clone) so two speakers in a dialogue never collapse into one
-      // voice. The qwen-vc synth routes a preset NAME to the preset model.
-      // Qwen3-tts preset voices (valid names for the preset model) — distinct
-      // fallbacks for speakers without enough clean audio to clone.
+      // Fallback for speakers we couldn't clone:
+      //  - MINOR speaker (total speech < CLONE_FOLD_RATIO × dominant's) → FOLD into
+      //    the dominant speaker's clone. A single-narrator / mis-split video then
+      //    keeps ONE consistent voice instead of a jarring random preset voice.
+      //  - SUBSTANTIAL 2nd speaker → DISTINCT preset voice, so a real two-person
+      //    dialogue never collapses two people into one voice. (qwen-vc routes a
+      //    preset NAME to the preset model.)
+      const dominant = speakerVoice.ordered[0];
+      const dominantCloned = dominant != null && cloneMap[dominant] && refSample[dominant];
+      const dur = speakerVoice.dur || {};
       const presetPool = cfg.QWEN_FALLBACK_VOICES;
       let pi = 0;
       for (const spk of speakerVoice.ordered) {
-        if (!cloneMap[spk]) {
+        if (cloneMap[spk]) continue; // cloned OK
+        const why = cloneFail[spk] || 'clone unavailable';
+        const minor =
+          dominantCloned && spk !== dominant && (dur[spk] || 0) < cfg.CLONE_FOLD_RATIO * (dur[dominant] || Infinity);
+        if (minor) {
+          // Fold into the dominant clone (same voice + pitch anchor + ref clip).
+          cloneMap[spk] = cloneMap[dominant];
+          if (refF0[dominant] != null) refF0[spk] = refF0[dominant];
+          if (refSample[dominant]) refSample[spk] = refSample[dominant];
+          // Phrased "[voice-folded]" so the UI does NOT flag this as a degrade — for a
+          // single-narrator video this is the DESIRED outcome (one consistent voice).
+          capture({ stage: 'enroll(clone)', ok: true, ms: 0, warn: `${spk}: minor speaker folded into main cloned voice (${(dur[spk] || 0).toFixed(1)}s; ${why}) [voice-folded]` });
+        } else {
           cloneMap[spk] = presetPool[pi % presetPool.length];
           pi++;
-          capture({ stage: 'enroll(clone)', ok: true, ms: 0, warn: `${spk}: using distinct preset voice "${cloneMap[spk]}" (couldn't clone)` });
+          capture({ stage: 'enroll(clone)', ok: true, ms: 0, warn: `${spk}: using distinct preset voice "${cloneMap[spk]}" (couldn't clone: ${why})` });
         }
       }
     });

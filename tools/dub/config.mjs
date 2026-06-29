@@ -306,6 +306,13 @@ export function loadConfig(opts = {}) {
     // speakers apart instead of collapsing them into the dominant clone).
     QWEN_FALLBACK_VOICES: String(env('QWEN_FALLBACK_VOICES', 'Chelsie,Serena,Ethan,Dylan,Katerina'))
       .split(',').map((s) => s.trim()).filter(Boolean),
+    // An un-clonable speaker whose TOTAL speech is < this fraction of the dominant
+    // speaker's is treated as MINOR (a mis-split artifact or a trivial interjection)
+    // and FOLDED into the dominant's cloned voice — so a single-narrator product
+    // video keeps ONE consistent voice instead of a jarring random preset voice.
+    // A SUBSTANTIAL second speaker (≥ this fraction) still gets a distinct preset so
+    // a real two-person dialogue never collapses into one voice. 0 = never fold.
+    CLONE_FOLD_RATIO: Number(env('CLONE_FOLD_RATIO', '0.35')),
     // per-speaker cloning: only clone speakers with at least this many seconds of
     // clean source audio; shorter speakers fall back to a premade/static voice.
     // clone a speaker from as little as this many seconds of clean audio — keeping

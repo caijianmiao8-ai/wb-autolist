@@ -2092,6 +2092,10 @@ function VideoPanel({
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
+  // Calm, informational note for a per-speaker CLONE fallback (a secondary speaker
+  // used a preset voice). NOT an engine failure — kept separate from `notice` so it
+  // doesn't show the alarming "引擎未生效 / 去下载引擎" banner (downloading won't help).
+  const [cloneNote, setCloneNote] = useState<string | null>(null);
   const [preset, setPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
   const [engineReady, setEngineReady] = useState(false);
   const canceling = useRef(false);
@@ -2113,6 +2117,7 @@ function VideoPanel({
     setErr(null);
     setNotice(null);
     setDetail(null);
+    setCloneNote(null);
     canceling.current = false;
     setStage("自检…");
     const lost = new Set<string>();
@@ -2132,22 +2137,35 @@ function VideoPanel({
       un = await listen<{ stage: string; warn?: string }>("dub:progress", (e) => {
         setStage(e.payload.stage);
         const w = e.payload.warn;
-        if (w && /skipped|stall|raw audio|single renders|preset voice/i.test(w)) {
+        if (!w) return;
+        // (1) GENUINE engine degrade — background/voice-select dropped, raw audio,
+        //     or a stall. Downloading the engine / retrying can help → alarm + advice.
+        if (/stem|background|raw audio|voice-select|single renders|stall/i.test(w)) {
           if (/stem|background|raw audio/i.test(w)) lost.add("未保留背景音乐");
           if (/voice-select|single renders/i.test(w)) lost.add("音色一致性略降");
-          if (/clone skipped|preset voice/i.test(w)) lost.add("未能克隆原声(用预设音色)");
           setNotice(
-            `配音引擎未生效，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，到「设置→配音引擎」先下载，再用「高质量」重配。`
+            `配音引擎未生效，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，到「设置→配音引擎」先点「测试」确认，再用「高质量」重配。`
           );
-          // Show the FULL captured reason (uvx -v logs + the uv/python self-test),
-          // not just a tail — strip the "stem separation skipped (" wrapper and the
-          // " — raw audio…" suffix so we see exactly WHY. Rendered scrollable below.
+          // Full captured reason (uvx -v + uv/python self-test) — strip the
+          // "skipped (" wrapper and the " — raw audio…" suffix. Rendered scrollable.
           let inner = w;
           const k = inner.indexOf("skipped (");
           if (k >= 0) inner = inner.slice(k + "skipped (".length);
           inner = inner.replace(/\)\s*—\s*raw audio[\s\S]*$/, "").trim();
           setDetail((inner || w).slice(0, 4000));
+          return;
         }
+        // (2) Per-speaker CLONE fallback (a secondary speaker used a preset voice).
+        //     NOT an engine failure; downloading nothing fixes "too little source
+        //     audio" → calm, accurate note, no scary banner / no download advice.
+        if (/preset voice|couldn't clone/i.test(w)) {
+          setCloneNote(
+            "检测到次要说话人，但其清晰语音不足，无法克隆，已用预设音色顶替（主播仍为克隆原声）。若此视频其实只有一位讲解人，告诉我即可改为全程同一音色。"
+          );
+          return;
+        }
+        // (3) "[voice-folded]" — a minor speaker was folded into the main cloned
+        //     voice (desired for single-narrator videos). No UI needed.
       });
       const out = await api.dubStart({
         inputPath: videoPath,
@@ -2168,6 +2186,7 @@ function VideoPanel({
   async function reDub() {
     setNotice(null);
     setDetail(null);
+    setCloneNote(null);
     onUpdate(await api.setListingVideo(listing.id, ""));
   }
 
@@ -2250,6 +2269,11 @@ function VideoPanel({
         <pre className="mt-1 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-500/[0.06] px-2 py-1 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
           详情：{detail}
         </pre>
+      )}
+      {cloneNote && (
+        <p className="mt-2 break-words rounded-md bg-sky-500/[0.08] px-2 py-1 text-[11px] leading-relaxed text-sky-700 dark:text-sky-300">
+          ℹ️ {cloneNote}
+        </p>
       )}
       {!done && !busy && (
         <p className="mt-2 text-[11px] text-slate-400">
