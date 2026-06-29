@@ -42,9 +42,13 @@ async function prepareEngine() {
     // — no separation (a trivial clip trips demucs' reflect-pad assert), just the
     // heavy download + a cache warm.
     line('下载 / 安装 Demucs + PyTorch（首次较大，请耐心）…');
+    // MUST use the SAME `--from demucs` invocation the real dub uses
+    // (ffmpeg.mjs separateBackground), so this warms the EXACT uv tool-env the dub
+    // will reuse — `--with demucs` is a different cache key and would NOT help.
+    // python -c get_model also fetches the htdemucs weights.
     await run(
       cfg.DEMUCS_UVX,
-      ['--with', 'demucs', 'python', '-c', 'from demucs.pretrained import get_model; get_model("htdemucs"); print("demucs-ok")'],
+      ['--from', 'demucs', 'python', '-c', 'from demucs.pretrained import get_model; get_model("htdemucs"); print("demucs-ok")'],
       { idleMs: cfg.STEP_IDLE_MS }
     );
     line('Demucs 就绪');

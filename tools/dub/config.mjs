@@ -264,7 +264,7 @@ export function loadConfig(opts = {}) {
     // model download (or processing) emits NO output for this long, kill it and
     // degrade gracefully instead of hanging the dub. Generous — a moving download
     // keeps resetting it; only a true stall trips it.
-    STEP_IDLE_MS: Number(env('STEP_IDLE_MS', '180000')),
+    STEP_IDLE_MS: Number(env('STEP_IDLE_MS', '300000')),
     BG_VOLUME: Number(env('BG_VOLUME', '0.8')), // background gain under the dub
     // duck the background ~6 dB while the dub speaks (sidechain) — measured to
     // raise voice clarity; returns in pauses. --no-duck to disable.

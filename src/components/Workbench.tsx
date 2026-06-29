@@ -60,7 +60,16 @@ export function Workbench() {
   const [weight, setWeight] = useState(0.3);
   const [basePhotos, setBasePhotos] = useState<string[]>([]);
   // English product video to dub into Russian and attach to the card (optional).
-  const [videoPath, setVideoPath] = useState<string | null>(null);
+  // Restore the picked English video across tab switches (so the dub card +
+  // 「配成俄语」button don't vanish when the listing re-hydrates into preview).
+  const [videoPath, setVideoPath] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return sessionStorage.getItem("wb:videoPath");
+    } catch {
+      return null;
+    }
+  });
   // Collapse power-user fields (brand/dims/prompt/count/main-first) by default —
   // a plain seller only needs name + keywords + price + photos/video.
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -150,6 +159,16 @@ export function Workbench() {
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
+
+  // Keep the picked video persisted so a tab switch → remount keeps the dub card.
+  useEffect(() => {
+    try {
+      if (videoPath) sessionStorage.setItem("wb:videoPath", videoPath);
+      else sessionStorage.removeItem("wb:videoPath");
+    } catch {
+      /* ignore */
+    }
+  }, [videoPath]);
 
   const dryRun = settings ? settings.dryRun : true;
   const sandbox = settings ? settings.wbSandbox : false;
@@ -322,6 +341,7 @@ export function Workbench() {
     setLogs([]);
     setDone(null);
     setError(null);
+    setVideoPath(null); // new product → drop the previous video (effect clears storage)
     try {
       sessionStorage.removeItem("wb:listingId");
     } catch {
@@ -2071,9 +2091,16 @@ function VideoPanel({
   const [stage, setStage] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
   const [preset, setPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
+  const [engineReady, setEngineReady] = useState(false);
   const canceling = useRef(false);
   const done = !!listing.videoRu;
+
+  // Know whether the engine is already downloaded → don't keep saying "首次会下载".
+  useEffect(() => {
+    api.dubEngineStatus().then((s) => setEngineReady(s.ready)).catch(() => {});
+  }, []);
 
   function cancel() {
     canceling.current = true;
@@ -2085,6 +2112,7 @@ function VideoPanel({
     setBusy(true);
     setErr(null);
     setNotice(null);
+    setDetail(null);
     canceling.current = false;
     setStage("自检…");
     const lost = new Set<string>();
@@ -2109,8 +2137,9 @@ function VideoPanel({
           if (/voice-select|single renders/i.test(w)) lost.add("音色一致性略降");
           if (/clone skipped|preset voice/i.test(w)) lost.add("未能克隆原声(用预设音色)");
           setNotice(
-            `配音引擎等待超时/未就绪，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，联网后到「设置→配音引擎」先下载，再用「高质量」重配。`
+            `配音引擎未生效，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，到「设置→配音引擎」先下载，再用「高质量」重配。`
           );
+          setDetail(w.slice(0, 200)); // raw reason — helps diagnose why it fell back
         }
       });
       const out = await api.dubStart({
@@ -2131,6 +2160,7 @@ function VideoPanel({
 
   async function reDub() {
     setNotice(null);
+    setDetail(null);
     onUpdate(await api.setListingVideo(listing.id, ""));
   }
 
@@ -2168,10 +2198,10 @@ function VideoPanel({
               取消
             </button>
           </div>
-          {preset !== "fast" && (
+          {preset !== "fast" && !engineReady && (
             <p className="rounded-md bg-amber-500/[0.08] px-2 py-1 text-[10.5px] leading-relaxed text-amber-700 dark:text-amber-200">
               首次使用「{DUB_PRESETS.find((p) => p.id === preset)?.label}」会联网下载配音引擎（约
-              0.5–1GB，<b>仅首次</b>），可能要几分钟、进度可能看着不动属正常；完成前别关，可随时「取消」。
+              0.5–1GB，<b>仅首次</b>），可能要几分钟、进度可能看着不动属正常；完成前别关，可随时「取消」。建议先到「设置→配音引擎」一次性下载好。
             </p>
           )}
         </div>
@@ -2207,6 +2237,11 @@ function VideoPanel({
       {notice && (
         <p className="mt-2 break-words rounded-md bg-amber-500/[0.1] px-2 py-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
           ⚠️ {notice}
+        </p>
+      )}
+      {detail && (
+        <p className="mt-1 break-words text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">
+          详情：{detail}
         </p>
       )}
       {!done && !busy && (
