@@ -195,7 +195,15 @@ fn resolve_ffbin(app: &AppHandle, name: &str) -> String {
 ///  - 清掉可能被企业 GPO 注入的 UV_PYTHON / UV_PYTHON_DOWNLOADS(会让 uv 选到不存在的
 ///    解释器或禁掉下载而静默失败)。
 /// 全部为附加 / 隔离改动,健康机无行为副作用;预下载与配音必须用同一份环境(同一缓存)。
-fn apply_uv_env(cmd: &mut tokio::process::Command, data_dir: &Path) {
+///
+/// v1.0.10 关键修复:把打包 ffmpeg/ffprobe 所在目录**放到子进程 PATH 最前**。Demucs 的
+/// `load_track` 先试 ffmpeg(按名字在 PATH 找 `ffmpeg`),失败才回退 `torchaudio.load`;
+/// 而 torchaudio>=2.8 的 load() 改走 TorchCodec(未装 → ImportError 崩溃退1)。我们只用
+/// FFMPEG_PATH 把 ffmpeg 喂给自己的 Node 代码,Demucs(独立 python 子进程)按名字找不到
+/// → 回退 torchaudio → 崩。把 ffmpeg 目录上 PATH,Demucs 直接用 ffmpeg 解码,根本不碰
+/// torchaudio,复用已下好的 torch 环境、无需重下。(本机用 torch/torchaudio 2.8.0 实测:
+/// 无 ffmpeg→报 TorchCodec/backend 错;有 ffmpeg→正常分离出 no_vocals.mp3。)
+fn apply_uv_env(cmd: &mut tokio::process::Command, data_dir: &Path, ffmpeg_path: &str) {
     let uv_root = data_dir.join("uv");
     let cache = uv_root.join("cache");
     let py = uv_root.join("python");
@@ -211,6 +219,20 @@ fn apply_uv_env(cmd: &mut tokio::process::Command, data_dir: &Path) {
         .env("NO_COLOR", "1")
         .env_remove("UV_PYTHON")
         .env_remove("UV_PYTHON_DOWNLOADS");
+    // Prepend the bundled ffmpeg dir to PATH so Demucs' loader finds `ffmpeg`.
+    if let Some(dir) = Path::new(ffmpeg_path).parent() {
+        let dir_s = dir.to_string_lossy().to_string();
+        if !dir_s.is_empty() {
+            let sep = if cfg!(windows) { ";" } else { ":" };
+            let cur = std::env::var("PATH").unwrap_or_default();
+            let newp = if cur.is_empty() {
+                dir_s
+            } else {
+                format!("{dir_s}{sep}{cur}")
+            };
+            cmd.env("PATH", newp);
+        }
+    }
 }
 
 /// 找配音脚本:env DUB_CLI → 打包资源 resource_dir/tools/dub/cli.mjs →
@@ -488,7 +510,7 @@ pub async fn dub_start(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    apply_uv_env(&mut cmd, &state.paths.data_dir);
+    apply_uv_env(&mut cmd, &state.paths.data_dir, &ffmpeg);
     if voice_mode == "preset" {
         if let Some(v) = opt_str(&options.preset_voice) {
             cmd.env("AURIXEL_VOICE", v);
@@ -681,7 +703,7 @@ pub async fn dub_prepare_engine(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    apply_uv_env(&mut cmd, &state.paths.data_dir);
+    apply_uv_env(&mut cmd, &state.paths.data_dir, &ffmpeg);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
