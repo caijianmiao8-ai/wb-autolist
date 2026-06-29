@@ -256,6 +256,10 @@ export function loadConfig(opts = {}) {
     // effects — foley/ambient/noise) and mix the dub OVER it, instead of dropping
     // a bare voice onto silence. Needs uvx+demucs (auto-installed on first run).
     KEEP_BACKGROUND: String(env('KEEP_BACKGROUND', 'true')).toLowerCase() !== 'false',
+    // Master switch for Demucs stem separation. false → skip Demucs entirely (no
+    // uvx/torch download): clone enrolls from raw audio and there's no background
+    // M&E. The app's "快速/标准" presets set this off so only "高质量" pays for Demucs.
+    USE_STEMS: String(env('USE_STEMS', 'true')).toLowerCase() !== 'false',
     BG_VOLUME: Number(env('BG_VOLUME', '0.8')), // background gain under the dub
     // duck the background ~6 dB while the dub speaks (sidechain) — measured to
     // raise voice clarity; returns in pauses. --no-duck to disable.

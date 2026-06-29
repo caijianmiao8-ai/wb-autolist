@@ -295,7 +295,7 @@ export async function runPipeline(cfg, args) {
   // cost is hidden. Awaited just before the TTS section. Graceful: on failure, fall
   // back to raw audio (clone source) + no background.
   let bgPath = null, vocalsPath = null;
-  const needStems = !dryRun && (cfg.KEEP_BACKGROUND || (makeTts(cfg).supportsCloning));
+  const needStems = !dryRun && cfg.USE_STEMS && (cfg.KEEP_BACKGROUND || (makeTts(cfg).supportsCloning));
   let stemsPromise = Promise.resolve();
   if (needStems) {
     const tSep = now();
@@ -612,7 +612,7 @@ export async function runPipeline(cfg, args) {
         const oPath = join(segDir, 'voiceselect_out.json');
         await writeFile(mPath, JSON.stringify(manifest));
         try {
-          await runBin(join(homedir(), '.local/bin/uvx'), ['--with', 'resemblyzer', '--with', 'numpy<2', 'python', join(__dir, 'voiceselect.py'), mPath, oPath]);
+          await runBin(cfg.DEMUCS_UVX || join(homedir(), '.local/bin/uvx'), ['--with', 'resemblyzer', '--with', 'numpy<2', 'python', join(__dir, 'voiceselect.py'), mPath, oPath]);
           const best = JSON.parse(await readFile(oPath, 'utf8')).best || {};
           let n = 0;
           for (const rec of recs) {

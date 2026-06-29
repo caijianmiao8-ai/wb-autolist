@@ -52,6 +52,7 @@ Options:
   --pitch-max-shift <0..1>     max pitch correction per clip (default 0.10 = ±10%)
   --no-gate                    don't mute the dub during the original's silent gaps
   --no-background              don't keep the original M&E/background (dub over silence)
+  --no-stems                   skip Demucs entirely (no uvx/torch); clone from raw audio
   --mode segment|whole         timing strategy (default segment)
   --keep-original-audio 0..1   duck original under dub (default 0 = full replace)
   --dry-run                    skip all paid calls (free wiring test)
@@ -110,6 +111,7 @@ async function main() {
   if (a['no-gate']) overrides.GATE_SILENCE = 'false';
   if (a.elastic) overrides.ELASTIC_PLACEMENT = 'true';
   if (a['no-background']) overrides.KEEP_BACKGROUND = 'false';
+  if (a['no-stems']) overrides.USE_STEMS = 'false';
   if (a['no-duck']) overrides.BG_DUCK = 'false';
   // (intermediate clip format is derived from the TTS provider in config.mjs
   // wavTts — the single source of truth, which also covers aurixel-vc/aurixel.)

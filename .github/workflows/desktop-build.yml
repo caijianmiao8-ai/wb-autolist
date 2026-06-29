@@ -45,6 +45,33 @@ jobs:
 
       - run: npm ci
 
+      # Bundle the video-dubbing runtime so it works out-of-the-box on the
+      # customer's machine: node + ffmpeg + ffprobe + uv/uvx land in
+      # src-tauri/binaries/ and are copied into the app via tauri.conf resources
+      # (-> Resources/bin). Demucs/torch are still downloaded on first dub (heavy),
+      # gated behind the in-app "高质量" preset. macOS falls back to ~/.local.
+      - name: Fetch dub runtime (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          Invoke-WebRequest https://nodejs.org/dist/v22.11.0/win-x64/node.exe -OutFile src-tauri/binaries/node.exe
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip -OutFile ff.zip
+          Expand-Archive ff.zip -DestinationPath ffx
+          Copy-Item (Get-ChildItem ffx -Recurse -Filter ffmpeg.exe)[0].FullName  src-tauri/binaries/ffmpeg.exe
+          Copy-Item (Get-ChildItem ffx -Recurse -Filter ffprobe.exe)[0].FullName src-tauri/binaries/ffprobe.exe
+          Invoke-WebRequest https://github.com/astral-sh/uv/releases/download/0.11.8/uv-x86_64-pc-windows-msvc.zip -OutFile uv.zip
+          Expand-Archive uv.zip -DestinationPath uvx
+          Copy-Item uvx/uv.exe  src-tauri/binaries/uv.exe
+          Copy-Item uvx/uvx.exe src-tauri/binaries/uvx.exe
+          Get-ChildItem src-tauri/binaries
+
+      - name: Dub runtime placeholder (macOS)
+        if: matrix.name == 'macos'
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/.keep
+
       # tauri-action runs the tauri.conf beforeBuildCommand (npm run fe:build),
       # compiles the Rust binary, and bundles the platform installer.
       # On a tag push it also creates/updates a GitHub Release and attaches the

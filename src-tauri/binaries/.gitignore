@@ -1,0 +1,4 @@
+# CI-downloaded dub runtime binaries — never commit them; keep only .keep.
+*
+!.keep
+!.gitignore

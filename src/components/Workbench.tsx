@@ -25,6 +25,7 @@ import {
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "@/lib/api";
+import { DUB_PRESETS, DUB_PRESET_DEFAULT, dubPresetOptions, type DubPreset } from "@/lib/dub";
 import { EnvBadge } from "./EnvBadge";
 import type { Listing, StageLog, WbCharacteristic, WbColor, WbSubject } from "@/lib/types";
 
@@ -2062,6 +2063,7 @@ function VideoPanel({
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [preset, setPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
   const done = !!listing.videoRu;
 
   async function dub() {
@@ -2082,8 +2084,8 @@ function VideoPanel({
       un = await listen<{ stage: string }>("dub:progress", (e) => setStage(e.payload.stage));
       const out = await api.dubStart({
         inputPath: videoPath,
-        quality: "standard",
         voiceMode: "clone",
+        ...dubPresetOptions(preset),
       });
       onUpdate(await api.setListingVideo(listing.id, out));
     } catch (e) {
@@ -2127,17 +2129,38 @@ function VideoPanel({
           <span className="text-slate-400">{stage}</span>
         </div>
       ) : (
-        <button
-          className="btn-primary w-full py-2 text-xs"
-          onClick={dub}
-          disabled={!!listing.nmID}
-        >
-          <Video className="h-3.5 w-3.5" /> 配成俄语
-        </button>
+        <div className="space-y-2">
+          <div className="flex gap-0.5 rounded-lg border border-slate-900/[0.08] bg-slate-900/[0.03] p-0.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
+            {DUB_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setPreset(p.id)}
+                title={p.hint}
+                className={clsx(
+                  "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition",
+                  preset === p.id
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-white/[0.14] dark:text-white"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="btn-primary w-full py-2 text-xs"
+            onClick={dub}
+            disabled={!!listing.nmID}
+          >
+            <Video className="h-3.5 w-3.5" /> 配成俄语
+          </button>
+        </div>
       )}
       {err && <p className="mt-2 break-words text-[11px] text-rose-600 dark:text-rose-400">{err}</p>}
       {!done && !busy && (
-        <p className="mt-2 text-[11px] text-slate-400">配成俄语 · 消耗 Aurixel · ~1–2 分钟</p>
+        <p className="mt-2 text-[11px] text-slate-400">
+          {DUB_PRESETS.find((p) => p.id === preset)?.hint} · 消耗 Aurixel
+        </p>
       )}
     </div>
   );

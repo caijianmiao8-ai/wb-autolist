@@ -1,0 +1,5 @@
+# Bundled dub runtime lands here at build time (CI downloads per-OS):
+#   Windows: node.exe, ffmpeg.exe, ffprobe.exe, uv.exe, uvx.exe
+#   macOS:   (none — falls back to ~/.local; customer target is Windows)
+# This .keep keeps the `binaries/*` tauri resource glob non-empty so local/mac
+# builds never fail on an empty glob. The real binaries are gitignored.

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api, type Job } from "@/lib/api";
+import { DUB_PRESETS, DUB_PRESET_DEFAULT, dubPresetOptions, type DubPreset } from "@/lib/dub";
 import { EnvBadge } from "./EnvBadge";
 import { envKind } from "@/lib/env";
 import type { ListingInput, Listing } from "@/lib/types";
@@ -91,6 +92,7 @@ export function BatchPanel() {
   // 批量配俄语进度(前端串行复用 dub_start + set_listing_video)
   const [dubbing, setDubbing] = useState<{ done: number; total: number } | null>(null);
   const [dubMsg, setDubMsg] = useState<string | null>(null);
+  const [dubPreset, setDubPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -392,7 +394,11 @@ export function BatchPanel() {
     for (let i = 0; i < tasks.length; i++) {
       const t = tasks[i];
       try {
-        const out = await api.dubStart({ inputPath: t.path, quality: "standard", voiceMode: "clone" });
+        const out = await api.dubStart({
+          inputPath: t.path,
+          voiceMode: "clone",
+          ...dubPresetOptions(dubPreset),
+        });
         const updated = await api.setListingVideo(t.id, out);
         setJobListings((cur) => cur.map((l) => (l.id === t.id ? updated : l)));
       } catch {
@@ -497,6 +503,9 @@ export function BatchPanel() {
             envKind={envKindNow}
             onReview={toReview}
             onClearFinished={async () => setJobs(await api.clearJobs("finished"))}
+            hasVideos={validRows.some((r) => r.videoPath)}
+            dubPreset={dubPreset}
+            setDubPreset={setDubPreset}
           />
         )}
         {step === 2 && (
@@ -755,6 +764,9 @@ function GenerateStep({
   envKind,
   onReview,
   onClearFinished,
+  hasVideos,
+  dubPreset,
+  setDubPreset,
 }: {
   jobs: Job[];
   rows: Row[];
@@ -763,6 +775,9 @@ function GenerateStep({
   envKind: string;
   onReview: () => void;
   onClearFinished: () => void;
+  hasVideos: boolean;
+  dubPreset: DubPreset;
+  setDubPreset: (p: DubPreset) => void;
 }) {
   const finishedCount = jobs.filter((j) => j.status === "done" || j.status === "error").length;
   const imgs = rows.reduce((n, r) => n + (r.basePhotos.length ? r.basePhotos.length : 3), 0);
@@ -791,6 +806,34 @@ function GenerateStep({
         预计消耗你的 Aurixel 余额;目标:<b className="mx-0.5">{destName}</b>。仅生成草稿，
         <b>不会自动上架</b>，生成完到下一步逐个审核。
       </div>
+
+      {hasVideos && (
+        <div className="mb-4 rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] px-4 py-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+            <Video className="h-3.5 w-3.5 text-wb-pink" /> 视频配俄语质量（去审核时自动配音）
+          </div>
+          <div className="flex gap-0.5 rounded-lg border border-slate-900/[0.08] bg-slate-900/[0.03] p-0.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
+            {DUB_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setDubPreset(p.id)}
+                title={p.hint}
+                className={clsx(
+                  "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition",
+                  dubPreset === p.id
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-white/[0.14] dark:text-white"
+                    : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[10.5px] text-slate-400">
+            {DUB_PRESETS.find((p) => p.id === dubPreset)?.hint}
+          </p>
+        </div>
+      )}
 
       <div className="mb-1.5 flex items-center justify-between px-1">
         <span className="text-xs text-slate-500 dark:text-slate-400">生成进度</span>

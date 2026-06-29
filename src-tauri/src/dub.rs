@@ -100,12 +100,31 @@ fn bin_ok(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 找 node:env DUB_NODE → ~/.local/node/bin/node(开发机) → PATH 的 `node`。
-fn resolve_node() -> String {
+/// 打包进安装包的二进制:resource_dir/bin/{name}{.exe}。让客户(Windows)开箱即用
+/// node/ffmpeg/uvx,而不依赖系统 PATH。
+fn bundled_bin(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let p = app.path().resource_dir().ok()?.join("bin").join(exe);
+    if p.is_file() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+/// 找 node:env DUB_NODE → 打包资源 → ~/.local/node/bin/node(开发机) → PATH 的 `node`。
+fn resolve_node(app: &AppHandle) -> String {
     if let Ok(p) = std::env::var("DUB_NODE") {
         if !p.is_empty() {
             return p;
         }
+    }
+    if let Some(p) = bundled_bin(app, "node") {
+        return p.to_string_lossy().into();
     }
     let cand = format!("{}/.local/node/bin/node", home());
     if Path::new(&cand).is_file() {
@@ -114,16 +133,19 @@ fn resolve_node() -> String {
     "node".into()
 }
 
-fn resolve_uvx() -> String {
+fn resolve_uvx(app: &AppHandle) -> String {
     if let Ok(p) = std::env::var("DEMUCS_UVX") {
         if !p.is_empty() {
             return p;
         }
     }
+    if let Some(p) = bundled_bin(app, "uvx") {
+        return p.to_string_lossy().into();
+    }
     format!("{}/.local/bin/uvx", home())
 }
 
-fn resolve_ffbin(name: &str) -> String {
+fn resolve_ffbin(app: &AppHandle, name: &str) -> String {
     let envk = if name == "ffmpeg" {
         "FFMPEG_PATH"
     } else {
@@ -133,6 +155,9 @@ fn resolve_ffbin(name: &str) -> String {
         if !p.is_empty() {
             return p;
         }
+    }
+    if let Some(p) = bundled_bin(app, name) {
+        return p.to_string_lossy().into();
     }
     let cand = format!("{}/.local/bin/{}", home(), name);
     if Path::new(&cand).is_file() {
@@ -177,12 +202,12 @@ fn opt_str(o: &Option<String>) -> Option<String> {
 #[tauri::command]
 pub fn dub_preflight(app: AppHandle, state: State<Arc<AppState>>) -> DubPreflight {
     let cfg = get_config(&state.paths);
-    let node_path = resolve_node();
+    let node_path = resolve_node(&app);
     let cli = resolve_cli(&app);
     let node = bin_ok(&node_path);
-    let ffmpeg = bin_ok(&resolve_ffbin("ffmpeg"));
-    let ffprobe = bin_ok(&resolve_ffbin("ffprobe"));
-    let uvx = bin_ok(&resolve_uvx());
+    let ffmpeg = bin_ok(&resolve_ffbin(&app, "ffmpeg"));
+    let ffprobe = bin_ok(&resolve_ffbin(&app, "ffprobe"));
+    let uvx = bin_ok(&resolve_uvx(&app));
     // 钥匙串读失败时不能误判为「有 key」(与上架路径同样的 kc_error 守卫)。
     let aurixel_key = !cfg.kc_error && !cfg.aurixel_api_key.trim().is_empty();
     let cli_found = cli.is_some();
@@ -303,7 +328,10 @@ pub async fn dub_start(
     }
 
     let cli = resolve_cli(&app).ok_or("找不到配音脚本 cli.mjs(打包资源缺失)")?;
-    let node = resolve_node();
+    let node = resolve_node(&app);
+    let ffmpeg = resolve_ffbin(&app, "ffmpeg");
+    let ffprobe = resolve_ffbin(&app, "ffprobe");
+    let uvx = resolve_uvx(&app);
 
     // 输出路径:用户给定,否则与源同目录、加 .ru.mp4。
     let out = match &options.out_path {
@@ -330,7 +358,7 @@ pub async fn dub_start(
     };
 
     // 缺 uvx → 关掉依赖它的功能(择优 + 背景分离),不挡跑通。
-    let uvx_ok = bin_ok(&resolve_uvx());
+    let uvx_ok = bin_ok(&uvx);
     voice_select = voice_select && uvx_ok;
     let keep_background = options.keep_background.unwrap_or(true) && uvx_ok;
 
@@ -370,6 +398,11 @@ pub async fn dub_start(
     }
     if !keep_background {
         args.push("--no-background".into());
+        // Demucs is only needed to KEEP the background (high preset). For fast/
+        // standard the clone enrolls from raw audio (cloneSrc fallback), so skip
+        // Demucs entirely → no uvx/torch download. voice-select (standard) still
+        // runs via VOICE_SELECT and works on raw-audio references.
+        args.push("--no-stems".into());
     }
     if options.gate_silence == Some(false) {
         args.push("--no-gate".into());
@@ -391,6 +424,11 @@ pub async fn dub_start(
         .env("RENDER_CANDIDATES", render_candidates.to_string())
         .env("VOICE_SELECT", if voice_select { "true" } else { "false" })
         .env("PITCH_REROLL", if pitch_reroll { "true" } else { "false" })
+        // Point the Node CLI at the bundled ffmpeg/ffprobe/uvx (it reads these env
+        // vars; absolute paths bypass PATH so the customer needs nothing installed).
+        .env("FFMPEG_PATH", &ffmpeg)
+        .env("FFPROBE_PATH", &ffprobe)
+        .env("DEMUCS_UVX", &uvx)
         .env(
             "DUB_ENV_PATH",
             state
