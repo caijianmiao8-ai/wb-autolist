@@ -83,6 +83,8 @@ pub fn run() {
             dub::dub_pick_video,
             dub::dub_start,
             dub::dub_cancel,
+            dub::dub_prepare_engine,
+            dub::dub_engine_status,
             dub::pick_folder,
             dub::open_path,
             dub::reveal_path,

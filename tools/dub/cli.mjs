@@ -25,6 +25,47 @@ import { tmpdir } from 'node:os';
 import { join, basename, extname, resolve } from 'node:path';
 import { loadConfig, redactedConfig, assertSecrets, parseSpeakerVoices, resolveVoice } from './config.mjs';
 import { runPipeline } from './pipeline.mjs';
+import { run } from './ffmpeg.mjs';
+
+// Pre-download / warm the local dubbing engine (Demucs + PyTorch, and the
+// voice-select model) so the FIRST real dub doesn't stall on a big download.
+// Triggered from Settings via `node cli.mjs --prepare-engine`. Prints coarse
+// stage lines (the Rust side forwards them as dub:engine progress) and
+// `ENGINE_READY=1` on success. Uses the stall watchdog (idleMs) so a dead
+// download can't hang forever.
+async function prepareEngine() {
+  const cfg = loadConfig({});
+  const t0 = Date.now();
+  const line = (m) => console.log(`${m}  (+${Math.round((Date.now() - t0) / 1000)}s)`);
+  try {
+    // Download/install torch + demucs and FETCH the pretrained weights via get_model
+    // — no separation (a trivial clip trips demucs' reflect-pad assert), just the
+    // heavy download + a cache warm.
+    line('下载 / 安装 Demucs + PyTorch（首次较大，请耐心）…');
+    await run(
+      cfg.DEMUCS_UVX,
+      ['--with', 'demucs', 'python', '-c', 'from demucs.pretrained import get_model; get_model("htdemucs"); print("demucs-ok")'],
+      { idleMs: cfg.STEP_IDLE_MS }
+    );
+    line('Demucs 就绪');
+    try {
+      line('准备声纹择优模型（resemblyzer）…');
+      await run(
+        cfg.DEMUCS_UVX,
+        ['--with', 'resemblyzer', '--with', 'numpy<2', 'python', '-c', 'from resemblyzer import VoiceEncoder; VoiceEncoder(); print("vs-ok")'],
+        { idleMs: cfg.STEP_IDLE_MS }
+      );
+      line('声纹择优就绪');
+    } catch (e) {
+      line('声纹择优预热跳过（不影响背景分离）：' + String(e?.message || e).slice(0, 80));
+    }
+    console.log('ENGINE_READY=1');
+    line('✅ 配音引擎已就绪，之后配音不再等待下载');
+  } catch (e) {
+    console.error('FAILED: ' + String(e?.message || e));
+    process.exit(1);
+  }
+}
 
 const HELP = `EN->RU product-video dubbing CLI
 
@@ -81,6 +122,10 @@ function parseArgs(argv) {
 
 async function main() {
   const a = parseArgs(process.argv.slice(2));
+  if (a['prepare-engine']) {
+    await prepareEngine();
+    return;
+  }
   if (a.help || a._.length === 0) {
     console.log(HELP);
     process.exit(a.help ? 0 : 1);

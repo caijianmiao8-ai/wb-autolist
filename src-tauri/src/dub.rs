@@ -550,7 +550,7 @@ pub async fn dub_start(
     }
 }
 
-/// 取消正在跑的配音任务。
+/// 取消正在跑的配音任务(也用于取消「下载配音引擎」)。
 #[tauri::command]
 pub fn dub_cancel() -> bool {
     if let Some(tx) = cancel_slot().lock().unwrap().take() {
@@ -558,6 +558,154 @@ pub fn dub_cancel() -> bool {
         true
     } else {
         false
+    }
+}
+
+/// 配音引擎(Demucs/voice-select 模型)预下载状态。preparing 在下载期间为真;
+/// last_msg 是最近一条进度——设置页切 tab 回来据此重建 UI。
+fn engine_state() -> &'static Mutex<(bool, String)> {
+    static S: OnceLock<Mutex<(bool, String)>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new((false, String::new())))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineStatus {
+    preparing: bool,
+    ready: bool,
+    last_msg: String,
+}
+
+/// 查询配音引擎状态(是否在下载 / 是否已就绪 / 最近进度)。
+#[tauri::command]
+pub fn dub_engine_status(state: State<Arc<AppState>>) -> EngineStatus {
+    let (preparing, last_msg) = {
+        let g = engine_state().lock().unwrap();
+        (g.0, g.1.clone())
+    };
+    let ready = state.paths.data_dir.join(".dub_engine_ready").is_file();
+    EngineStatus {
+        preparing,
+        ready,
+        last_msg,
+    }
+}
+
+/// 预下载 / 预热配音引擎(Demucs + voice-select 模型),让首次配音不再卡在下载。
+/// 跑一次 `node cli.mjs --prepare-engine`(本地 uvx,带失速看门狗 + 无黑窗)。成功
+/// 后落一个 sentinel 文件,设置页据此显示「已就绪」。一次只允许一个(与配音共用闸)。
+#[tauri::command]
+pub async fn dub_prepare_engine(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let cli = resolve_cli(&app).ok_or("找不到配音脚本(打包资源缺失)")?;
+    let node = resolve_node(&app);
+    let ffmpeg = resolve_ffbin(&app, "ffmpeg");
+    let ffprobe = resolve_ffbin(&app, "ffprobe");
+    let uvx = resolve_uvx(&app);
+    if !bin_ok(&node) {
+        return Err("缺 Node 运行时".into());
+    }
+    if !bin_ok(&uvx) {
+        return Err("缺 uvx(下载引擎所需)".into());
+    }
+
+    // 防呆:已有配音或下载在跑则拒(共用 cancel_slot,一次一个 uvx 任务)。
+    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+    {
+        let mut slot = cancel_slot().lock().unwrap();
+        if slot.is_some() {
+            return Err("已有配音/下载任务在进行中".into());
+        }
+        *slot = Some(cancel_tx);
+    }
+    {
+        let mut g = engine_state().lock().unwrap();
+        g.0 = true;
+        g.1 = "正在准备配音引擎…".into();
+    }
+    let _ = app.emit("dub:engine", json!({"preparing": true, "msg": "正在准备配音引擎…"}));
+
+    let mut cmd = tokio::process::Command::new(&node);
+    cmd.arg(cli.to_string_lossy().to_string())
+        .arg("--prepare-engine")
+        .env("FFMPEG_PATH", &ffmpeg)
+        .env("FFPROBE_PATH", &ffprobe)
+        .env("DEMUCS_UVX", &uvx)
+        .env(
+            "DUB_ENV_PATH",
+            state.paths.data_dir.join(".dub.env").to_string_lossy().to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            *cancel_slot().lock().unwrap() = None;
+            engine_state().lock().unwrap().0 = false;
+            return Err(format!("启动失败:{}", e));
+        }
+    };
+    let stdout = child.stdout.take().ok_or("无法读取 stdout")?;
+    let stderr = child.stderr.take().ok_or("无法读取 stderr")?;
+    let err_task = tokio::spawn(async move {
+        let mut buf = String::new();
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(l)) = lines.next_line().await {
+            buf.push_str(&l);
+            buf.push('\n');
+        }
+        buf
+    });
+
+    let app_ev = app.clone();
+    let mut reader = BufReader::new(stdout).lines();
+    let mut ready = false;
+    let mut cancelled = false;
+    loop {
+        tokio::select! {
+            line = reader.next_line() => {
+                match line {
+                    Ok(Some(l)) => {
+                        let t = l.trim();
+                        if t == "ENGINE_READY=1" { ready = true; continue; }
+                        if t.is_empty() { continue; }
+                        engine_state().lock().unwrap().1 = t.to_string();
+                        let _ = app_ev.emit("dub:engine", json!({"preparing": true, "msg": t}));
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            _ = &mut cancel_rx => { cancelled = true; let _ = child.start_kill(); break; }
+        }
+    }
+    let status = child.wait().await;
+    let stderr_txt = err_task.await.unwrap_or_default();
+    *cancel_slot().lock().unwrap() = None;
+    engine_state().lock().unwrap().0 = false;
+
+    if cancelled {
+        engine_state().lock().unwrap().1 = "已取消".into();
+        let _ = app.emit("dub:engine", json!({"preparing": false, "msg": "已取消", "cancelled": true}));
+        return Err("已取消".into());
+    }
+    let ok = ready && status.map(|s| s.success()).unwrap_or(false);
+    if ok {
+        let _ = std::fs::write(state.paths.data_dir.join(".dub_engine_ready"), b"ready");
+        engine_state().lock().unwrap().1 = "配音引擎已就绪".into();
+        let _ = app.emit("dub:engine", json!({"preparing": false, "ready": true, "msg": "配音引擎已就绪"}));
+        Ok(())
+    } else {
+        let msg = first_error_line(&stderr_txt).unwrap_or_else(|| "下载失败,可重试".into());
+        engine_state().lock().unwrap().1 = format!("失败:{}", msg);
+        let _ = app.emit("dub:engine", json!({"preparing": false, "ready": false, "msg": msg, "error": true}));
+        Err(msg)
     }
 }
 

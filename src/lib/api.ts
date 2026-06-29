@@ -6,6 +6,7 @@ import type {
   ConnTest,
   DubOptions,
   DubPreflight,
+  EngineStatus,
   ImageTemplates,
   Listing,
   ListingInput,
@@ -200,8 +201,12 @@ export const api = {
   /** Start a dub job. Resolves with the output mp4 path; also streams
    * `dub:progress` events + a final `dub:done`. */
   dubStart: (options: DubOptions) => invoke<string>("dub_start", { options }),
-  /** Cancel the running dub job (true if one was running). */
+  /** Cancel the running dub job — or the engine download (true if one was running). */
   dubCancel: () => invoke<boolean>("dub_cancel"),
+  /** Pre-download/warm the dub engine (Demucs + voice-select). Streams `dub:engine`. */
+  dubPrepareEngine: () => invoke<void>("dub_prepare_engine"),
+  /** Engine state (downloading / ready / last progress) — for Settings + re-hydrate. */
+  dubEngineStatus: () => invoke<EngineStatus>("dub_engine_status"),
   /** Open a local file with the OS default app. */
   openPath: (path: string) => invoke<void>("open_path", { path }),
   /** Reveal a local file in the OS file manager. */

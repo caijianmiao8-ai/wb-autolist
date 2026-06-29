@@ -2087,7 +2087,7 @@ function VideoPanel({
     setNotice(null);
     canceling.current = false;
     setStage("自检…");
-    const warns: string[] = [];
+    const lost = new Set<string>();
     let un: (() => void) | null = null;
     try {
       const pf = await api.dubPreflight();
@@ -2099,9 +2099,19 @@ function VideoPanel({
         if (!pf.cliFound) miss.push("配音脚本");
         throw new Error("运行环境未就绪:缺 " + miss.join("、"));
       }
+      // Surface auto-degrade THE MOMENT it happens (don't wait for completion), and
+      // keep it shown — so the user knows the engine timed out / quality dropped.
       un = await listen<{ stage: string; warn?: string }>("dub:progress", (e) => {
         setStage(e.payload.stage);
-        if (e.payload.warn) warns.push(e.payload.warn);
+        const w = e.payload.warn;
+        if (w && /skipped|stall|raw audio|single renders|preset voice/i.test(w)) {
+          if (/stem|background|raw audio/i.test(w)) lost.add("未保留背景音乐");
+          if (/voice-select|single renders/i.test(w)) lost.add("音色一致性略降");
+          if (/clone skipped|preset voice/i.test(w)) lost.add("未能克隆原声(用预设音色)");
+          setNotice(
+            `配音引擎等待超时/未就绪，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，联网后到「设置→配音引擎」先下载，再用「高质量」重配。`
+          );
+        }
       });
       const out = await api.dubStart({
         inputPath: videoPath,
@@ -2109,17 +2119,6 @@ function VideoPanel({
         ...dubPresetOptions(preset),
       });
       onUpdate(await api.setListingVideo(listing.id, out));
-      // Surface any auto-degrade (engine timeout / skipped step) so the user knows
-      // the result was downgraded rather than silently getting lower quality.
-      const deg = warns.filter((w) => /skipped|stall|raw audio|single renders/i.test(w));
-      if (deg.length) {
-        const lost: string[] = [];
-        if (deg.some((w) => /stem|background|raw audio/i.test(w))) lost.push("未保留背景音乐");
-        if (deg.some((w) => /voice-select|single renders/i.test(w))) lost.push("音色一致性略降");
-        setNotice(
-          `配音已生成，但配音引擎等待超时/未就绪，已自动降级（${lost.join("、") || "降级出片"}）。如需最佳效果，联网后用「高质量」重配。`
-        );
-      }
     } catch (e) {
       if (!canceling.current) setErr(e instanceof Error ? e.message : "配音失败");
     } finally {

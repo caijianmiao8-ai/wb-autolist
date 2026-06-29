@@ -243,6 +243,15 @@ export interface AurixelBalance {
 // ── EN→RU 视频配音 ──
 
 /** Runtime health check for the dubbing pipeline (drives the 自检条). */
+export interface EngineStatus {
+  /** a download/warm is currently running */
+  preparing: boolean;
+  /** engine prepared at least once (sentinel present) */
+  ready: boolean;
+  /** latest progress line */
+  lastMsg: string;
+}
+
 export interface DubPreflight {
   node: boolean;
   ffmpeg: boolean;

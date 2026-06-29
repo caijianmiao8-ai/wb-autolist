@@ -70,7 +70,7 @@ impl Default for AppConfig {
             wb_content_token: String::new(),
             wb_prices_token: String::new(),
             wb_sandbox: false,
-            image_provider: "pollinations".into(),
+            image_provider: "aurixel".into(),
             openai_api_key: String::new(),
             aurixel_api_key: String::new(),
             aurixel_chat_model: "gpt-5.5".into(),

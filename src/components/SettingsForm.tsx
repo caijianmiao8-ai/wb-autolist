@@ -11,13 +11,16 @@ import {
   EyeOff,
   ChevronDown,
   CheckCircle2,
+  Download,
+  Video,
 } from "lucide-react";
 import clsx from "clsx";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "@/lib/api";
 import { EnvBadge } from "./EnvBadge";
 import { TemplateEditor } from "./TemplateEditor";
 import { envKind } from "@/lib/env";
-import type { Warehouse } from "@/lib/types";
+import type { Warehouse, EngineStatus, DubPreflight } from "@/lib/types";
 
 interface Redacted {
   authEnabled: boolean;
@@ -483,6 +486,9 @@ export function SettingsForm() {
                 </div>
               )}
 
+              {/* 配音引擎(视频配音用) */}
+              <DubEngineRow />
+
               {/* 显示密钥 */}
               <div className="border-t border-slate-900/[0.06] py-3 dark:border-white/[0.06]">
                 <button
@@ -563,6 +569,160 @@ function Row({
         {subEl && <div className="mt-0.5">{subEl}</div>}
       </div>
       <div className="shrink-0">{right}</div>
+    </div>
+  );
+}
+
+// 配音引擎(Demucs/voice-select 模型)：测试 + 预下载。下载在后端跑,设置页挂载时
+// 查 dub_engine_status + 订阅 dub:engine,切 tab 回来进度还在;防呆=下载中按钮禁用、
+// 二次确认、可取消。
+function DubEngineRow() {
+  const [status, setStatus] = useState<EngineStatus | null>(null);
+  const [pre, setPre] = useState<DubPreflight | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    let un: (() => void) | null = null;
+    api
+      .dubEngineStatus()
+      .then((s) => {
+        if (!alive) return;
+        setStatus(s);
+        if (s.preparing) {
+          setPreparing(true);
+          setMsg(s.lastMsg);
+        }
+      })
+      .catch(() => {});
+    listen<{ preparing: boolean; msg?: string; ready?: boolean; error?: boolean }>(
+      "dub:engine",
+      (e) => {
+        const p = e.payload;
+        if (p.msg) setMsg(p.msg);
+        setPreparing(p.preparing);
+        if (!p.preparing) api.dubEngineStatus().then(setStatus).catch(() => {});
+      }
+    ).then((u) => (alive ? (un = u) : u()));
+    return () => {
+      alive = false;
+      un?.();
+    };
+  }, []);
+
+  // elapsed timer while preparing (proves "alive", not frozen)
+  useEffect(() => {
+    if (!preparing) {
+      setElapsed(0);
+      return;
+    }
+    const t0 = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [preparing]);
+
+  async function test() {
+    setTesting(true);
+    try {
+      setPre(await api.dubPreflight());
+    } catch {
+      /* ignore */
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function download() {
+    if (
+      !window.confirm(
+        "下载配音引擎（Demucs + PyTorch）？\n\n首次约 0.5–1GB、可能几分钟；可在后台进行、随时取消。下载好后视频配音「标准/高质量」不再等待。"
+      )
+    )
+      return;
+    setPreparing(true);
+    setMsg("正在准备…");
+    try {
+      await api.dubPrepareEngine();
+    } catch {
+      /* 末态经 dub:engine 事件展示 */
+    } finally {
+      setPreparing(false);
+      api.dubEngineStatus().then(setStatus).catch(() => {});
+    }
+  }
+
+  const fmtElapsed = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
+  const missing = pre
+    ? [
+        !pre.node && "Node",
+        (!pre.ffmpeg || !pre.ffprobe) && "FFmpeg",
+        !pre.uvx && "uvx(降级运行)",
+        !pre.cliFound && "配音脚本",
+      ].filter(Boolean)
+    : [];
+
+  return (
+    <div className="border-t border-slate-900/[0.06] py-3 dark:border-white/[0.06]">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[13px] text-slate-800 dark:text-slate-100">
+            <Video className="h-3.5 w-3.5 text-wb-pink" /> 配音引擎（视频配音用）
+          </div>
+          <div className="mt-0.5 text-[10.5px] text-slate-500 dark:text-slate-400">
+            {status?.ready ? (
+              <span className="text-emerald-600 dark:text-emerald-400">✓ 已就绪，配音不再等下载</span>
+            ) : (
+              "首次配音「标准/高质量」需联网下载模型；可在此预先下载"
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-1.5">
+          <button className="btn-ghost px-3 py-1.5 text-xs" onClick={test} disabled={testing || preparing}>
+            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "测试"}
+          </button>
+          {preparing ? (
+            <button
+              className="btn-ghost px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400"
+              onClick={() => api.dubCancel().catch(() => {})}
+            >
+              取消
+            </button>
+          ) : (
+            <button className="btn-ghost px-3 py-1.5 text-xs" onClick={download}>
+              <Download className="h-3.5 w-3.5" /> 下载引擎
+            </button>
+          )}
+        </div>
+      </div>
+
+      {preparing && (
+        <div className="mt-2">
+          <div className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-wb-pink" />
+            <span className="min-w-0 flex-1 truncate">{msg || "下载中…"}</span>
+            <span className="shrink-0 tabular-nums text-slate-400">已用时 {fmtElapsed}</span>
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-900/[0.08] dark:bg-white/10">
+            <div className="skeleton h-full w-full rounded-full" />
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">首次约 0.5–1GB，进度看着不动属正常；切到别的页面也会继续。</p>
+        </div>
+      )}
+
+      {!preparing && pre && (
+        <p
+          className={clsx(
+            "mt-2 text-[11px]",
+            missing.length ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+          )}
+        >
+          {missing.length ? `缺：${missing.join("、")}` : "✓ Node / FFmpeg / uvx 均就绪，可配音"}
+          {!pre.aurixelKey && "（还需在上面配 Aurixel 密钥）"}
+        </p>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { listen } from "@tauri-apps/api/event";
 import Link from "next/link";
 import {
   Upload,
@@ -92,6 +93,7 @@ export function BatchPanel() {
   // 批量配俄语进度(前端串行复用 dub_start + set_listing_video)
   const [dubbing, setDubbing] = useState<{ done: number; total: number } | null>(null);
   const [dubMsg, setDubMsg] = useState<string | null>(null);
+  const [dubDegrade, setDubDegrade] = useState<string | null>(null);
   const [dubPreset, setDubPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
   const dubCancelRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -391,28 +393,54 @@ export function BatchPanel() {
       return;
     }
     setDubMsg(null);
+    setDubDegrade(null);
     dubCancelRef.current = false;
     setDubbing({ done: 0, total: tasks.length });
-    for (let i = 0; i < tasks.length; i++) {
-      if (dubCancelRef.current) {
-        setDubMsg(`已取消视频配音（已完成 ${i}/${tasks.length}）。可到单品页单独补配。`);
-        break;
+    // Watch for auto-degrade across the whole batch (engine timeout → skip
+    // Demucs/voice-select). Surface a persistent banner the moment it happens.
+    const lost = new Set<string>();
+    let degradedItems = 0;
+    let sawDegradeThisItem = false;
+    const un = await listen<{ warn?: string }>("dub:progress", (e) => {
+      const w = e.payload.warn;
+      if (w && /skipped|stall|raw audio|single renders|preset voice/i.test(w)) {
+        if (/stem|background|raw audio/i.test(w)) lost.add("未保留背景音乐");
+        if (/voice-select|single renders/i.test(w)) lost.add("音色一致性略降");
+        if (/clone skipped|preset voice/i.test(w)) lost.add("未能克隆原声");
+        if (!sawDegradeThisItem) {
+          sawDegradeThisItem = true;
+          degradedItems++;
+        }
+        setDubDegrade(
+          `⚠️ ${degradedItems} 个视频因配音引擎超时/未就绪已自动降级（${[...lost].join("、")}）。成片仍生成；如需最佳效果，到「设置→配音引擎」先下载，再重配。`
+        );
       }
-      const t = tasks[i];
-      try {
-        const out = await api.dubStart({
-          inputPath: t.path,
-          voiceMode: "clone",
-          ...dubPresetOptions(dubPreset),
-        });
-        const updated = await api.setListingVideo(t.id, out);
-        setJobListings((cur) => cur.map((l) => (l.id === t.id ? updated : l)));
-      } catch {
-        /* skip this one (incl. user cancel of the current job); others continue */
+    });
+    try {
+      for (let i = 0; i < tasks.length; i++) {
+        if (dubCancelRef.current) {
+          setDubMsg(`已取消视频配音（已完成 ${i}/${tasks.length}）。可到单品页单独补配。`);
+          break;
+        }
+        const t = tasks[i];
+        sawDegradeThisItem = false;
+        try {
+          const out = await api.dubStart({
+            inputPath: t.path,
+            voiceMode: "clone",
+            ...dubPresetOptions(dubPreset),
+          });
+          const updated = await api.setListingVideo(t.id, out);
+          setJobListings((cur) => cur.map((l) => (l.id === t.id ? updated : l)));
+        } catch {
+          /* skip this one (incl. user cancel of the current job); others continue */
+        }
+        setDubbing({ done: i + 1, total: tasks.length });
       }
-      setDubbing({ done: i + 1, total: tasks.length });
+    } finally {
+      un();
+      setDubbing(null);
     }
-    setDubbing(null);
   }
 
   function cancelDubbing() {
@@ -531,6 +559,7 @@ export function BatchPanel() {
             dubMsg={dubMsg}
             onCancelDub={cancelDubbing}
             dubHeavy={dubPreset !== "fast"}
+            dubDegrade={dubDegrade}
           />
         )}
         {step === 3 && (
@@ -918,6 +947,7 @@ function ReviewStep({
   dubMsg,
   onCancelDub,
   dubHeavy,
+  dubDegrade,
 }: {
   listings: Listing[];
   lang: "ru" | "zh" | "both";
@@ -929,6 +959,7 @@ function ReviewStep({
   dubMsg: string | null;
   onCancelDub: () => void;
   dubHeavy: boolean;
+  dubDegrade: string | null;
 }) {
   const [detail, setDetail] = useState<Listing | null>(null);
   const ready = listings.filter(listingReady);
@@ -1006,6 +1037,11 @@ function ReviewStep({
       {dubMsg && (
         <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/[0.08] px-4 py-2.5 text-xs text-amber-700 dark:text-amber-200">
           {dubMsg}
+        </div>
+      )}
+      {dubDegrade && (
+        <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.12] px-4 py-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+          {dubDegrade}
         </div>
       )}
 
