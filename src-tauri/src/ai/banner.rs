@@ -169,19 +169,26 @@ pub fn compose_promo(base: &[u8], spec: &PromoSpec) -> Result<Vec<u8>> {
     to_jpeg(&canvas, 90)
 }
 
-/// Infographic-style promo: AI product photo + a designed text layer (bold
-/// headline + feature chips, NO price — matching real WB seller cards).
+/// Infographic-style overlay: a CLEAN AI photo + a designed text layer composited
+/// by code (resvg → perfect Cyrillic). The model is asked for a text-free photo;
+/// ALL text/chips/badges are drawn here, so nothing garbles. `style` selects how
+/// much chrome to draw, `accent` is the product's brand color (set cohesion):
+///   "full"   → headline (top) + benefit chips (bottom) + optional badge
+///   "header" → headline (top) only (+ optional badge)
+///   "badge"  → just one small accent badge (top-left), photo-forward
 pub fn compose_infographic(
     base: &[u8],
     title: &str,
     features: &[String],
     badge: Option<&str>,
+    accent: &str,
+    style: &str,
     w: u32,
     h: u32,
 ) -> Result<Vec<u8>> {
     let img = image::load_from_memory(base)?;
     let mut canvas = resize_cover(img, w, h).to_rgba8();
-    let overlay = render_svg(&build_infographic_svg(title, features, badge, w, h), w, h)?;
+    let overlay = render_svg(&build_infographic_svg(title, features, badge, accent, style, w, h), w, h)?;
     composite_over(&mut canvas, &overlay);
     to_jpeg(&canvas, 90)
 }
@@ -190,71 +197,98 @@ fn build_infographic_svg(
     title: &str,
     features: &[String],
     badge: Option<&str>,
+    accent: &str,
+    style: &str,
     w: u32,
     h: u32,
 ) -> String {
-    const ACCENT: &str = "#cb11ab";
     const INK: &str = "#16181d";
+    let want_headline = style == "full" || style == "header";
+    let want_chips = style == "full";
 
     // headline (top), 2 lines max
-    let title_lines = wrap(title, 18, 2);
-    let hx = 64i32;
-    let mut hy = 138i32;
     let mut headline = String::new();
-    for line in &title_lines {
-        headline.push_str(&format!(
-            r##"<text x="{}" y="{}" font-size="62" font-weight="800" fill="{}" font-family="Arial, sans-serif">{}</text>"##,
-            hx, hy, INK, esc(line)
-        ));
-        hy += 80;
+    let mut underline = String::new();
+    if want_headline && !title.trim().is_empty() {
+        let title_lines = wrap(title, 18, 2);
+        let hx = 64i32;
+        let mut hy = 138i32;
+        for line in &title_lines {
+            headline.push_str(&format!(
+                r##"<text x="{}" y="{}" font-size="62" font-weight="800" fill="{}" font-family="Arial, sans-serif">{}</text>"##,
+                hx, hy, INK, esc(line)
+            ));
+            hy += 80;
+        }
+        underline = format!(
+            r##"<rect x="{}" y="{}" width="132" height="10" rx="5" fill="{}"/>"##,
+            hx,
+            hy - 50,
+            accent
+        );
     }
-    let underline = format!(
-        r##"<rect x="{}" y="{}" width="132" height="10" rx="5" fill="{}"/>"##,
-        hx,
-        hy - 50,
-        ACCENT
-    );
 
-    // accent badge, top-right
+    // accent badge — top-right for full/header (alongside headline), top-left and
+    // a touch larger for the photo-forward "badge" style.
     let badge_svg = match badge {
-        Some(b) if !b.is_empty() => {
+        Some(b) if !b.trim().is_empty() => {
+            let b: String = b.trim().chars().take(22).collect();
             let bl = b.chars().count() as i32;
-            let bw = 44 + bl * 28;
-            format!(
-                r##"<g transform="translate({},56)"><rect x="0" y="0" width="{}" height="66" rx="33" fill="{}"/><text x="{}" y="44" font-size="34" font-weight="800" fill="#fff" text-anchor="middle" font-family="Arial, sans-serif">{}</text></g>"##,
-                w as i32 - 64 - bw,
-                bw,
-                ACCENT,
-                bw / 2,
-                esc(b)
-            )
+            if style == "badge" {
+                let bw = 52 + bl * 30;
+                format!(
+                    r##"<g transform="translate(56,56)"><rect x="0" y="0" width="{}" height="74" rx="37" fill="{}"/><text x="{}" y="50" font-size="36" font-weight="800" fill="#fff" text-anchor="middle" font-family="Arial, sans-serif">{}</text></g>"##,
+                    bw, accent, bw / 2, esc(&b)
+                )
+            } else {
+                let bw = 44 + bl * 28;
+                format!(
+                    r##"<g transform="translate({},56)"><rect x="0" y="0" width="{}" height="66" rx="33" fill="{}"/><text x="{}" y="44" font-size="34" font-weight="800" fill="#fff" text-anchor="middle" font-family="Arial, sans-serif">{}</text></g>"##,
+                    w as i32 - 64 - bw, bw, accent, bw / 2, esc(&b)
+                )
+            }
         }
         _ => String::new(),
     };
 
     // feature chips, bottom row (up to 3, auto width by char count)
     let mut chips = String::new();
-    let mut cx = 56i32;
-    let cy = h as i32 - 150;
-    for f in features.iter().filter(|s| !s.trim().is_empty()).take(3) {
-        let t: String = f.trim().chars().take(16).collect();
-        let cl = t.chars().count() as i32;
-        let cw = 48 + cl * 22;
-        if cx + cw > w as i32 - 56 {
-            break;
+    if want_chips {
+        let mut cx = 56i32;
+        let cy = h as i32 - 150;
+        for f in features.iter().filter(|s| !s.trim().is_empty()).take(3) {
+            let t: String = f.trim().chars().take(16).collect();
+            let cl = t.chars().count() as i32;
+            let cw = 48 + cl * 22;
+            if cx + cw > w as i32 - 56 {
+                break;
+            }
+            chips.push_str(&format!(
+                r##"<g transform="translate({},{})"><rect x="0" y="0" width="{}" height="74" rx="37" fill="#ffffff" stroke="{}" stroke-width="3"/><text x="{}" y="48" font-size="30" font-weight="700" fill="{}" text-anchor="middle" font-family="Arial, sans-serif">{}</text></g>"##,
+                cx, cy, cw, accent, cw / 2, accent, esc(&t)
+            ));
+            cx += cw + 18;
         }
-        chips.push_str(&format!(
-            r##"<g transform="translate({},{})"><rect x="0" y="0" width="{}" height="74" rx="37" fill="#ffffff" stroke="{}" stroke-width="3"/><text x="{}" y="48" font-size="30" font-weight="700" fill="{}" text-anchor="middle" font-family="Arial, sans-serif">{}</text></g>"##,
-            cx, cy, cw, ACCENT, cw / 2, ACCENT, esc(&t)
-        ));
-        cx += cw + 18;
     }
 
+    // Soft white scrims only where text actually sits (keeps the photo clean).
+    let top_scrim = if want_headline {
+        format!(r##"<rect width="{w}" height="400" fill="url(#top)"/>"##, w = w)
+    } else {
+        String::new()
+    };
+    let bot_scrim = if want_chips {
+        format!(r##"<rect y="{boty}" width="{w}" height="300" fill="url(#bot)"/>"##, w = w, boty = h as i32 - 300)
+    } else {
+        String::new()
+    };
+
     format!(
-        r##"<svg width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="top" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(255,255,255,0.96)"/><stop offset="100%" stop-color="rgba(255,255,255,0)"/></linearGradient><linearGradient id="bot" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="rgba(255,255,255,0.94)"/><stop offset="100%" stop-color="rgba(255,255,255,0)"/></linearGradient></defs><rect width="{w}" height="400" fill="url(#top)"/><rect y="{boty}" width="{w}" height="300" fill="url(#bot)"/>{headline}{underline}{badge}{chips}</svg>"##,
+        r##"<svg width="{w}" height="{h}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="top" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(255,255,255,0.96)"/><stop offset="100%" stop-color="rgba(255,255,255,0)"/></linearGradient><linearGradient id="bot" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stop-color="rgba(255,255,255,0.94)"/><stop offset="100%" stop-color="rgba(255,255,255,0)"/></linearGradient></defs>{top_scrim}{bot_scrim}{headline}{underline}{badge}{chips}</svg>"##,
         w = w,
         h = h,
-        boty = h as i32 - 300,
+        top_scrim = top_scrim,
+        bot_scrim = bot_scrim,
         headline = headline,
         underline = underline,
         badge = badge_svg,

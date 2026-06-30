@@ -151,7 +151,14 @@ fn collapse_ws(s: &str) -> String {
     out
 }
 
-const GUARD: &str = "Accurate, perfectly legible Russian typography; keep every label to 1-2 words; no paragraphs, no duplicated text, no price. Clean premium Wildberries retail style, soft studio lighting, sharp focus, high resolution.";
+// Shared style guard appended to every template. KEY architecture decision: the
+// image model renders ONLY a clean, text-free photo; ALL titles/chips/badges/
+// labels are composited afterward by code (resvg → perfect Cyrillic). So the
+// guard FORBIDS the model from drawing any text (that's what garbles), and pins
+// one cohesive soft {ACCENT}-tinted light look across the whole set. The literal
+// "{ACCENT}" survives format! (argument data, not a format token) and is filled
+// at render time.
+const GUARD: &str = "Soft, clean studio background with a subtle {ACCENT} tint (NEVER pure white), one cohesive premium Wildberries look across the set, soft even lighting, sharp focus, high resolution. CRITICAL: render NO text, letters, words, numbers, logos, captions, icons, badges or watermarks anywhere in the image — leave tidy empty space instead; all text is added separately.";
 
 /// The built-in defaults — the single source of truth for first-run + reset.
 /// Validated wording (red banner / kept product / icon callouts / benefit glow).
@@ -165,71 +172,72 @@ pub fn built_in_defaults() -> ImageTemplates {
         enabled,
     };
     ImageTemplates {
-        // v3: diversified defaults. v2 had 4 near-identical "top {ACCENT} banner +
-        // «TITLE» + N icon callouts" templates (hero/features/package/guarantee) that
-        // all stamped the SAME headline banner → the set FELT repetitive even at 10
-        // distinct kinds. v3 gives each kind a different COMPOSITION (split panel /
-        // annotation diagram / immersive photo / macro / comparison / flat-lay / grid
-        // / steps / badge strip) and stops repeating the big banner. The pure-white
-        // main stays disabled (real WB listings are designed, not blank white).
-        version: 3,
+        // v4: reference-grounded + overlay-driven. v3 chased a different LAYOUT per
+        // image AND asked the image model to draw text/icons/grids — both wrong: the
+        // model garbles Cyrillic + the set looks incoherent. Real top WB listings
+        // (studied the Scarlett вафельница listing) are clean PHOTOS with text/chips
+        // overlaid by a designer. So here the model makes only a clean text-free
+        // photo and CODE composites perfect-Cyrillic text via `text_mode`:
+        //   overlay        = headline + benefit chips   (infographic cards)
+        //   overlay_header = headline only              (photo + title)
+        //   overlay_badge  = one small accent badge      (photo-forward)
+        //   clean          = no overlay                  (pure photo / dimensions)
+        // Cohesion comes from one shared accent (photo tint + overlay color) and one
+        // overlay style system; variety comes from the TOPIC, not the layout. Three
+        // cards put a real PERSON with the product (inuse/scene/lifestyle).
+        version: 4,
         source: "builtin".into(),
-        // Front-loaded so even 5 images already span 5 very different looks.
         rotation: vec![
-            "main".into(), "hero".into(), "features".into(), "scene".into(), "detail".into(),
-            "comparison".into(), "dimensions".into(), "package".into(), "result".into(),
-            "how_to".into(), "guarantee".into(),
+            "main".into(), "benefits".into(), "inuse".into(), "scene".into(), "result".into(),
+            "lifestyle".into(), "variety".into(), "dimensions".into(), "package".into(), "guarantee".into(),
         ],
         templates: vec![
-            // 1) MAIN — designed lead card: product big on a soft accent backdrop
-            // (never stark white), short headline + ONE benefit chip. Uncluttered.
-            t("main", "main", "主图·设计", "model", true, format!(
-                "Keep THIS exact product unchanged (real shape, color, proportions). A premium Wildberries MAIN image, vertical 3:4: the product LARGE and centered on a soft {{ACCENT}}-tinted gradient studio backdrop (NEVER plain white), gentle realistic shadow. A short bold Russian headline «{{TITLE}}» near the top and ONE small rounded benefit chip «{{KEY_BENEFIT}}». Uncluttered, modern, premium. {GUARD} {{CUSTOM}}"
+            // 1) MAIN — clean big product shot; code overlays title + spec chips.
+            t("main", "main", "主图·规格", "overlay", true, format!(
+                "Keep THIS exact product unchanged (real shape, color, proportions). Premium Wildberries MAIN product photo, vertical 3:4: the product LARGE and clearly centered, gentle realistic shadow, generous clean empty space at the TOP and BOTTOM. {GUARD} {{CUSTOM}}"
             )),
-            // 2) HERO — SPLIT layout: product half + solid accent panel half. The big
-            // headline lives in the side panel (not a top banner) → distinct silhouette.
-            t("hero", "promo", "核心卖点·分栏", "model", true, format!(
-                "Using THIS exact product (keep its real shape and color), a vertical 3:4 Wildberries infographic with a SPLIT layout: the product photographed large on one half; a solid {{ACCENT}} vertical panel on the other half carrying a big white Russian headline «{{TITLE}}» and {{N}} short benefit lines, each with a small clean line icon: {{CALLOUTS}}. Bold, high-contrast, modern. {GUARD} {{CUSTOM}}"
+            // 2) BENEFITS — clean product shot; code overlays title + benefit chips.
+            t("benefits", "promo", "卖点信息图", "overlay", true, format!(
+                "Using THIS exact product, a clean premium vertical 3:4 product shot: the product shown clearly and large with lots of tidy empty space around it (top and bottom kept clear for a title and benefit chips). {GUARD} {{CUSTOM}}"
             )),
-            // 3) FEATURES — annotation diagram: callout LINES to parts, NO big banner.
-            t("features", "gallery", "功能标注", "model", true, format!(
-                "Using THIS exact product, a vertical 3:4 Wildberries feature-callout image: the exact product centered and large on a clean soft {{ACCENT}}-tinted background, with {{N}} thin callout lines pointing to different parts, each ending in a 1-2 word Russian label and a tiny icon: {{CALLOUTS}}. No big banner — airy and technical. {GUARD}"
+            // 3) IN-USE — PHOTO of hands using the product; code overlays a small badge.
+            t("inuse", "gallery", "实拍·使用中", "overlay_badge", true, format!(
+                "Using THIS exact product (unchanged), a premium vertical 3:4 PHOTO of the product BEING USED — a person's hands actively using it for its main purpose, a real in-use moment for a {{CATEGORY}}; realistic natural hands. Warm, inviting, keep the top corners clean. {GUARD}"
             )),
-            // 4) SCENE — immersive lifestyle photo, NO banner, only a tiny corner chip.
-            t("scene", "gallery", "生活场景", "model", true, format!(
-                "Using THIS exact product (unchanged), a vertical 3:4 premium lifestyle photo: the product used naturally in {{SCENE}}, warm natural light, shallow depth of field, real environment. Only a tiny {{ACCENT}} corner chip «{{KEY_BENEFIT}}» — NO large banner, let the photo breathe. {GUARD}"
+            // 4) SCENE — PHOTO of a person using it at home; code overlays a small badge.
+            t("scene", "gallery", "生活场景", "overlay_badge", true, format!(
+                "Using THIS exact product (unchanged), a premium vertical 3:4 lifestyle photo: a real person using the product naturally in a tidy modern home ({{SCENE}}), warm natural light, candid; realistic, undistorted face and hands. Keep the top corners clean. {GUARD}"
             )),
-            // 5) DETAIL — extreme macro of material/build, one tiny caption.
-            t("detail", "gallery", "材质细节", "model", true, format!(
-                "Using THIS exact product (unchanged), a vertical 3:4 Wildberries macro detail shot: an extreme close-up emphasizing the material, texture and build quality. One small {{ACCENT}} caption with a 1-2 word Russian label about the key material/feature. Sharp, tactile, premium. {GUARD}"
+            // 5) RESULT — PHOTO of the appealing result; code overlays the title.
+            t("result", "gallery", "效果展示", "overlay_header", true, format!(
+                "Using THIS exact product, a premium vertical 3:4 photo showcasing the appealing RESULT it delivers — the end result/output of a {{CATEGORY}}: {{SCENE}}. Vivid, professional, keep the top clear for a title. {GUARD}"
             )),
-            // 6) COMPARISON — two-column обычный/наш (now enabled — distinct & persuasive).
-            t("comparison", "gallery", "对比图", "model", true, format!(
-                "Using THIS exact product, a vertical 3:4 Wildberries comparison image. A small {{ACCENT}} header «{{TITLE}}». Two clean columns: «обычный» (an ordinary, dull alternative) on the left vs «наш» (ours — this exact product, bright and appealing) on the right, with a few short Russian labels and green check / grey cross icons. {GUARD}"
+            // 6) LIFESTYLE — candid PHOTO of a happy person with the product (people sell).
+            t("lifestyle", "gallery", "人物·生活", "overlay_badge", true, format!(
+                "Using THIS exact product, a premium vertical 3:4 candid lifestyle photo: a happy real person enjoying or presenting the product at home, natural relaxed pose, warm light; realistic, undistorted face and hands. Keep the top corners clean. {GUARD}"
             )),
-            // 7) DIMENSIONS — clean shot with empty margins; crisp numbers via overlay.
-            t("dimensions", "gallery", "尺寸图", "overlay", true, format!(
-                "Keep THIS exact product unchanged. Clean, soft {{ACCENT}}-tinted studio photo of the product, centered, leaving generous empty margins on the right and bottom for dimension labels. Soft shadow. NO text, NO numbers. {GUARD}"
+            // 7) VARIETY — ONE clean assortment photo (NOT a model-drawn grid); title overlaid.
+            t("variety", "gallery", "用途/款式", "overlay_header", true, format!(
+                "Using THIS exact product, a premium vertical 3:4 photo showing an attractive ASSORTMENT of the results/uses of a {{CATEGORY}}: {{SCENE}}, arranged appealingly together as ONE cohesive photo (not a grid, no panels). Keep the top clear for a title. {GUARD}"
             )),
-            // 8) PACKAGE — top-down flat-lay of in-the-box items (комплектация).
-            t("package", "gallery", "开箱清单", "model", true, format!(
-                "Using THIS exact product, a vertical 3:4 Wildberries 'in the box' (комплектация) image: a neat top-down flat-lay of the product with all included items arranged on a soft {{ACCENT}}-tinted surface, each item tagged with a small 1-2 word Russian label: {{CALLOUTS}}. Tidy, premium. {GUARD}"
+            // 8) DIMENSIONS — clean shot with empty margins (numbers added separately).
+            t("dimensions", "gallery", "尺寸图", "clean", true, format!(
+                "Keep THIS exact product unchanged. A clean, simple vertical 3:4 studio photo of the product, centered, with generous empty margins on the right and bottom for dimension labels added later. Soft shadow. {GUARD}"
             )),
-            // 9) RESULT — 2x2 grid of results/uses with a small product inset.
-            t("result", "gallery", "效果/成品", "model", true, format!(
-                "Using THIS exact product, a vertical 3:4 Wildberries results image. A small {{ACCENT}} top banner «{{TITLE}}». A clean 2x2 grid showing great results/uses of a {{CATEGORY}}: {{SCENE}}. Place a small inset of this exact product in one corner. Vivid professional photography. {GUARD}"
+            // 9) PACKAGE — clean flat-lay of in-the-box items; code overlays the title.
+            t("package", "gallery", "开箱清单", "overlay_header", true, format!(
+                "Using THIS exact product, a clean vertical 3:4 top-down flat-lay of the product with its included accessories, evenly spaced with generous spacing on a tidy surface. Keep the top clear for a title. {GUARD}"
             )),
-            // 10) HOW-TO — 3 numbered steps.
-            t("how_to", "gallery", "三步用法", "model", true, format!(
-                "Using THIS exact product, a vertical 3:4 Wildberries 'how to use' image. A small {{ACCENT}} top banner «{{TITLE}}». Three numbered steps stacked vertically, each a small clean illustration with a 2-3 word Russian caption. Keep the exact product visible. {GUARD}"
+            // 10) GUARANTEE — clean reassuring product shot; code overlays title + chips.
+            t("guarantee", "gallery", "信任保障", "overlay", true, format!(
+                "Using THIS exact product, a clean premium vertical 3:4 product shot on a calm, reassuring background, the product centered with tidy empty space at the top and bottom (for a title and trust chips). {GUARD}"
             )),
-            // 11) GUARANTEE — distinct framing: product up top, trust badges along the BOTTOM.
-            t("guarantee", "gallery", "信任保障", "model", true, format!(
-                "Using THIS exact product, a vertical 3:4 Wildberries trust image: the exact product large in the upper area on a soft {{ACCENT}}-tinted background with a short Russian headline «{{TITLE}}», and ALONG THE BOTTOM a calm row of {{N}} round trust badges, each a small icon + 1-2 word Russian label: {{CALLOUTS}}. {GUARD}"
+            // ── extra (off by default; editable/enable-able in the editor) ──
+            t("detail", "gallery", "材质细节(备用)", "overlay_badge", false, format!(
+                "Using THIS exact product (unchanged), a premium vertical 3:4 macro detail photo: a close-up emphasizing the material, texture and build quality. Sharp, tactile, keep a top corner clean. {GUARD}"
             )),
-            // ── extra (off by default) ──
-            t("main_white", "main", "主图·纯白(备用)", "model", false, format!(
-                "Keep THIS exact product unchanged (real shape, color, proportions). Clean white studio e-commerce product photo, the product centered and large, soft natural shadow, premium, NO text. {GUARD}"
+            t("main_white", "main", "主图·纯白(备用)", "clean", false, format!(
+                "Keep THIS exact product unchanged (real shape, color, proportions). Clean white studio e-commerce product photo, the product centered and large, soft natural shadow, premium. {GUARD}"
             )),
         ],
     }
@@ -297,6 +305,18 @@ mod tests {
             kinds.dedup();
             assert_eq!(kinds.len(), n, "plan({n}) repeated a kind");
         }
+    }
+
+    #[test]
+    fn guard_accent_is_filled_no_leftover_tokens() {
+        // GUARD embeds a literal {ACCENT}; after fill() nothing braces-shaped may
+        // survive, and the accent must actually appear in the prompt.
+        let d = built_in_defaults();
+        let main = d.get("main").unwrap();
+        let out = fill(&main.body, &ctx(""));
+        assert!(out.contains("red"), "accent not filled: {out}");
+        assert!(!out.contains('{') && !out.contains('}'), "leftover token: {out}");
+        assert!(!out.contains("ACCENT"));
     }
 
     #[test]

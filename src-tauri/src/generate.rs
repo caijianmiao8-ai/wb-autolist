@@ -46,6 +46,18 @@ fn accent_for(category: &str, name: &str, keywords: &str) -> &'static str {
     }
 }
 
+/// Map the accent word (chosen by `accent_for`) to the hex used by the overlay
+/// text layer, so the composited title/chips/badge match the photo's tint → one
+/// cohesive look across the whole set.
+fn accent_hex(word: &str) -> &'static str {
+    match word {
+        "blue" => "#2563EB",
+        "pink" => "#CB11AB",
+        "green" => "#16A34A",
+        _ => "#E11D2A", // red (default)
+    }
+}
+
 /// Build the `{PLACEHOLDER}` substitution context from the AI copy + a few knobs.
 pub(crate) fn build_ctx(copy: &ProductCopy, name: &str, keywords: &[String], custom: &str) -> HashMap<String, String> {
     let callout_list: Vec<String> = copy
@@ -110,15 +122,31 @@ pub(crate) async fn render_one(
     let buf = match raw_bytes {
         Ok(b) => {
             let norm = normalize_main(&b, 1200, 1600).unwrap_or(b);
-            if tmpl.text_mode == "overlay" {
-                // perfect Cyrillic: composite exact text (resvg) over the clean visual.
+            // Code-overlay path: the model produced a CLEAN (text-free) photo and we
+            // composite perfect-Cyrillic text/chips/badge on top (resvg). Style is
+            // chosen per template; accent = the product's brand color (set cohesion).
+            // "clean"/"model" → no overlay (raw photo).
+            if tmpl.text_mode.starts_with("overlay") {
+                let accent = accent_hex(ctx.get("ACCENT").map(|s| s.as_str()).unwrap_or("red"));
+                let key_benefit = ctx.get("KEY_BENEFIT").map(|s| s.trim()).unwrap_or("");
                 let feats: Vec<String> = bullets
                     .iter()
                     .map(|x| x.trim().to_string())
                     .filter(|x| !x.is_empty())
                     .take(3)
                     .collect();
-                compose_infographic(&norm, title, &feats, None, 1200, 1600).unwrap_or(norm)
+                let composed = match tmpl.text_mode.as_str() {
+                    "overlay_header" => {
+                        compose_infographic(&norm, title, &[], None, accent, "header", 1200, 1600)
+                    }
+                    "overlay_badge" => {
+                        let b = (!key_benefit.is_empty()).then_some(key_benefit);
+                        compose_infographic(&norm, "", &[], b, accent, "badge", 1200, 1600)
+                    }
+                    // "overlay" (full): headline + benefit chips
+                    _ => compose_infographic(&norm, title, &feats, None, accent, "full", 1200, 1600),
+                };
+                composed.unwrap_or(norm)
             } else {
                 norm
             }
@@ -231,7 +259,7 @@ pub async fn generate_listing(
         &format!(
             "文案完成，开始生成 {} 张图（{}，每张约 1-2 分钟）…",
             now_count,
-            if is_edit { "用你的产品图 img2img" } else { "AI 文生图" }
+            if is_edit { "基于你的产品图改造，保留实物" } else { "AI 全自动生成（未传产品图）" }
         ),
     );
 

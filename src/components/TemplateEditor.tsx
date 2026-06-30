@@ -138,8 +138,11 @@ export function TemplateEditor() {
                 onChange={(e) => patch(t.kind, { textMode: e.target.value })}
                 title="文字渲染方式"
               >
-                <option value="model">文字: 模型渲染</option>
-                <option value="overlay">文字: 代码叠加(精确俄文)</option>
+                <option value="clean">纯净照片(不加字)</option>
+                <option value="overlay">叠加: 标题+卖点</option>
+                <option value="overlay_header">叠加: 仅标题</option>
+                <option value="overlay_badge">叠加: 角标</option>
+                <option value="model">模型直接出字(易糊,不推荐)</option>
               </select>
             </div>
             <textarea

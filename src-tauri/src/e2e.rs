@@ -35,6 +35,8 @@ fn infographic_design() {
         "Баскетбольный мяч для улицы и зала",
         &features,
         Some("ХИТ"),
+        "#E11D2A",
+        "full",
         1080,
         1440,
     )
