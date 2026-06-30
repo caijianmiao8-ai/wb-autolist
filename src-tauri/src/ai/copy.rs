@@ -62,10 +62,10 @@ fn copy_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "title": { "type": "string", "description": "Продающий заголовок товара для карточки WB, до 60 символов" },
-            "description": { "type": "string", "description": "SEO-описание товара на русском, 600-1500 символов, с ключевыми словами" },
-            "bullets": { "type": "array", "items": { "type": "string" }, "description": "4-6 ключевых преимуществ товара (буллеты) на русском" },
+            "description": { "type": "string", "description": "SEO-описание товара на русском, 1200-2000 символов, насыщенное релевантными ключевыми словами/синонимами (как у топовых карточек WB), но читабельное и без спама" },
+            "bullets": { "type": "array", "items": { "type": "string" }, "description": "5-7 ключевых преимуществ товара (буллеты) на русском" },
             "brand": { "type": "string", "description": "Короткое название бренда (латиница)" },
-            "keywords": { "type": "array", "items": { "type": "string" }, "description": "8-15 поисковых ключевых слов на русском" },
+            "keywords": { "type": "array", "items": { "type": "string" }, "description": "12-20 поисковых ключевых слов и синонимов на русском (вкл. варианты названия товара)" },
             "categoryHint": { "type": "string", "description": "Точное название категории/предмета WB на русском (например: 'Платья', 'Наушники')" },
             "imagePrompt": { "type": "string", "description": "MUST be in ENGLISH. A rich, detailed prompt for a professional studio e-commerce product photo of THIS specific product. 1-3 sentences, never empty." },
             "titleZh": { "type": "string", "description": "中文翻译:title 的简体中文对照(给中文卖家参考用,不发布)" },
@@ -80,8 +80,8 @@ fn prompt(product_name: &str, keywords: &[String], brand: Option<&str>) -> Strin
     let mut p = String::new();
     p.push_str("Ты — эксперт по карточкам товаров на маркетплейсе Wildberries. ");
     p.push_str("Создай продающий контент и верни СТРОГО валидный JSON с полями: ");
-    p.push_str("title (заголовок ≤60 символов), description (SEO-описание на русском 600-1500 символов), ");
-    p.push_str("bullets (массив 4-6 преимуществ), brand (латиница), keywords (массив 8-15 ключевых слов на русском), ");
+    p.push_str("title (заголовок ≤60 символов), description (SEO-описание на русском 1200-2000 символов, насыщенное релевантными ключевыми словами и синонимами как у топовых карточек, но читабельное), ");
+    p.push_str("bullets (массив 5-7 преимуществ), brand (латиница), keywords (массив 12-20 ключевых слов и синонимов на русском), ");
     p.push_str("categoryHint (точное название категории/предмета Wildberries на русском, напр. \"Наушники\", \"Платья\"), ");
     p.push_str("imagePrompt (detailed ENGLISH prompt for a professional studio product photo).\n");
     p.push_str("ВАЖНО: title, description, bullets, keywords, categoryHint — СТРОГО на русском языке. Переведи на русский ЛЮБЫЕ иностранные слова (в т.ч. китайские); НЕ оставляй китайские иероглифы.\n");
