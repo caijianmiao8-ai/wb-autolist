@@ -43,22 +43,64 @@ interface SettingsState {
   defaultWeight: number;
 }
 
+// Single-product draft persistence — the input form unmounts on tab switch
+// (Next.js route change), which used to wipe everything the seller typed. Small
+// text fields go in wb:draft; the (base64, potentially MB-sized) photos go in a
+// SEPARATE key so a keystroke doesn't re-serialize megabytes, and so a quota
+// overflow on photos never costs the text fields. Session-scoped (clears on quit).
+const DRAFT_KEY = "wb:draft";
+const DRAFT_PHOTOS_KEY = "wb:draftPhotos";
+type Draft = {
+  productName?: string;
+  keywords?: string[];
+  price?: number;
+  discount?: number;
+  brand?: string;
+  length?: number;
+  width?: number;
+  height?: number;
+  weight?: number;
+  showAdvanced?: boolean;
+  customPrompt?: string;
+  imageCount?: number;
+  mainOnly?: boolean;
+  basePhotos?: string[];
+};
+function loadDraft(): Draft {
+  if (typeof window === "undefined") return {};
+  let d: Draft = {};
+  try {
+    d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "{}");
+  } catch {
+    d = {};
+  }
+  try {
+    const p = sessionStorage.getItem(DRAFT_PHOTOS_KEY);
+    if (p) d.basePhotos = JSON.parse(p);
+  } catch {
+    /* photos optional */
+  }
+  return d;
+}
+
 export function Workbench() {
+  // Read any in-progress draft ONCE so the form survives tab switches.
+  const [draft0] = useState<Draft>(loadDraft);
   const [step, setStep] = useState<Step>("input");
-  const [productName, setProductName] = useState("");
+  const [productName, setProductName] = useState(draft0.productName ?? "");
   const [keywordInput, setKeywordInput] = useState("");
-  const [keywords, setKeywords] = useState<string[]>([]);
-  const [price, setPrice] = useState(1990);
+  const [keywords, setKeywords] = useState<string[]>(draft0.keywords ?? []);
+  const [price, setPrice] = useState(draft0.price ?? 1990);
   // default 0 — never ship a struck-through "discount" the seller didn't choose.
-  const [discount, setDiscount] = useState(0);
-  const [brand, setBrand] = useState("");
+  const [discount, setDiscount] = useState(draft0.discount ?? 0);
+  const [brand, setBrand] = useState(draft0.brand ?? "");
   // package dims (cm) + gross weight (kg) — pre-filled from the seller's
-  // configured defaults once settings load.
-  const [length, setLength] = useState(20);
-  const [width, setWidth] = useState(15);
-  const [height, setHeight] = useState(5);
-  const [weight, setWeight] = useState(0.3);
-  const [basePhotos, setBasePhotos] = useState<string[]>([]);
+  // configured defaults once settings load (unless a draft already has them).
+  const [length, setLength] = useState(draft0.length ?? 20);
+  const [width, setWidth] = useState(draft0.width ?? 15);
+  const [height, setHeight] = useState(draft0.height ?? 5);
+  const [weight, setWeight] = useState(draft0.weight ?? 0.3);
+  const [basePhotos, setBasePhotos] = useState<string[]>(draft0.basePhotos ?? []);
   // English product video to dub into Russian and attach to the card (optional).
   // Restore the picked English video across tab switches (so the dub card +
   // 「配成俄语」button don't vanish when the listing re-hydrates into preview).
@@ -72,10 +114,10 @@ export function Workbench() {
   });
   // Collapse power-user fields (brand/dims/prompt/count/main-first) by default —
   // a plain seller only needs name + keywords + price + photos/video.
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState("");
-  const [imageCount, setImageCount] = useState(3);
-  const [mainOnly, setMainOnly] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(draft0.showAdvanced ?? false);
+  const [customPrompt, setCustomPrompt] = useState(draft0.customPrompt ?? "");
+  const [imageCount, setImageCount] = useState(draft0.imageCount ?? 3);
+  const [mainOnly, setMainOnly] = useState(draft0.mainOnly ?? false);
   const [regenLoading, setRegenLoading] = useState<number | null>(null);
   const [restLoading, setRestLoading] = useState(false);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -100,14 +142,56 @@ export function Workbench() {
       .getSettings()
       .then((s) => {
         setSettings(s);
-        // pre-fill package dims from the seller's configured defaults
-        if (s.defaultLength) setLength(s.defaultLength);
-        if (s.defaultWidth) setWidth(s.defaultWidth);
-        if (s.defaultHeight) setHeight(s.defaultHeight);
-        if (s.defaultWeight) setWeight(s.defaultWeight);
+        // pre-fill package dims from the seller's configured defaults — but only if
+        // a restored draft didn't already carry the seller's edited dims (else the
+        // defaults would clobber what they typed before switching tabs).
+        if (s.defaultLength && draft0.length == null) setLength(s.defaultLength);
+        if (s.defaultWidth && draft0.width == null) setWidth(s.defaultWidth);
+        if (s.defaultHeight && draft0.height == null) setHeight(s.defaultHeight);
+        if (s.defaultWeight && draft0.weight == null) setWeight(s.defaultWeight);
       })
       .catch(() => {});
-  }, []);
+  }, [draft0]);
+
+  // Persist the input form so a tab switch (which unmounts this component) never
+  // wipes what the seller typed. Text fields are tiny → save on every change.
+  useEffect(() => {
+    try {
+      const d: Draft = {
+        productName,
+        keywords,
+        price,
+        discount,
+        brand,
+        length,
+        width,
+        height,
+        weight,
+        showAdvanced,
+        customPrompt,
+        imageCount,
+        mainOnly,
+      };
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+    } catch {
+      /* sessionStorage unavailable/full — text draft is best-effort */
+    }
+  }, [productName, keywords, price, discount, brand, length, width, height, weight, showAdvanced, customPrompt, imageCount, mainOnly]);
+
+  // Photos separately (base64 → can be MBs): only re-serialize when they change,
+  // and degrade gracefully if it overflows the quota (text draft still survives).
+  useEffect(() => {
+    try {
+      if (basePhotos.length) sessionStorage.setItem(DRAFT_PHOTOS_KEY, JSON.stringify(basePhotos));
+      else sessionStorage.removeItem(DRAFT_PHOTOS_KEY);
+    } catch {
+      try {
+        sessionStorage.removeItem(DRAFT_PHOTOS_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [basePhotos]);
 
   // Restore the in-progress product when returning to this tab (navigation
   // unmounts the component, so the generated preview would otherwise be lost).
@@ -342,8 +426,27 @@ export function Workbench() {
     setDone(null);
     setError(null);
     setVideoPath(null); // new product → drop the previous video (effect clears storage)
+    // 重新开始 = a brand-new product → clear the typed form + persisted draft so the
+    // next one starts blank (dims fall back to the seller's configured defaults).
+    setProductName("");
+    setKeywords([]);
+    setKeywordInput("");
+    setBrand("");
+    setBasePhotos([]);
+    setCustomPrompt("");
+    setPrice(1990);
+    setDiscount(0);
+    setImageCount(3);
+    setMainOnly(false);
+    setShowAdvanced(false);
+    setLength(settings?.defaultLength ?? 20);
+    setWidth(settings?.defaultWidth ?? 15);
+    setHeight(settings?.defaultHeight ?? 5);
+    setWeight(settings?.defaultWeight ?? 0.3);
     try {
       sessionStorage.removeItem("wb:listingId");
+      sessionStorage.removeItem(DRAFT_KEY);
+      sessionStorage.removeItem(DRAFT_PHOTOS_KEY);
     } catch {
       /* ignore */
     }

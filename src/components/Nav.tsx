@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { Sparkles, Settings, History, Layers, Boxes, Sun, Moon, Wallet, Plus } from "lucide-react";
+import { Sparkles, Settings, History, Layers, Boxes, Sun, Moon, Wallet, Plus, HelpCircle } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 
@@ -101,7 +101,7 @@ function ThemeToggle() {
   );
 }
 
-export function Nav() {
+export function Nav({ onHelp }: { onHelp?: () => void }) {
   const pathname = usePathname();
   return (
     <header className="sticky top-0 z-30 -mx-4 mb-2 border-b border-slate-900/[0.07] bg-white/70 px-4 py-3.5 backdrop-blur-xl dark:border-white/[0.06] dark:bg-wb-ink/60 sm:-mx-6 sm:px-6">
@@ -142,6 +142,17 @@ export function Nav() {
             })}
           </nav>
           <BalanceChip />
+          {onHelp && (
+            <button
+              type="button"
+              onClick={onHelp}
+              title="使用指南"
+              aria-label="使用指南"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-slate-900/[0.08] bg-slate-900/[0.02] text-slate-500 transition hover:text-slate-900 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-slate-400 dark:hover:text-white"
+            >
+              <HelpCircle className="h-4 w-4" />
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </div>
