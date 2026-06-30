@@ -505,22 +505,68 @@ pub async fn subject_characteristics(
         crate::wb::categories::get_characteristics_locale(&st, &ctx, subject_id, "zh"),
     );
     let mut ru = ru_res.map_err(|e| e.to_string())?;
-    // Best-effort Chinese names; on any failure the editor just shows Russian.
+    // WB's machine zh (best-effort) — the LOWEST-priority display fallback.
     let zh_map: std::collections::HashMap<i64, String> = match zh_res {
         Ok(zh) => zh.into_iter().map(|c| (c.charc_id, c.name)).collect(),
         Err(_) => std::collections::HashMap::new(),
     };
+
+    // Self-calibrating Chinese names. Precedence: 人工种子 > 本地学习缓存(GPT) > WB机翻.
+    // WB's locale=zh mistranslates common attributes (корпус→"房屋", Питание→"食物",
+    // Описание→"说明书", Баркод→"产品最小的出库单位"…). We GPT-5.5-calibrate each NEW
+    // name ONCE and cache it locally, so steady state makes zero AI calls and only a
+    // brand-new category pays for its genuinely-new names. Display-only — publish uses
+    // the Russian name + charc_id, so none of this can change what gets listed.
+    //
+    // 1) read the durable learned cache (brief lock; never held across the await).
+    let cache: std::collections::HashMap<String, String> = {
+        let conn = st.db.lock().unwrap();
+        crate::db::charc_zh_all(&conn).unwrap_or_default()
+    };
+    // 2) names with NEITHER a human seed NOR a cache hit → the genuinely-new ones.
+    let mut need: Vec<(String, String)> = Vec::new();
+    let mut queued: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for c in &ru {
+        if corrected_charc_zh(&c.name).is_some() {
+            continue;
+        }
+        let key = norm_ru(&c.name);
+        if cache.contains_key(&key) || !queued.insert(key) {
+            continue;
+        }
+        let wb = zh_map.get(&c.charc_id).cloned().unwrap_or_default();
+        need.push((c.name.clone(), wb));
+    }
+    // 3) one gpt-5.5 batch for the new names (best-effort); persist to the cache.
+    let mut fresh: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if !need.is_empty() && !cfg.aurixel_api_key.is_empty() {
+        let got = crate::ai::translate::calibrate_charc_names(&st.http, &cfg, &need).await;
+        if !got.is_empty() {
+            let now = now_epoch();
+            let pairs: Vec<(String, String)> = got
+                .iter()
+                .map(|(ru_name, zh)| (norm_ru(ru_name), zh.clone()))
+                .collect();
+            {
+                let mut conn = st.db.lock().unwrap();
+                let _ = crate::db::charc_zh_put(&mut conn, &pairs, now);
+            }
+            for (ru_name, zh) in got {
+                fresh.insert(norm_ru(&ru_name), zh);
+            }
+        }
+    }
+    // 4) apply final precedence per characteristic.
     for c in &mut ru {
         if let Some(z) = zh_map.get(&c.charc_id) {
             if !z.trim().is_empty() {
                 c.name_zh = z.clone();
             }
         }
-        // Human correction wins over WB's machine zh: WB's locale=zh mistranslates
-        // a number of common attributes (корпус→"房屋", Питание→"食物",
-        // Описание→"说明书", Баркод→"产品最小的出库单位"…). Override by the canonical
-        // Russian name so the seller sees the right 中文. Display-only — publish uses
-        // the Russian name + charc_id, so this never changes what's listed.
+        let key = norm_ru(&c.name);
+        if let Some(z) = cache.get(&key).or_else(|| fresh.get(&key)) {
+            c.name_zh = z.clone();
+        }
         if let Some(fix) = corrected_charc_zh(&c.name) {
             c.name_zh = fix.to_string();
         }
@@ -528,12 +574,29 @@ pub async fn subject_characteristics(
     Ok(ru)
 }
 
-/// Correct the worst WB machine-translated Chinese characteristic names. Keyed by
-/// the canonical Russian name (unit suffix like "(кг)"/"(см)"/"(Вт)" stripped, then
-/// lowercased) so one entry covers every subject/category that uses the attribute.
+/// Canonical key for a characteristic's Russian name: drop a trailing unit suffix
+/// like "(кг)"/"(см)"/"(Вт)" then lowercase, so "Вес с упаковкой (кг)" and any
+/// subject that reuses the attribute share one cache entry.
+fn norm_ru(ru_name: &str) -> String {
+    ru_name.split('(').next().unwrap_or(ru_name).trim().to_lowercase()
+}
+
+/// Clear the learned ru→zh name cache so the next characteristics open re-calibrates
+/// via gpt-5.5. Escape hatch if a cached translation ever turns out wrong. Returns
+/// how many entries were dropped. (Human-seed corrections live in code, unaffected.)
+#[tauri::command]
+pub fn recalibrate_charc_names(state: State<Arc<AppState>>) -> Result<usize, String> {
+    let st = state.inner().clone();
+    let conn = st.db.lock().unwrap();
+    conn.execute("DELETE FROM charc_zh", [])
+        .map_err(|e| e.to_string())
+}
+
+/// Hand-verified corrections — the HIGHEST-priority layer (wins over GPT + WB),
+/// guaranteeing the most critical/common attributes are always right. Keyed by the
+/// canonical Russian name (see norm_ru) so one entry covers every category.
 fn corrected_charc_zh(ru_name: &str) -> Option<&'static str> {
-    let base = ru_name.split('(').next().unwrap_or(ru_name).trim().to_lowercase();
-    match base.as_str() {
+    match norm_ru(ru_name).as_str() {
         // — clear mistranslations —
         "материал корпуса" => Some("外壳/机身材料"),
         "питание" => Some("供电方式"),

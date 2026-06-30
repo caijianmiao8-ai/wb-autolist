@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS sync_meta (
   detail         TEXT NOT NULL DEFAULT '',
   cooldown_until INTEGER NOT NULL DEFAULT 0
 );
+-- Learned ru→zh corrections for characteristic NAMES (GPT-calibrated once per new
+-- name, then reused forever). DURABLE: universal across accounts + expensive to
+-- rebuild, so it is deliberately EXCLUDED from ensure_account()'s wipe and from
+-- migrate()'s version-bump drop. Never add it to either list.
+CREATE TABLE IF NOT EXISTS charc_zh (
+  ru_norm    TEXT PRIMARY KEY,
+  zh         TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'ai',
+  updated_at INTEGER NOT NULL DEFAULT 0
+);
 "#;
 
 /// Bump on any schema change. The cache is DISPOSABLE: on an upgrade we drop +
@@ -101,6 +111,38 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
         conn.execute_batch(&format!("PRAGMA user_version = {};", SCHEMA_VERSION))?;
     }
+    Ok(())
+}
+
+/// All learned ru→zh name corrections (small table, read whole into a map).
+pub fn charc_zh_all(conn: &Connection) -> Result<std::collections::HashMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT ru_norm, zh FROM charc_zh")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut m = std::collections::HashMap::new();
+    for row in rows.flatten() {
+        m.insert(row.0, row.1);
+    }
+    Ok(m)
+}
+
+/// Upsert GPT-calibrated ru→zh name corrections (ru_norm already normalized).
+pub fn charc_zh_put(conn: &mut Connection, pairs: &[(String, String)], now: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO charc_zh (ru_norm, zh, source, updated_at) VALUES (?1, ?2, 'ai', ?3)
+             ON CONFLICT(ru_norm) DO UPDATE SET zh=excluded.zh, updated_at=excluded.updated_at",
+        )?;
+        for (k, v) in pairs {
+            if k.trim().is_empty() || v.trim().is_empty() {
+                continue;
+            }
+            stmt.execute(params![k, v, now])?;
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 

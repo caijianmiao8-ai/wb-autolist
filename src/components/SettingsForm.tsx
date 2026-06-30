@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Download,
   Video,
+  Languages,
 } from "lucide-react";
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
@@ -489,6 +490,9 @@ export function SettingsForm() {
               {/* 配音引擎(视频配音用) */}
               <DubEngineRow />
 
+              {/* 中文参数名校准 */}
+              <CharcZhRow />
+
               {/* 显示密钥 */}
               <div className="border-t border-slate-900/[0.06] py-3 dark:border-white/[0.06]">
                 <button
@@ -576,6 +580,43 @@ function Row({
 // 配音引擎(Demucs/voice-select 模型)：测试 + 预下载。下载在后端跑,设置页挂载时
 // 查 dub_engine_status + 订阅 dub:engine,切 tab 回来进度还在;防呆=下载中按钮禁用、
 // 二次确认、可取消。
+// 中文参数名校准：参数名中文由 gpt-5.5 校准一次后本地缓存(WB 自带中文常翻错),后续
+// 不再调用,新类目才会调用。若发现某个译名不对,点「重新校准」清缓存,下次打开重译。
+function CharcZhRow() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  async function recal() {
+    setBusy(true);
+    setMsg("");
+    try {
+      const n = await api.recalibrateCharcNames();
+      setMsg(`已清空 ${n} 条缓存。下次打开「全部商品参数」会用 GPT 重新校准中文名。`);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="border-t border-slate-900/[0.06] py-3 dark:border-white/[0.06]">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[13px] text-slate-800 dark:text-slate-100">
+            <Languages className="h-3.5 w-3.5 text-wb-pink" /> 中文参数名校准
+          </div>
+          <div className="mt-0.5 text-[10.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+            参数名中文由 GPT 自动校准并本地缓存（WB 自带中文常翻错），新类目才会再调用。若某个译名不对，可清缓存重译。
+          </div>
+        </div>
+        <button className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={recal} disabled={busy}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "重新校准"}
+        </button>
+      </div>
+      {msg && <p className="mt-2 text-[11px] text-emerald-600 dark:text-emerald-400">{msg}</p>}
+    </div>
+  );
+}
+
 function DubEngineRow() {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [pre, setPre] = useState<DubPreflight | null>(null);

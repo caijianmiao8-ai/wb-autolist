@@ -5,3 +5,4 @@ pub mod copy;
 pub mod excel;
 pub mod image;
 pub mod organize;
+pub mod translate;

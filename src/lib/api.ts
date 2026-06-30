@@ -153,6 +153,8 @@ export const api = {
   /** Full characteristics dictionary for a subject. */
   subjectCharacteristics: (subjectId: number) =>
     invoke<WbCharacteristic[]>("subject_characteristics", { subjectId }),
+  /** Clear the learned ru→zh characteristic-name cache (next open re-calibrates). */
+  recalibrateCharcNames: () => invoke<number>("recalibrate_charc_names"),
   /** AI-predicted characteristics [{id,value}] for a draft (editor pre-fill). */
   predictCharacteristics: (id: string, subjectId: number) =>
     invoke<{ id: number; value: unknown }[]>("predict_characteristics", { id, subjectId }),

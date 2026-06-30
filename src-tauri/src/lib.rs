@@ -63,6 +63,7 @@ pub fn run() {
             commands::read_file_b64,
             commands::search_subjects,
             commands::subject_characteristics,
+            commands::recalibrate_charc_names,
             commands::predict_characteristics,
             commands::update_dimensions,
             commands::wb_colors,
