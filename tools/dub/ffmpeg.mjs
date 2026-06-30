@@ -308,26 +308,43 @@ export function makeFf(cfg = {}) {
    * `subtitles=` filter never sees a Windows drive colon (which it mis-parses).
    */
   async function burnSubtitles(inVideo, srtPath, outVideo, opts = {}) {
-    const crf = opts.crf ?? 20;
+    const crf = opts.crf ?? 23;
     const fontSize = opts.fontSize ?? 18;
     // libass force_style: white fill, black outline, bottom-centered, no shadow.
     const style = opts.force_style
       || `FontSize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=40`;
     const dir = dirname(srtPath);
     const rel = basename(srtPath);
-    // Pick an H.264 encoder that actually EXISTS in this ffmpeg. The bundled
-    // Windows build is BtbN win64-LGPL, which has NO libx264 (GPL) — it ships
-    // libopenh264 instead. Probe -encoders so the burn works on both the dev
-    // (x264) and bundled (openh264) ffmpeg instead of silently failing.
-    let venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf)];
+
+    // Target bitrate = the SOURCE video's own bitrate, so re-encoding to burn subs
+    // keeps the file ≈ original size. (A fixed 8 Mbps turned an 18MB clip into 84MB.)
+    // Probe the video stream, else the container; clamp to sane bounds.
+    let kbps = 0;
+    try {
+      const { stdout } = await run(ffprobeBin, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=bit_rate', '-of', 'default=nw=1:nk=1', inVideo]);
+      kbps = Math.round((parseInt(String(stdout).trim(), 10) || 0) / 1000);
+      if (!kbps) {
+        const { stdout: f } = await run(ffprobeBin, ['-v', 'error', '-show_entries', 'format=bit_rate', '-of', 'default=nw=1:nk=1', inVideo]);
+        kbps = Math.round((parseInt(String(f).trim(), 10) || 0) / 1000);
+      }
+    } catch {
+      /* unprobeable → fall back below */
+    }
+    kbps = Math.min(Math.max(kbps || 3500, 1200), 8000);
+
+    // Pick an H.264 encoder that EXISTS in this ffmpeg. The bundled Windows build is
+    // BtbN win64-LGPL → NO libx264 (GPL); it ships libopenh264. Probe -encoders.
+    let venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-maxrate', `${Math.round(kbps * 1.3)}k`, '-bufsize', `${kbps * 2}k`];
     try {
       const { stdout } = await run(ffmpegBin, ['-hide_banner', '-encoders']);
       if (/\blibx264\b/.test(stdout)) {
-        venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf)];
+        // quality-based, but cap the peak so it never balloons past ≈ source.
+        venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-maxrate', `${Math.round(kbps * 1.3)}k`, '-bufsize', `${kbps * 2}k`];
       } else if (/\blibopenh264\b/.test(stdout)) {
-        venc = ['-c:v', 'libopenh264', '-b:v', opts.bitrate || '8000k'];
+        // bitrate-controlled: match source so size stays ≈ original.
+        venc = ['-c:v', 'libopenh264', '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`];
       } else {
-        venc = ['-c:v', 'mpeg4', '-q:v', '4']; // last-resort, always present
+        venc = ['-c:v', 'mpeg4', '-b:v', `${kbps}k`]; // last-resort, always present
       }
     } catch {
       /* keep libx264 default; if it's missing the run() error will surface */
