@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 
 export const FFMPEG = process.env.FFMPEG_PATH || join(homedir(), '.local/bin/ffmpeg');
 export const FFPROBE = process.env.FFPROBE_PATH || join(homedir(), '.local/bin/ffprobe');
@@ -26,11 +26,13 @@ export const FFPROBE = process.env.FFPROBE_PATH || join(homedir(), '.local/bin/f
 // the caller catches the reject and degrades gracefully. Progress output (uv's
 // download bar, demucs ticks) resets the timer, so a slow-but-moving download is
 // never killed. 0/undefined = no watchdog (ffmpeg ops are fast).
-export function run(bin, args, { onLog, idleMs = 0 } = {}) {
+export function run(bin, args, { onLog, idleMs = 0, cwd } = {}) {
   return new Promise((resolve, reject) => {
     // windowsHide: don't pop a console window for each ffmpeg/uvx/python child
     // spawned on Windows (alarming for GUI users).
-    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    // cwd: run from a dir so a relative input path can be used — needed for the
+    // `subtitles=` filter, whose Windows path parsing chokes on drive colons.
+    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, cwd });
     let out = '';
     let err = '';
     let timer = null;
@@ -299,6 +301,36 @@ export function makeFf(cfg = {}) {
   }
 
   /**
+   * Burn an SRT subtitle file INTO the video (hardsub). WB's player shows no
+   * separate subtitle track, so for a product feed (often autoplayed MUTED) the
+   * Russian text must be baked into the pixels. Re-encodes video (libass burn);
+   * audio is copied. Runs from the SRT's own dir with a RELATIVE filename so the
+   * `subtitles=` filter never sees a Windows drive colon (which it mis-parses).
+   */
+  async function burnSubtitles(inVideo, srtPath, outVideo, opts = {}) {
+    const crf = opts.crf ?? 20;
+    const fontSize = opts.fontSize ?? 18;
+    // libass force_style: white fill, black outline, bottom-centered, no shadow.
+    const style = opts.force_style
+      || `FontSize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=40`;
+    const dir = dirname(srtPath);
+    const rel = basename(srtPath);
+    await run(
+      ffmpegBin,
+      [
+        '-y', '-i', inVideo,
+        '-vf', `subtitles=${rel}:force_style='${style}'`,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-pix_fmt', 'yuv420p',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        outVideo,
+      ],
+      { cwd: dir, idleMs: opts.idleMs || 0 }
+    );
+    return outVideo;
+  }
+
+  /**
    * Extract a clean single-speaker SAMPLE for voice enrollment: concatenate the
    * given time ranges from the source media (audio track) into one mp3, capped
    * at maxDur seconds. Used to clone each diarized speaker's voice.
@@ -543,6 +575,7 @@ export function makeFf(cfg = {}) {
     fitAudioToDuration,
     assembleTimeline,
     muxReplaceAudio,
+    burnSubtitles,
     concatAudio,
     extractSpeakerSample,
     normalizeLoudness,

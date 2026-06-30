@@ -260,6 +260,11 @@ export function loadConfig(opts = {}) {
     // uvx/torch download): clone enrolls from raw audio and there's no background
     // M&E. The app's "快速/标准" presets set this off so only "高质量" pays for Demucs.
     USE_STEMS: String(env('USE_STEMS', 'true')).toLowerCase() !== 'false',
+    // Burn the Russian translation into the video as hardsubs (WB feed autoplays
+    // muted → subtitles keep the pitch legible). Free (reuses ruSegments); costs one
+    // video re-encode. Default on; the app toggles it per-dub via SUBTITLES.
+    SUBTITLES: String(env('SUBTITLES', 'true')).toLowerCase() !== 'false',
+    SUBTITLE_FONT_SIZE: Number(env('SUBTITLE_FONT_SIZE', '18')),
     // Stall watchdog for the uvx steps (Demucs/voice-select): if the first-run
     // model download (or processing) emits NO output for this long, kill it and
     // degrade gracefully instead of hanging the dub. Generous — a moving download

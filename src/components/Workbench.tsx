@@ -2200,6 +2200,9 @@ function VideoPanel({
   // doesn't show the alarming "引擎未生效 / 去下载引擎" banner (downloading won't help).
   const [cloneNote, setCloneNote] = useState<string | null>(null);
   const [preset, setPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
+  // 烧入俄语字幕(默认开):WB 信息流常静音自动播放,字幕保证看懂。复用配音已有翻译,
+  // 几乎零额外成本(只多一次视频重编码)。
+  const [subtitles, setSubtitles] = useState(true);
   const [engineReady, setEngineReady] = useState(false);
   const canceling = useRef(false);
   const done = !!listing.videoRu;
@@ -2273,6 +2276,7 @@ function VideoPanel({
       const out = await api.dubStart({
         inputPath: videoPath,
         voiceMode: "clone",
+        subtitles,
         ...dubPresetOptions(preset),
       });
       onUpdate(await api.setListingVideo(listing.id, out));
@@ -2353,6 +2357,15 @@ function VideoPanel({
               </button>
             ))}
           </div>
+          <label className="flex cursor-pointer items-center gap-2 px-0.5 text-[11px] text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={subtitles}
+              onChange={(e) => setSubtitles(e.target.checked)}
+              className="h-3.5 w-3.5 accent-wb-pink"
+            />
+            烧入俄语字幕（信息流静音播放也能看懂；几乎零成本）
+          </label>
           <button
             className="btn-primary w-full py-2 text-xs"
             onClick={dub}

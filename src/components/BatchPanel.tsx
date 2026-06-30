@@ -98,6 +98,7 @@ export function BatchPanel() {
   // Calm note for a per-speaker clone fallback (preset voice) — NOT an engine failure.
   const [dubCloneNote, setDubCloneNote] = useState<string | null>(null);
   const [dubPreset, setDubPreset] = useState<DubPreset>(DUB_PRESET_DEFAULT);
+  const [dubSubtitles, setDubSubtitles] = useState(true); // 烧入俄语字幕(默认开)
   const dubCancelRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -451,6 +452,7 @@ export function BatchPanel() {
           const out = await api.dubStart({
             inputPath: t.path,
             voiceMode: "clone",
+            subtitles: dubSubtitles,
             ...dubPresetOptions(dubPreset),
           });
           const updated = await api.setListingVideo(t.id, out);
@@ -568,6 +570,8 @@ export function BatchPanel() {
             hasVideos={validRows.some((r) => r.videoPath)}
             dubPreset={dubPreset}
             setDubPreset={setDubPreset}
+            dubSubtitles={dubSubtitles}
+            setDubSubtitles={setDubSubtitles}
           />
         )}
         {step === 2 && (
@@ -834,6 +838,8 @@ function GenerateStep({
   hasVideos,
   dubPreset,
   setDubPreset,
+  dubSubtitles,
+  setDubSubtitles,
 }: {
   jobs: Job[];
   rows: Row[];
@@ -845,6 +851,8 @@ function GenerateStep({
   hasVideos: boolean;
   dubPreset: DubPreset;
   setDubPreset: (p: DubPreset) => void;
+  dubSubtitles: boolean;
+  setDubSubtitles: (v: boolean) => void;
 }) {
   const finishedCount = jobs.filter((j) => j.status === "done" || j.status === "error").length;
   const imgs = rows.reduce((n, r) => n + (r.basePhotos.length ? r.basePhotos.length : 3), 0);
@@ -899,6 +907,15 @@ function GenerateStep({
           <p className="mt-1.5 text-[10.5px] text-slate-400">
             {DUB_PRESETS.find((p) => p.id === dubPreset)?.hint}
           </p>
+          <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={dubSubtitles}
+              onChange={(e) => setDubSubtitles(e.target.checked)}
+              className="h-3.5 w-3.5 accent-wb-pink"
+            />
+            烧入俄语字幕（信息流静音播放也能看懂）
+          </label>
         </div>
       )}
 

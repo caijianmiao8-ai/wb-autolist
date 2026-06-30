@@ -278,6 +278,8 @@ export interface DubOptions {
   keepBackground?: boolean;
   gateSilence?: boolean;
   diarize?: boolean;
+  /** burn Russian subtitles into the video (default true) */
+  subtitles?: boolean;
   /** 0..1 — duck the original audio under the dub (0 = full replace) */
   keepOriginalAudio?: number;
 }

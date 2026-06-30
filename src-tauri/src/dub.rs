@@ -70,6 +70,9 @@ pub struct DubOptions {
     pub gate_silence: Option<bool>,
     #[serde(default)]
     pub diarize: Option<bool>,
+    /// 烧入俄语字幕(默认 true;WB 信息流常静音播放)
+    #[serde(default)]
+    pub subtitles: Option<bool>,
     /// 原声混入比例 0..1(0=完全替换,默认)
     #[serde(default)]
     pub keep_original_audio: Option<f64>,
@@ -464,6 +467,10 @@ pub async fn dub_start(
     }
     if !iso {
         args.push("--no-iso".into());
+    }
+    // Subtitles default ON (WB feed autoplays muted); only emit the flag to disable.
+    if options.subtitles == Some(false) {
+        args.push("--no-subtitles".into());
     }
     if !keep_background {
         args.push("--no-background".into());

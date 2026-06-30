@@ -29,6 +29,29 @@ import { makeTts } from './tts.mjs';
 import { pickTranslator } from './factory.mjs';
 import { makeFf } from './ffmpeg.mjs';
 
+/** SRT timestamp "HH:MM:SS,mmm" from seconds. */
+function srtTime(t) {
+  const ms = Math.max(0, Math.round((Number(t) || 0) * 1000));
+  const p = (n, w = 2) => String(n).padStart(w, '0');
+  return `${p(Math.floor(ms / 3600000))}:${p(Math.floor((ms % 3600000) / 60000))}:${p(Math.floor((ms % 60000) / 1000))},${p(ms % 1000, 3)}`;
+}
+
+/** Build an SRT from translated segments [{start,end,text}] (re-numbered, skips empty). */
+function buildSrt(segs) {
+  let n = 0;
+  const out = [];
+  for (const seg of segs || []) {
+    const text = String(seg.text || '').trim();
+    if (!text) continue;
+    let s = Number(seg.start) || 0;
+    let e = Number(seg.end);
+    if (!(e > s)) e = s + 1.5; // guard degenerate spans
+    n++;
+    out.push(String(n), `${srtTime(s)} --> ${srtTime(e)}`, text, '');
+  }
+  return out.join('\n');
+}
+
 function now() {
   return Date.now();
 }
@@ -793,6 +816,24 @@ export async function runPipeline(cfg, args) {
   await stageC('mux', async () => {
     await ff.muxReplaceAudio(input, muxTrack, partialOut, { keepOriginal: keepOriginalAudio, background: bgPath, bgVolume: cfg.BG_VOLUME, duck: cfg.BG_DUCK });
   });
+
+  // 5d) Optional: burn the Russian translation INTO the video as subtitles. Reuses
+  // ruSegments → no extra API cost; WB's feed often autoplays MUTED so hardsubs keep
+  // the pitch legible. Re-encodes video once (audio copied). Graceful on failure.
+  if (cfg.SUBTITLES && !dryRun && ruSegments.length) {
+    await stageC('subtitles', async () => {
+      try {
+        const srtPath = join(workDir, 'subs.srt');
+        await writeFile(srtPath, buildSrt(ruSegments));
+        const subbed = `${out}.subbed.mp4`;
+        await ff.burnSubtitles(partialOut, srtPath, subbed, { idleMs: cfg.STEP_IDLE_MS, fontSize: cfg.SUBTITLE_FONT_SIZE });
+        await rm(partialOut, { force: true });
+        await rename(subbed, partialOut); // keep downstream verify/rename path intact
+      } catch (e) {
+        capture({ stage: 'subtitles', ok: true, ms: 0, warn: `subtitle burn skipped (${e.message}) — 成片无字幕` });
+      }
+    });
+  }
 
   // 6) correctness gate: output duration within ~150ms of source video
   const { outDur, drift } = await stageC('verify', async () => {
