@@ -50,6 +50,11 @@ interface SettingsState {
 // overflow on photos never costs the text fields. Session-scoped (clears on quit).
 const DRAFT_KEY = "wb:draft";
 const DRAFT_PHOTOS_KEY = "wb:draftPhotos";
+// A single-product dub runs in the BACKEND (one at a time) and outlives a tab
+// switch. Persist {id} while it runs so a remounted VideoPanel can re-attach to
+// its progress/result events instead of looking idle (and re-dubbing into the
+// still-occupied slot, which read as "配音失败").
+const DUBBING_KEY = "wb:dubbing";
 type Draft = {
   productName?: string;
   keywords?: string[];
@@ -2235,6 +2240,87 @@ function VideoPanel({
     api.dubEngineStatus().then((s) => setEngineReady(s.ready)).catch(() => {});
   }, []);
 
+  // Degrade/clone/subtitle notes accumulate across progress events.
+  const lostRef = useRef<Set<string>>(new Set());
+  // Map a dub:progress `warn` → the right calm/alarm note. Shared by the live dub()
+  // and the re-attach effect so both behave identically.
+  function applyWarn(w?: string) {
+    if (!w) return;
+    const lost = lostRef.current;
+    if (/stem|background|raw audio|voice-select|single renders|stall/i.test(w)) {
+      if (/stem|background|raw audio/i.test(w)) lost.add("未保留背景音乐");
+      if (/voice-select|single renders/i.test(w)) lost.add("音色一致性略降");
+      setNotice(
+        `配音引擎未生效，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，到「设置→配音引擎」先点「测试」确认，再用「高质量」重配。`
+      );
+      let inner = w;
+      const k = inner.indexOf("skipped (");
+      if (k >= 0) inner = inner.slice(k + "skipped (".length);
+      inner = inner.replace(/\)\s*—\s*raw audio[\s\S]*$/, "").trim();
+      setDetail((inner || w).slice(0, 4000));
+      return;
+    }
+    if (/preset voice|couldn't clone/i.test(w)) {
+      setCloneNote(
+        "检测到次要说话人，但其清晰语音不足，无法克隆，已用预设音色顶替（主播仍为克隆原声）。若此视频其实只有一位讲解人，告诉我即可改为全程同一音色。"
+      );
+      return;
+    }
+    if (/subtitle/i.test(w)) {
+      setCloneNote("俄语字幕未能烧入（成片已生成、配音正常，仅缺字幕）。可重试一次；若反复失败请反馈。");
+      return;
+    }
+  }
+
+  // Re-attach to a dub that's still running in the backend after a tab switch
+  // (the component unmounts but the node process keeps going). Show 配音中… and
+  // recover the result via the dub:done / dub:progress events — instead of looking
+  // idle and letting the user re-dub into the still-occupied slot ("配音失败").
+  useEffect(() => {
+    if (typeof window === "undefined" || done) return;
+    let running = false;
+    try {
+      const raw = sessionStorage.getItem(DUBBING_KEY);
+      running = !!raw && JSON.parse(raw)?.id === listing.id;
+    } catch {
+      running = false;
+    }
+    if (!running) return;
+    setBusy(true);
+    setStage("配音中…");
+    setErr(null);
+    lostRef.current = new Set();
+    const clearFlag = () => {
+      try {
+        sessionStorage.removeItem(DUBBING_KEY);
+      } catch {
+        /* ignore */
+      }
+    };
+    const uns: Array<() => void> = [];
+    listen<{ stage: string; warn?: string; error?: string }>("dub:progress", (e) => {
+      const p = e.payload;
+      setStage(p.stage);
+      if (p.stage === "failed") {
+        setErr(p.error || "配音失败");
+        setBusy(false);
+        clearFlag();
+      } else if (p.stage === "cancelled") {
+        setBusy(false);
+        clearFlag();
+      } else applyWarn(p.warn);
+    }).then((u) => uns.push(u));
+    listen<{ out?: string }>("dub:done", (e) => {
+      const out = e.payload?.out;
+      if (out) api.setListingVideo(listing.id, out).then(onUpdate).catch(() => {});
+      setBusy(false);
+      setStage("");
+      clearFlag();
+    }).then((u) => uns.push(u));
+    return () => uns.forEach((u) => u());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listing.id, done]);
+
   function cancel() {
     canceling.current = true;
     setStage("正在取消…");
@@ -2249,7 +2335,7 @@ function VideoPanel({
     setCloneNote(null);
     canceling.current = false;
     setStage("自检…");
-    const lost = new Set<string>();
+    lostRef.current = new Set();
     let un: (() => void) | null = null;
     try {
       const pf = await api.dubPreflight();
@@ -2261,45 +2347,16 @@ function VideoPanel({
         if (!pf.cliFound) miss.push("配音脚本");
         throw new Error("运行环境未就绪:缺 " + miss.join("、"));
       }
-      // Surface auto-degrade THE MOMENT it happens (don't wait for completion), and
-      // keep it shown — so the user knows the engine timed out / quality dropped.
+      // Mark a dub in-flight so a tab switch can re-attach (see the effect above).
+      try {
+        sessionStorage.setItem(DUBBING_KEY, JSON.stringify({ id: listing.id }));
+      } catch {
+        /* ignore */
+      }
+      // Surface auto-degrade THE MOMENT it happens (don't wait for completion).
       un = await listen<{ stage: string; warn?: string }>("dub:progress", (e) => {
         setStage(e.payload.stage);
-        const w = e.payload.warn;
-        if (!w) return;
-        // (1) GENUINE engine degrade — background/voice-select dropped, raw audio,
-        //     or a stall. Downloading the engine / retrying can help → alarm + advice.
-        if (/stem|background|raw audio|voice-select|single renders|stall/i.test(w)) {
-          if (/stem|background|raw audio/i.test(w)) lost.add("未保留背景音乐");
-          if (/voice-select|single renders/i.test(w)) lost.add("音色一致性略降");
-          setNotice(
-            `配音引擎未生效，已自动降级（${[...lost].join("、") || "降级出片"}）。成片仍会生成；如需最佳效果，到「设置→配音引擎」先点「测试」确认，再用「高质量」重配。`
-          );
-          // Full captured reason (uvx -v + uv/python self-test) — strip the
-          // "skipped (" wrapper and the " — raw audio…" suffix. Rendered scrollable.
-          let inner = w;
-          const k = inner.indexOf("skipped (");
-          if (k >= 0) inner = inner.slice(k + "skipped (".length);
-          inner = inner.replace(/\)\s*—\s*raw audio[\s\S]*$/, "").trim();
-          setDetail((inner || w).slice(0, 4000));
-          return;
-        }
-        // (2) Per-speaker CLONE fallback (a secondary speaker used a preset voice).
-        //     NOT an engine failure; downloading nothing fixes "too little source
-        //     audio" → calm, accurate note, no scary banner / no download advice.
-        if (/preset voice|couldn't clone/i.test(w)) {
-          setCloneNote(
-            "检测到次要说话人，但其清晰语音不足，无法克隆，已用预设音色顶替（主播仍为克隆原声）。若此视频其实只有一位讲解人，告诉我即可改为全程同一音色。"
-          );
-          return;
-        }
-        // (3) Subtitles requested but couldn't burn — surface it (was silent before).
-        if (/subtitle/i.test(w)) {
-          setCloneNote("俄语字幕未能烧入（成片已生成、配音正常，仅缺字幕）。可重试一次；若反复失败请反馈。");
-          return;
-        }
-        // (4) "[voice-folded]" — a minor speaker was folded into the main cloned
-        //     voice (desired for single-narrator videos). No UI needed.
+        applyWarn(e.payload.warn);
       });
       const out = await api.dubStart({
         inputPath: videoPath,
@@ -2315,6 +2372,11 @@ function VideoPanel({
       setBusy(false);
       setStage("");
       canceling.current = false;
+      try {
+        sessionStorage.removeItem(DUBBING_KEY);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
