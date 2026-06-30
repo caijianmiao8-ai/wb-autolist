@@ -506,16 +506,47 @@ pub async fn subject_characteristics(
     );
     let mut ru = ru_res.map_err(|e| e.to_string())?;
     // Best-effort Chinese names; on any failure the editor just shows Russian.
-    if let Ok(zh) = zh_res {
-        let zh_map: std::collections::HashMap<i64, String> =
-            zh.into_iter().map(|c| (c.charc_id, c.name)).collect();
-        for c in &mut ru {
-            if let Some(z) = zh_map.get(&c.charc_id) {
+    let zh_map: std::collections::HashMap<i64, String> = match zh_res {
+        Ok(zh) => zh.into_iter().map(|c| (c.charc_id, c.name)).collect(),
+        Err(_) => std::collections::HashMap::new(),
+    };
+    for c in &mut ru {
+        if let Some(z) = zh_map.get(&c.charc_id) {
+            if !z.trim().is_empty() {
                 c.name_zh = z.clone();
             }
         }
+        // Human correction wins over WB's machine zh: WB's locale=zh mistranslates
+        // a number of common attributes (корпус→"房屋", Питание→"食物",
+        // Описание→"说明书", Баркод→"产品最小的出库单位"…). Override by the canonical
+        // Russian name so the seller sees the right 中文. Display-only — publish uses
+        // the Russian name + charc_id, so this never changes what's listed.
+        if let Some(fix) = corrected_charc_zh(&c.name) {
+            c.name_zh = fix.to_string();
+        }
     }
     Ok(ru)
+}
+
+/// Correct the worst WB machine-translated Chinese characteristic names. Keyed by
+/// the canonical Russian name (unit suffix like "(кг)"/"(см)"/"(Вт)" stripped, then
+/// lowercased) so one entry covers every subject/category that uses the attribute.
+fn corrected_charc_zh(ru_name: &str) -> Option<&'static str> {
+    let base = ru_name.split('(').next().unwrap_or(ru_name).trim().to_lowercase();
+    match base.as_str() {
+        // — clear mistranslations —
+        "материал корпуса" => Some("外壳/机身材料"),
+        "питание" => Some("供电方式"),
+        "описание" => Some("商品描述"),
+        "баркод" => Some("条形码"),
+        // — imprecise → clearer —
+        "модель" => Some("型号"),
+        "форма выпечки" => Some("烘焙形状"),
+        "комплектация" => Some("包装清单/随附配件"),
+        "вес с упаковкой" => Some("含包装重量（毛重）"),
+        "вес без упаковки" => Some("不含包装重量（净重）"),
+        _ => None,
+    }
 }
 
 /// Update a draft's package dimensions (cm) + gross weight (kg) — editable at the
