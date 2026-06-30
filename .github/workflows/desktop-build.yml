@@ -87,6 +87,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+          # Point the updater's generic windows-x86_64 entry at the NSIS .exe (what
+          # the user installs) — not the MSI — so a one-click update cleanly REPLACES
+          # the existing per-user install instead of installing a parallel copy.
+          updaterJsonPreferNsis: true
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: WB AutoList ${{ github.ref_name }}
           releaseBody: |
