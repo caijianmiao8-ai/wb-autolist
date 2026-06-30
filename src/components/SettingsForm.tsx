@@ -487,6 +487,9 @@ export function SettingsForm() {
                 </div>
               )}
 
+              {/* 应用更新 */}
+              <AppUpdateRow />
+
               {/* 配音引擎(视频配音用) */}
               <DubEngineRow />
 
@@ -580,6 +583,59 @@ function Row({
 // 配音引擎(Demucs/voice-select 模型)：测试 + 预下载。下载在后端跑,设置页挂载时
 // 查 dub_engine_status + 订阅 dub:engine,切 tab 回来进度还在;防呆=下载中按钮禁用、
 // 二次确认、可取消。
+// 应用更新：显示当前版本 + 手动「检查更新」(启动时也会自动检查并在顶栏提示)。
+function AppUpdateRow() {
+  const [ver, setVer] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pct, setPct] = useState<number | null>(null);
+  const [msg, setMsg] = useState("");
+  useEffect(() => {
+    import("@/lib/updater").then((m) => m.appVersion().then(setVer)).catch(() => {});
+  }, []);
+  async function check() {
+    setBusy(true);
+    setMsg("");
+    try {
+      const { checkForUpdate, runUpdate } = await import("@/lib/updater");
+      const info = await checkForUpdate();
+      if (!info) {
+        setMsg("已是最新版本");
+        return;
+      }
+      setMsg(`发现新版本 v${info.version}，开始下载…`);
+      setPct(0);
+      await runUpdate(setPct); // relaunches on success
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "检查失败");
+      setPct(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="border-t border-slate-900/[0.06] py-3 dark:border-white/[0.06]">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[13px] text-slate-800 dark:text-slate-100">
+            <Download className="h-3.5 w-3.5 text-wb-pink" /> 应用更新
+          </div>
+          <div className="mt-0.5 text-[10.5px] text-slate-500 dark:text-slate-400">
+            当前版本 {ver ? `v${ver}` : "—"} · 有新版会在顶栏提示，一键下载安装。
+          </div>
+        </div>
+        <button className="btn-ghost shrink-0 px-3 py-1.5 text-xs" onClick={check} disabled={busy}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "检查更新"}
+        </button>
+      </div>
+      {(msg || pct != null) && (
+        <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+          {pct != null ? `下载安装中 ${pct}%…（完成后自动重启）` : msg}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // 中文参数名校准：参数名中文由 gpt-5.5 校准一次后本地缓存(WB 自带中文常翻错),后续
 // 不再调用,新类目才会调用。若发现某个译名不对,点「重新校准」清缓存,下次打开重译。
 function CharcZhRow() {

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Nav } from "./Nav";
 import { SetupWizard } from "./SetupWizard";
 import { GuideOverlay } from "./GuideOverlay";
+import { UpdateBanner } from "./UpdateBanner";
 import { EnvBanner } from "./EnvBadge";
 import { api } from "@/lib/api";
 
@@ -81,6 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // layout (the Workbench) renders `h-full` and scrolls its own panels
     // internally; taller legacy pages just scroll within <main> as before.
     <div className="flex h-screen flex-col overflow-hidden">
+      <UpdateBanner />
       <EnvBanner dryRun={env.dryRun} sandbox={env.sandbox} />
       <div className="mx-auto flex w-full min-h-0 max-w-7xl flex-1 flex-col px-4 sm:px-6">
         <Nav onHelp={() => setShowGuide(true)} />
