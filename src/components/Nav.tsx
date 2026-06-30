@@ -48,6 +48,7 @@ function BalanceChip() {
   return (
     <button
       type="button"
+      data-tour="balance"
       onClick={() => api.openUrl(AURIXEL_TOPUP_URL)}
       title="Aurixel 余额（点击充值）"
       className={clsx(
@@ -128,6 +129,7 @@ export function Nav({ onHelp }: { onHelp?: () => void }) {
                 <Link
                   key={href}
                   href={href}
+                  data-tour={`nav-${href === "/" ? "home" : href.slice(1)}`}
                   className={clsx(
                     "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all duration-200",
                     active
@@ -145,6 +147,7 @@ export function Nav({ onHelp }: { onHelp?: () => void }) {
           {onHelp && (
             <button
               type="button"
+              data-tour="help"
               onClick={onHelp}
               title="使用指南"
               aria-label="使用指南"

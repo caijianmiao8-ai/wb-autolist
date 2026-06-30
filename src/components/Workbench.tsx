@@ -737,7 +737,7 @@ interface InputFormProps {
 
 function InputForm(p: InputFormProps) {
   return (
-    <fieldset disabled={p.disabled} className="space-y-4 disabled:opacity-60">
+    <fieldset disabled={p.disabled} data-tour="form" className="space-y-4 disabled:opacity-60">
       <div className="flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
         <Tag className="h-4 w-4 text-wb-pink" /> 商品信息
       </div>
@@ -1670,7 +1670,7 @@ function PrimaryAction({
   if (step === "input") {
     return (
       <>
-        <button className="btn-primary w-full" onClick={onGenerate}>
+        <button className="btn-primary w-full" data-tour="generate" onClick={onGenerate}>
           <Sparkles className="h-4 w-4" /> 一键生成
         </button>
         <p className="mt-2 text-center text-[11px] text-slate-400">
