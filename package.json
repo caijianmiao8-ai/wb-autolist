@@ -1,6 +1,6 @@
 {
   "name": "wb-autolist",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "private": true,
   "description": "Wildberries 商品自动化上架工作流 — 输入商品名+关键字，AI 生成主图与宣传图并一键上架（Tauri + Rust 桌面应用）",
   "author": "WB AutoList",
