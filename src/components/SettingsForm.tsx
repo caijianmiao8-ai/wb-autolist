@@ -212,6 +212,11 @@ export function SettingsForm() {
             </button>
           </div>
 
+          {/* 应用更新（醒目置顶，不再埋在高级里） */}
+          <div className="card mb-4 px-4">
+            <AppUpdateRow />
+          </div>
+
           {/* ════ 常用 ════ */}
           <div className="mb-1 px-1 text-[10.5px] uppercase tracking-[0.05em] text-slate-400">常用</div>
           <div className="card mb-4 px-4">
@@ -488,8 +493,6 @@ export function SettingsForm() {
               )}
 
               {/* 应用更新 */}
-              <AppUpdateRow />
-
               {/* 配音引擎(视频配音用) */}
               <DubEngineRow />
 
@@ -613,10 +616,10 @@ function AppUpdateRow() {
     }
   }
   return (
-    <div className="border-t border-slate-900/[0.06] py-3 dark:border-white/[0.06]">
+    <div className="py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-1.5 text-[13px] text-slate-800 dark:text-slate-100">
+          <div className="flex items-center gap-1.5 text-[13px] font-medium text-slate-800 dark:text-slate-100">
             <Download className="h-3.5 w-3.5 text-wb-pink" /> 应用更新
           </div>
           <div className="mt-0.5 text-[10.5px] text-slate-500 dark:text-slate-400">
