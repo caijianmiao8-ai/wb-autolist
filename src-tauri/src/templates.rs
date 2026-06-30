@@ -42,9 +42,19 @@ fn yes() -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct ImageTemplates {
     pub version: u32,
+    /// "builtin" = shipped defaults (may be replaced when the app ships newer
+    /// defaults). "user" = explicitly edited & saved in the editor → owned by the
+    /// user, never auto-overridden. Older configs predate this field → serde
+    /// defaults to "builtin", so a stale frozen-default set gets refreshed once.
+    #[serde(default = "src_builtin")]
+    pub source: String,
     /// order of kinds to cycle when generating N images
     pub rotation: Vec<String>,
     pub templates: Vec<ImageTemplate>,
+}
+
+fn src_builtin() -> String {
+    "builtin".into()
 }
 
 impl ImageTemplates {
@@ -155,62 +165,70 @@ pub fn built_in_defaults() -> ImageTemplates {
         enabled,
     };
     ImageTemplates {
-        // v2: redesigned defaults — the MAIN image is now a designed card (NOT plain
-        // white; real WB listings all have text/design), plus a deeper rotation so 8–10
-        // images stay varied. Bumping the version makes config.rs swap any stored v1
-        // defaults for these (active_templates version-gate).
-        version: 2,
+        // v3: diversified defaults. v2 had 4 near-identical "top {ACCENT} banner +
+        // «TITLE» + N icon callouts" templates (hero/features/package/guarantee) that
+        // all stamped the SAME headline banner → the set FELT repetitive even at 10
+        // distinct kinds. v3 gives each kind a different COMPOSITION (split panel /
+        // annotation diagram / immersive photo / macro / comparison / flat-lay / grid
+        // / steps / badge strip) and stops repeating the big banner. The pure-white
+        // main stays disabled (real WB listings are designed, not blank white).
+        version: 3,
+        source: "builtin".into(),
+        // Front-loaded so even 5 images already span 5 very different looks.
         rotation: vec![
-            "main".into(), "hero".into(), "features".into(), "result".into(), "scene".into(),
-            "detail".into(), "dimensions".into(), "package".into(), "guarantee".into(), "how_to".into(),
+            "main".into(), "hero".into(), "features".into(), "scene".into(), "detail".into(),
+            "comparison".into(), "dimensions".into(), "package".into(), "result".into(),
+            "how_to".into(), "guarantee".into(),
         ],
         templates: vec![
-            // 1) MAIN — designed lead image: product big on a soft accent-tinted backdrop
-            // (never stark white), a short headline + ONE benefit chip. Tasteful, uncluttered.
-            t("main", "main", "主图(设计)", "model", true, format!(
-                "Keep THIS exact product unchanged (real shape, color, proportions). A premium Wildberries MAIN product image, vertical 3:4: the product LARGE and centered on a soft {{ACCENT}}-tinted gradient studio backdrop (NOT plain white), gentle realistic shadow. A short bold Russian headline «{{TITLE}}» near the top and ONE small benefit chip «{{KEY_BENEFIT}}». Clean, premium, uncluttered, modern e-commerce. {GUARD} {{CUSTOM}}"
+            // 1) MAIN — designed lead card: product big on a soft accent backdrop
+            // (never stark white), short headline + ONE benefit chip. Uncluttered.
+            t("main", "main", "主图·设计", "model", true, format!(
+                "Keep THIS exact product unchanged (real shape, color, proportions). A premium Wildberries MAIN image, vertical 3:4: the product LARGE and centered on a soft {{ACCENT}}-tinted gradient studio backdrop (NEVER plain white), gentle realistic shadow. A short bold Russian headline «{{TITLE}}» near the top and ONE small rounded benefit chip «{{KEY_BENEFIT}}». Uncluttered, modern, premium. {GUARD} {{CUSTOM}}"
             )),
-            // 2) HERO — selling-point infographic (banner + side callouts).
-            t("hero", "promo", "卖点信息图", "model", true, format!(
-                "Using THIS exact product (keep its real shape and color unchanged), create a vertical 3:4 Wildberries product infographic. A bold {{ACCENT}} banner across the top with a large white Russian headline «{{TITLE}}». Down one side, {{N}} short Russian benefit callouts, each with a small clean line icon: {{CALLOUTS}}. Subtly emphasize the key benefit ({{KEY_BENEFIT}}) with a tasteful graphic hint. {GUARD} {{CUSTOM}}"
+            // 2) HERO — SPLIT layout: product half + solid accent panel half. The big
+            // headline lives in the side panel (not a top banner) → distinct silhouette.
+            t("hero", "promo", "核心卖点·分栏", "model", true, format!(
+                "Using THIS exact product (keep its real shape and color), a vertical 3:4 Wildberries infographic with a SPLIT layout: the product photographed large on one half; a solid {{ACCENT}} vertical panel on the other half carrying a big white Russian headline «{{TITLE}}» and {{N}} short benefit lines, each with a small clean line icon: {{CALLOUTS}}. Bold, high-contrast, modern. {GUARD} {{CUSTOM}}"
             )),
-            // 3) FEATURES — labelled feature highlights pointing at the product.
-            t("features", "gallery", "功能特性", "model", true, format!(
-                "Using THIS exact product, create a vertical 3:4 Wildberries feature infographic. A {{ACCENT}} top banner «{{TITLE}}». Keep the exact product centered/large with {{N}} thin callout lines pointing to its parts, each with a 1-2 word Russian label and tiny icon: {{CALLOUTS}}. {GUARD}"
+            // 3) FEATURES — annotation diagram: callout LINES to parts, NO big banner.
+            t("features", "gallery", "功能标注", "model", true, format!(
+                "Using THIS exact product, a vertical 3:4 Wildberries feature-callout image: the exact product centered and large on a clean soft {{ACCENT}}-tinted background, with {{N}} thin callout lines pointing to different parts, each ending in a 1-2 word Russian label and a tiny icon: {{CALLOUTS}}. No big banner — airy and technical. {GUARD}"
             )),
-            // 4) RESULT — what the product produces / is used for (generic by category).
-            t("result", "gallery", "成品/效果", "model", true, format!(
-                "Using THIS exact product, create a vertical 3:4 Wildberries infographic. A {{ACCENT}} top banner with a short white Russian headline «{{TITLE}}». Below it a clean 2x2 grid showing great results/uses of a {{CATEGORY}}: {{SCENE}}. Place a small inset of this exact product in one corner. Vivid professional photography. {GUARD}"
-            )),
-            // 5) SCENE — lifestyle / in-context.
+            // 4) SCENE — immersive lifestyle photo, NO banner, only a tiny corner chip.
             t("scene", "gallery", "生活场景", "model", true, format!(
-                "Using THIS exact product (unchanged), create a vertical 3:4 Wildberries lifestyle infographic. Place it naturally in {{SCENE}}, premium photography, warm natural light. Add a {{ACCENT}} banner with a short white Russian headline «{{TITLE}}». Place a small clean inset of this exact product in a top corner. {GUARD}"
+                "Using THIS exact product (unchanged), a vertical 3:4 premium lifestyle photo: the product used naturally in {{SCENE}}, warm natural light, shallow depth of field, real environment. Only a tiny {{ACCENT}} corner chip «{{KEY_BENEFIT}}» — NO large banner, let the photo breathe. {GUARD}"
             )),
-            // 6) DETAIL — macro close-up of material/quality with 1-2 labels.
-            t("detail", "gallery", "细节特写", "model", true, format!(
-                "Using THIS exact product (unchanged), create a vertical 3:4 Wildberries detail shot: a premium macro close-up emphasizing the material/texture/build quality. One small {{ACCENT}} label with a 1-2 word Russian caption about the key material or feature. Sharp, premium. {GUARD}"
+            // 5) DETAIL — extreme macro of material/build, one tiny caption.
+            t("detail", "gallery", "材质细节", "model", true, format!(
+                "Using THIS exact product (unchanged), a vertical 3:4 Wildberries macro detail shot: an extreme close-up emphasizing the material, texture and build quality. One small {{ACCENT}} caption with a 1-2 word Russian label about the key material/feature. Sharp, tactile, premium. {GUARD}"
             )),
-            // 7) DIMENSIONS — clean shot with empty margins; crisp numbers added via overlay.
+            // 6) COMPARISON — two-column обычный/наш (now enabled — distinct & persuasive).
+            t("comparison", "gallery", "对比图", "model", true, format!(
+                "Using THIS exact product, a vertical 3:4 Wildberries comparison image. A small {{ACCENT}} header «{{TITLE}}». Two clean columns: «обычный» (an ordinary, dull alternative) on the left vs «наш» (ours — this exact product, bright and appealing) on the right, with a few short Russian labels and green check / grey cross icons. {GUARD}"
+            )),
+            // 7) DIMENSIONS — clean shot with empty margins; crisp numbers via overlay.
             t("dimensions", "gallery", "尺寸图", "overlay", true, format!(
-                "Keep THIS exact product unchanged. Clean, soft {{ACCENT}}-tinted studio photo of the product, centered, leaving generous empty margins on the right and bottom for dimension labels. Soft shadow, NO text, NO numbers. {GUARD}"
+                "Keep THIS exact product unchanged. Clean, soft {{ACCENT}}-tinted studio photo of the product, centered, leaving generous empty margins on the right and bottom for dimension labels. Soft shadow. NO text, NO numbers. {GUARD}"
             )),
-            // 8) PACKAGE — what's in the box (комплектация flat-lay).
-            t("package", "gallery", "包装清单", "model", true, format!(
-                "Using THIS exact product, create a vertical 3:4 Wildberries 'in the box' infographic: a neat top-down flat-lay of the product with its included items, each tagged with a small 1-2 word Russian label: {{CALLOUTS}}. A {{ACCENT}} top banner «{{TITLE}}». {GUARD}"
+            // 8) PACKAGE — top-down flat-lay of in-the-box items (комплектация).
+            t("package", "gallery", "开箱清单", "model", true, format!(
+                "Using THIS exact product, a vertical 3:4 Wildberries 'in the box' (комплектация) image: a neat top-down flat-lay of the product with all included items arranged on a soft {{ACCENT}}-tinted surface, each item tagged with a small 1-2 word Russian label: {{CALLOUTS}}. Tidy, premium. {GUARD}"
             )),
-            // 9) GUARANTEE — trust badges.
-            t("guarantee", "gallery", "质保徽章", "model", true, format!(
-                "Using THIS exact product, create a vertical 3:4 Wildberries trust infographic. A {{ACCENT}} top banner «{{TITLE}}». Show {{N}} round trust badges with a small icon and a 1-2 word Russian label each: {{CALLOUTS}}. Keep the exact product centered. {GUARD}"
+            // 9) RESULT — 2x2 grid of results/uses with a small product inset.
+            t("result", "gallery", "效果/成品", "model", true, format!(
+                "Using THIS exact product, a vertical 3:4 Wildberries results image. A small {{ACCENT}} top banner «{{TITLE}}». A clean 2x2 grid showing great results/uses of a {{CATEGORY}}: {{SCENE}}. Place a small inset of this exact product in one corner. Vivid professional photography. {GUARD}"
             )),
             // 10) HOW-TO — 3 numbered steps.
             t("how_to", "gallery", "三步用法", "model", true, format!(
-                "Using THIS exact product, create a vertical 3:4 Wildberries 'how to use' infographic. A {{ACCENT}} top banner «{{TITLE}}». Three numbered steps stacked vertically, each a small clean illustration with a 2-3 word Russian caption. Keep the exact product visible. {GUARD}"
+                "Using THIS exact product, a vertical 3:4 Wildberries 'how to use' image. A small {{ACCENT}} top banner «{{TITLE}}». Three numbered steps stacked vertically, each a small clean illustration with a 2-3 word Russian caption. Keep the exact product visible. {GUARD}"
+            )),
+            // 11) GUARANTEE — distinct framing: product up top, trust badges along the BOTTOM.
+            t("guarantee", "gallery", "信任保障", "model", true, format!(
+                "Using THIS exact product, a vertical 3:4 Wildberries trust image: the exact product large in the upper area on a soft {{ACCENT}}-tinted background with a short Russian headline «{{TITLE}}», and ALONG THE BOTTOM a calm row of {{N}} round trust badges, each a small icon + 1-2 word Russian label: {{CALLOUTS}}. {GUARD}"
             )),
             // ── extra (off by default) ──
-            t("comparison", "gallery", "对比图", "model", false, format!(
-                "Using THIS exact product, create a vertical 3:4 Wildberries comparison infographic. A {{ACCENT}} top banner «{{TITLE}}». Two columns: «обычный» (ordinary, dull) vs «наш» (ours, bright, this exact product) with a few short Russian labels and check/cross icons. {GUARD}"
-            )),
-            t("main_white", "main", "主图(纯白·备用)", "model", false, format!(
+            t("main_white", "main", "主图·纯白(备用)", "model", false, format!(
                 "Keep THIS exact product unchanged (real shape, color, proportions). Clean white studio e-commerce product photo, the product centered and large, soft natural shadow, premium, NO text. {GUARD}"
             )),
         ],
@@ -256,6 +274,7 @@ mod tests {
     fn defaults_have_main_first_and_parse() {
         let d = built_in_defaults();
         assert_eq!(d.rotation.first().map(|s| s.as_str()), Some("main"));
+        assert_eq!(d.source, "builtin");
         let plan = d.plan(3);
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[0].slot, "main");
@@ -263,5 +282,29 @@ mod tests {
         let j = serde_json::to_string(&d).unwrap();
         let back: ImageTemplates = serde_json::from_str(&j).unwrap();
         assert_eq!(back.templates.len(), d.templates.len());
+        assert_eq!(back.source, "builtin");
+    }
+
+    #[test]
+    fn five_eight_ten_are_all_distinct() {
+        // The whole point of v3: 5/8/10 must never repeat a kind (v2's deeper
+        // rotation could still feel samey; here we assert NO cycling at all).
+        let d = built_in_defaults();
+        for n in [5usize, 8, 10] {
+            let mut kinds: Vec<String> = d.plan(n).iter().map(|t| t.kind.clone()).collect();
+            assert_eq!(kinds.len(), n);
+            kinds.sort();
+            kinds.dedup();
+            assert_eq!(kinds.len(), n, "plan({n}) repeated a kind");
+        }
+    }
+
+    #[test]
+    fn source_defaults_to_builtin_for_old_configs() {
+        // A stored set saved BEFORE the `source` field existed must deserialize
+        // as "builtin" (so active_templates refreshes it to current defaults).
+        let legacy = r#"{"version":2,"rotation":["main"],"templates":[]}"#;
+        let t: ImageTemplates = serde_json::from_str(legacy).unwrap();
+        assert_eq!(t.source, "builtin");
     }
 }

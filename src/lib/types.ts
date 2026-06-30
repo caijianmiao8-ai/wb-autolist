@@ -113,6 +113,7 @@ export interface ImageTemplate {
 
 export interface ImageTemplates {
   version: number;
+  source?: string; // "builtin" | "user" — user-edited sets are never auto-overridden
   rotation: string[];
   templates: ImageTemplate[];
 }

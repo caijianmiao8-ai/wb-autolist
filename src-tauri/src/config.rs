@@ -58,15 +58,18 @@ pub struct AppConfig {
 }
 
 /// The templates actually in effect (user override, else built-in defaults).
-/// Version gate: a stored set from an OLDER built-in version is replaced by the
-/// current defaults, so shipped default improvements (e.g. the v2 designed main
-/// image) reach users who merely have last-version's defaults frozen in config —
-/// even those who overwrite-install without clearing data.
+///
+/// Source gate: a set the user explicitly edited & saved (source="user") is
+/// theirs — kept forever, never silently overridden (the editor's "恢复默认"
+/// lets them opt back into defaults). Anything else — `None`, or a stale
+/// FROZEN-DEFAULT set from an older app version (older sets predate the `source`
+/// field → it serde-defaults to "builtin") — is refreshed to the current
+/// built-in defaults, so shipped improvements reach users who merely had last
+/// version's defaults frozen in config, WITHOUT ever clobbering real edits.
 pub fn active_templates(cfg: &AppConfig) -> crate::templates::ImageTemplates {
-    let defaults = crate::templates::built_in_defaults();
     match &cfg.image_templates {
-        Some(t) if t.version >= defaults.version => t.clone(),
-        _ => defaults,
+        Some(t) if t.source == "user" => t.clone(),
+        _ => crate::templates::built_in_defaults(),
     }
 }
 
@@ -331,6 +334,15 @@ pub fn save_config(paths: &Paths, patch: &Value) -> AppConfig {
                         obj.remove(k);
                     }
                 }
+            } else if k == "imageTemplates" {
+                // The only path that sends this key is the template editor → an
+                // explicit user edit. Stamp it source="user" so future default
+                // bumps (active_templates) never silently wipe their work.
+                let mut tv = v.clone();
+                if let Some(o) = tv.as_object_mut() {
+                    o.insert("source".into(), Value::String("user".into()));
+                }
+                obj.insert(k.clone(), tv);
             } else {
                 obj.insert(k.clone(), v.clone());
             }
