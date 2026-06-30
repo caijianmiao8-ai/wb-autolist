@@ -315,12 +315,29 @@ export function makeFf(cfg = {}) {
       || `FontSize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=40`;
     const dir = dirname(srtPath);
     const rel = basename(srtPath);
+    // Pick an H.264 encoder that actually EXISTS in this ffmpeg. The bundled
+    // Windows build is BtbN win64-LGPL, which has NO libx264 (GPL) — it ships
+    // libopenh264 instead. Probe -encoders so the burn works on both the dev
+    // (x264) and bundled (openh264) ffmpeg instead of silently failing.
+    let venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf)];
+    try {
+      const { stdout } = await run(ffmpegBin, ['-hide_banner', '-encoders']);
+      if (/\blibx264\b/.test(stdout)) {
+        venc = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf)];
+      } else if (/\blibopenh264\b/.test(stdout)) {
+        venc = ['-c:v', 'libopenh264', '-b:v', opts.bitrate || '8000k'];
+      } else {
+        venc = ['-c:v', 'mpeg4', '-q:v', '4']; // last-resort, always present
+      }
+    } catch {
+      /* keep libx264 default; if it's missing the run() error will surface */
+    }
     await run(
       ffmpegBin,
       [
         '-y', '-i', inVideo,
         '-vf', `subtitles=${rel}:force_style='${style}'`,
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(crf), '-pix_fmt', 'yuv420p',
+        ...venc, '-pix_fmt', 'yuv420p',
         '-c:a', 'copy',
         '-movflags', '+faststart',
         outVideo,

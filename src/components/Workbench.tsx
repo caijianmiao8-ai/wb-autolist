@@ -406,8 +406,13 @@ export function Workbench() {
       setStep("done");
       // Don't let a now-published listing restore as an editable 'preview' draft
       // (which would re-show Publish and re-hit the prices quota on a re-click).
+      // Also clear the input DRAFT: once published, returning to the tab must start
+      // a BLANK form for the next product — not re-show this finished one's fields.
       try {
         sessionStorage.removeItem("wb:listingId");
+        sessionStorage.removeItem(DRAFT_KEY);
+        sessionStorage.removeItem(DRAFT_PHOTOS_KEY);
+        sessionStorage.removeItem("wb:videoPath");
       } catch {
         /* ignore */
       }
@@ -2288,7 +2293,12 @@ function VideoPanel({
           );
           return;
         }
-        // (3) "[voice-folded]" — a minor speaker was folded into the main cloned
+        // (3) Subtitles requested but couldn't burn — surface it (was silent before).
+        if (/subtitle/i.test(w)) {
+          setCloneNote("俄语字幕未能烧入（成片已生成、配音正常，仅缺字幕）。可重试一次；若反复失败请反馈。");
+          return;
+        }
+        // (4) "[voice-folded]" — a minor speaker was folded into the main cloned
         //     voice (desired for single-narrator videos). No UI needed.
       });
       const out = await api.dubStart({

@@ -438,6 +438,10 @@ export function BatchPanel() {
         );
         return;
       }
+      if (/subtitle/i.test(w)) {
+        setDubCloneNote("部分视频的俄语字幕未能烧入（成片正常，仅缺字幕）。可重配；反复失败请反馈。");
+        return;
+      }
       // "[voice-folded]" → minor speaker folded into the main cloned voice (desired). No UI.
     });
     try {
