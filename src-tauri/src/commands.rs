@@ -1392,20 +1392,32 @@ pub async fn generate_rest(
     let bases: Vec<Vec<u8>> = base_photos.iter().filter_map(|s| decode_image_input(s)).collect();
     let start = l.images.len();
 
-    let mut new_imgs: Vec<GeneratedImage> = vec![];
-    for i in start..plan.len() {
-        let tmpl = &plan[i];
-        let _ = app.emit(
-            "generate:progress",
-            json!({ "stage": "generate", "ok": true, "message": format!("生成第 {}/{} 张（{}）…", i + 1, plan.len(), tmpl.label) }),
-        );
-        let base = if bases.is_empty() { None } else { Some(bases[i % bases.len()].as_slice()) };
-        let img = render_one(
-            &st, &cfg, tmpl, &ctx, base, &copy.title, &copy.bullets, &l.product_name, &l.keywords, i,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        new_imgs.push(img);
+    // Render the remaining images CONCURRENTLY (bounded, ordered) — same fan-out as
+    // the initial gen so "出其余" isn't a slow serial crawl. Scoped so the borrows of
+    // l/ctx/copy end before l is moved into unwrap_or below.
+    let total = plan.len();
+    let mut new_imgs: Vec<GeneratedImage> = Vec::new();
+    {
+        use futures::stream::{self, StreamExt};
+        let (st_r, cfg_r, ctx_r, copy_r, l_r, plan_r, bases_r) = (&st, &cfg, &ctx, &copy, &l, &plan, &bases);
+        let mut futs = Vec::new();
+        for i in start..plan_r.len() {
+            let tmpl = &plan_r[i];
+            let base = if bases_r.is_empty() { None } else { Some(bases_r[i % bases_r.len()].as_slice()) };
+            futs.push(async move {
+                render_one(st_r, cfg_r, tmpl, ctx_r, base, &copy_r.title, &copy_r.bullets, &l_r.product_name, &l_r.keywords, i).await
+            });
+        }
+        let mut s = stream::iter(futs).buffered(crate::generate::IMAGE_CONCURRENCY);
+        let mut done_n = start;
+        while let Some(res) = s.next().await {
+            done_n += 1;
+            let _ = app.emit(
+                "generate:progress",
+                json!({ "stage": "generate", "ok": true, "message": format!("已生成 {}/{} 张…", done_n, total) }),
+            );
+            new_imgs.push(res.map_err(|e| e.to_string())?);
+        }
     }
 
     let updated = store::update_listing(&st.paths, &id, |x| {

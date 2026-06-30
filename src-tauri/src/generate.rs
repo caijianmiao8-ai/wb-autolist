@@ -15,7 +15,13 @@ use crate::wb::barcode::generate_ean13;
 use crate::wb::pipeline::Progress;
 use anyhow::Result;
 use base64::Engine;
+use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
+
+/// How many images to generate CONCURRENTLY. Each gpt-image call is ~1-2 min, so
+/// serial gen of N images is painfully slow. The image client already retries on
+/// 429/5xx, so a moderate fan-out is safe (a transient rate-limit self-heals).
+pub(crate) const IMAGE_CONCURRENCY: usize = 4;
 
 const QUALITY_SUFFIX: &str = ", professional studio product photography, clean white seamless background, soft diffused lighting, sharp focus, ultra detailed, high resolution, commercial e-commerce hero shot, centered composition";
 
@@ -229,23 +235,34 @@ pub async fn generate_listing(
         ),
     );
 
-    let mut images: Vec<GeneratedImage> = vec![];
-    for (i, tmpl) in plan.iter().take(now_count).enumerate() {
-        on(
-            "generate",
-            true,
-            &format!("生成第 {}/{} 张（{}）…", i + 1, now_count, tmpl.label),
-        );
-        let base = if bases.is_empty() {
-            None
-        } else {
-            Some(bases[i % bases.len()].as_slice())
-        };
-        let img = render_one(
-            state, cfg, tmpl, &ctx, base, &copy.title, &copy.bullets, &raw.product_name, &raw.keywords, i,
-        )
-        .await?;
-        images.push(img);
+    // Generate the images CONCURRENTLY (bounded), preserving order (index 0 = main).
+    // buffered() runs up to N at once but yields in order, so progress + the images
+    // vec stay deterministic; the first render error aborts the whole gen (as before).
+    let mut images: Vec<GeneratedImage> = Vec::with_capacity(now_count);
+    {
+        // Bind references so each `async move` future captures cheap Copy refs (not a
+        // move of the shared ctx/copy/raw). Build the futures in a for loop (same
+        // anonymous type each iter → a Vec works) to avoid the closure-HRTB error that
+        // `iter().map(|x| async move {…})` hits under buffered().
+        let (ctx_r, copy_r, raw_r, bases_r) = (&ctx, &copy, &raw, &bases);
+        let mut futs = Vec::with_capacity(now_count);
+        for (i, tmpl) in plan.iter().take(now_count).enumerate() {
+            let base = if bases_r.is_empty() { None } else { Some(bases_r[i % bases_r.len()].as_slice()) };
+            futs.push(async move {
+                render_one(
+                    state, cfg, tmpl, ctx_r, base, &copy_r.title, &copy_r.bullets,
+                    &raw_r.product_name, &raw_r.keywords, i,
+                )
+                .await
+            });
+        }
+        let mut s = stream::iter(futs).buffered(IMAGE_CONCURRENCY);
+        let mut k = 0usize;
+        while let Some(res) = s.next().await {
+            k += 1;
+            on("generate", true, &format!("已生成 {}/{} 张…", k, now_count));
+            images.push(res?);
+        }
     }
 
     on(
