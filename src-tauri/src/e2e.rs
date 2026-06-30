@@ -114,6 +114,7 @@ async fn fill_charcs_headphones() {
         subject_name: String::new(),
         subject_id: 593,
         name: name.into(),
+        name_zh: String::new(),
         required: false,
         unit_name: unit.into(),
         max_count: 0,

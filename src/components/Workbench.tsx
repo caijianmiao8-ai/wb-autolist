@@ -116,7 +116,7 @@ export function Workbench() {
   // a plain seller only needs name + keywords + price + photos/video.
   const [showAdvanced, setShowAdvanced] = useState(draft0.showAdvanced ?? false);
   const [customPrompt, setCustomPrompt] = useState(draft0.customPrompt ?? "");
-  const [imageCount, setImageCount] = useState(draft0.imageCount ?? 3);
+  const [imageCount, setImageCount] = useState(draft0.imageCount ?? 5);
   const [mainOnly, setMainOnly] = useState(draft0.mainOnly ?? false);
   const [regenLoading, setRegenLoading] = useState<number | null>(null);
   const [restLoading, setRestLoading] = useState(false);
@@ -436,7 +436,7 @@ export function Workbench() {
     setCustomPrompt("");
     setPrice(1990);
     setDiscount(0);
-    setImageCount(3);
+    setImageCount(5);
     setMainOnly(false);
     setShowAdvanced(false);
     setLength(settings?.defaultLength ?? 20);
@@ -974,20 +974,38 @@ function InputForm(p: InputFormProps) {
             </div>
 
             <div>
-              <label className="label">生成图片数量（1–12）</label>
-              <input
-                type="number"
-                className="input"
-                min={1}
-                max={12}
-                value={p.imageCount}
-                onChange={(e) =>
-                  p.setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 3)))
-                }
-              />
+              <label className="label">生成图片数量</label>
+              <div className="flex items-center gap-1.5">
+                {[5, 8, 10].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => p.setImageCount(n)}
+                    className={clsx(
+                      "flex-1 rounded-lg border px-2 py-1.5 text-[12px] font-medium transition",
+                      p.imageCount === n
+                        ? "border-wb-pink bg-wb-pink/10 text-wb-pink"
+                        : "border-slate-900/[0.1] text-slate-500 hover:text-slate-800 dark:border-white/[0.1] dark:text-slate-400 dark:hover:text-slate-200"
+                    )}
+                  >
+                    {n} 张
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  className="input w-20"
+                  min={1}
+                  max={12}
+                  value={p.imageCount}
+                  onChange={(e) =>
+                    p.setImageCount(Math.max(1, Math.min(12, Number(e.target.value) || 5)))
+                  }
+                  title="自定义（1–12）"
+                />
+              </div>
               <p className="mt-1 text-[11px] text-slate-500">
-                预计 ~{p.imageCount} 张 × 约 2.5 分钟 ≈{" "}
-                <b>{Math.ceil(p.imageCount * 2.5)} 分钟</b>（逐张生成）
+                主图(带设计) + 卖点/功能/场景/细节/尺寸/包装等不同图位；约 ~{p.imageCount} 张 ×
+                2.5 分钟 ≈ <b>{Math.ceil(p.imageCount * 2.5)} 分钟</b>（逐张生成）
               </p>
             </div>
 
