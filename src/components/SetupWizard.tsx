@@ -195,10 +195,10 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               </div>
               <Result res={aurixelRes} />
               <button
-                onClick={() => api.openUrl("https://aurixel.ai")}
+                onClick={() => api.openUrl("https://www.bifrostapi.net")}
                 className="mt-3 inline-flex items-center gap-1 text-xs text-wb-pink hover:underline"
               >
-                <ExternalLink className="h-3 w-3" /> 去 aurixel.ai 充值
+                <ExternalLink className="h-3 w-3" /> 去 bifrostapi.net 充值
               </button>
             </div>
           )}

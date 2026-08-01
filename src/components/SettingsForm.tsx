@@ -308,7 +308,7 @@ export function SettingsForm() {
                 <div className="flex gap-1.5">
                   <button
                     className="btn-ghost px-3 py-1.5 text-xs"
-                    onClick={() => api.openUrl("https://aurixel.ai")}
+                    onClick={() => api.openUrl("https://www.bifrostapi.net")}
                   >
                     充值
                   </button>

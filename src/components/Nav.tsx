@@ -7,9 +7,9 @@ import { Sparkles, Settings, History, Layers, Boxes, Sun, Moon, Wallet, Plus, He
 import clsx from "clsx";
 import { api } from "@/lib/api";
 
-// Aurixel top-up page (the seller's account / billing). The gateway host
-// (conduit-api.*) is the API, not a human page — this is the real site.
-const AURIXEL_TOPUP_URL = "https://aurixel.ai";
+// Top-up page (the seller's account / billing). The gateway host
+// (conduit-api.bifrostapi.net) is the API, not a human page — this is the real site.
+const AURIXEL_TOPUP_URL = "https://www.bifrostapi.net";
 
 /// Always-visible Aurixel USD balance, pinned in the top bar on every screen.
 /// Click = open the top-up page; balance refreshes on mount and on window focus
