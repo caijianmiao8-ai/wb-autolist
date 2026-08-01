@@ -1,6 +1,6 @@
 [package]
 name = "wb-autolist"
-version = "1.0.36"
+version = "1.0.37"
 description = "Wildberries 商品自动化上架"
 authors = ["WB AutoList"]
 edition = "2021"
@@ -30,7 +30,10 @@ anyhow = "1"
 thiserror = "1"
 base64 = "0.22"
 futures = "0.3"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# Sellers paste photos straight from suppliers/phones — decode the formats they
+# actually have, not just jpeg/png (a WebP that silently failed to decode used to
+# drop generation back to text-to-image and invent a product).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
 resvg = "0.44"
 calamine = "0.26"
 urlencoding = "2"

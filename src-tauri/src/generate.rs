@@ -176,10 +176,24 @@ pub(crate) async fn render_one(
             }
         }
         Err(_) => {
-            let fallback = bases
-                .first()
-                .and_then(|b| to_png_square(b, 1200).ok())
-                .and_then(|p| normalize_main(&p, 1200, 1600).ok());
+            // Degrade to the seller's own photo. Pick a DIFFERENT photo per slot and
+            // zoom the non-main ones: deriving every failed slot from the same photo
+            // through the same deterministic pipeline yields byte-identical images,
+            // which would ship as several copies of one picture on the WB card.
+            let fallback = if bases.is_empty() {
+                None
+            } else {
+                let pick = &bases[idx % bases.len()];
+                to_png_square(pick, 1200).ok().and_then(|p| {
+                    if idx == 0 {
+                        normalize_main(&p, 1200, 1600).ok()
+                    } else {
+                        crate::ai::banner::derive_detail(&p, 1200, 1600)
+                            .ok()
+                            .or_else(|| normalize_main(&p, 1200, 1600).ok())
+                    }
+                })
+            };
             match fallback {
                 Some(b) => b, // derived from the real photo — safe to ship
                 None => {
@@ -244,22 +258,29 @@ pub async fn generate_listing(
         });
     // ── Images: N images by type rotation. img2img if the user uploaded a real
     // product photo (keeps the exact product), else text-to-image. ──
+    // Keep only photos that BOTH base64-decode AND actually decode as an image —
+    // the second check matters: a valid-base64 HEIC (straight off an iPhone) would
+    // otherwise pass here and only fail deep inside rendering, where the seller was
+    // told "基于你的产品图改造" while every image was in fact invented from text.
+    let supplied = raw.base_photos.len();
     let bases: Vec<Vec<u8>> = raw
         .base_photos
         .iter()
         .filter_map(|s| decode_image_input(s))
+        .filter(|b| to_png_square(b, 64).is_ok())
         .collect();
-    // Surface partial decode failures — silently dropping a seller's product
-    // photos and switching to text-to-image yields a hallucinated product.
-    if !raw.base_photos.is_empty() && bases.len() < raw.base_photos.len() {
+    if supplied > 0 && bases.is_empty() {
+        // Don't spend the seller's money rendering a product they never sold.
+        return Err(anyhow::anyhow!(
+            "你上传的 {} 张产品图都无法读取（常见于 iPhone 的 HEIC 格式）。请转成 JPG/PNG 后重试，或先移除产品图再生成。",
+            supplied
+        ));
+    }
+    if supplied > bases.len() {
         on(
             "generate",
             false,
-            &format!(
-                "{} 张产品图无法读取，已忽略{}。",
-                raw.base_photos.len() - bases.len(),
-                if bases.is_empty() { "，将改用 AI 文生图（可能不像实物）" } else { "" }
-            ),
+            &format!("{} 张产品图无法读取已忽略（建议用 JPG/PNG）。", supplied - bases.len()),
         );
     }
     let is_edit = !bases.is_empty();
