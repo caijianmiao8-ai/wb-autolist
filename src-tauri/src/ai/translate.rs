@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Duration;
 
-const AURIXEL_CHAT: &str = "https://conduit-api.aurixel.ai/v1/chat/completions";
+const AURIXEL_CHAT: &str = "https://conduit-api.bifrostapi.net/v1/chat/completions";
 
 /// Translate characteristic names. `items` = (ru_name, wb_machine_zh_hint).
 /// Returns ru_name(EXACT, as given) → concise zh, for the ones it produced.

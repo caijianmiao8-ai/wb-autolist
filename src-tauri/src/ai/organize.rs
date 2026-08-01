@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const AURIXEL_CHAT: &str = "https://conduit-api.aurixel.ai/v1/chat/completions";
+const AURIXEL_CHAT: &str = "https://conduit-api.bifrostapi.net/v1/chat/completions";
 
 pub async fn organize_rows(
     http: &reqwest::Client,

@@ -924,7 +924,7 @@ pub async fn test_aurixel(state: State<'_, Arc<AppState>>, key: String) -> Resul
     }
     let res = state
         .http
-        .get("https://conduit-api.aurixel.ai/v1/models")
+        .get("https://conduit-api.bifrostapi.net/v1/models")
         .header("Authorization", format!("Bearer {}", key))
         .timeout(std::time::Duration::from_secs(20))
         .send()
@@ -961,7 +961,7 @@ pub async fn aurixel_balance(state: State<'_, Arc<AppState>>) -> Result<AurixelB
     }
     let r = state
         .http
-        .get("https://conduit-api.aurixel.ai/v1/balance")
+        .get("https://conduit-api.bifrostapi.net/v1/balance")
         .header("Authorization", format!("Bearer {}", key))
         .timeout(std::time::Duration::from_secs(20))
         .send()

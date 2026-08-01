@@ -5105,7 +5105,7 @@ dependencies = [
 
 [[package]]
 name = "wb-autolist"
-version = "1.0.30"
+version = "1.0.31"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

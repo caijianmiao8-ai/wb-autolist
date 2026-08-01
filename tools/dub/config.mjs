@@ -113,7 +113,7 @@ export function loadConfig(opts = {}) {
 
     // --- Translation (Aurixel chat) ---
     TRANSLATE_MODEL: env('TRANSLATE_MODEL') || env('AURIXEL_CHAT_MODEL', 'gpt-5.5'),
-    AURIXEL_BASE: env('AURIXEL_BASE', 'https://conduit-api.aurixel.ai/v1'),
+    AURIXEL_BASE: env('AURIXEL_BASE', 'https://conduit-api.bifrostapi.net/v1'),
 
     // --- ElevenLabs tuning ---
     EL_BASE: env('EL_BASE', 'https://api.elevenlabs.io'),
@@ -340,7 +340,7 @@ export function loadConfig(opts = {}) {
 
     // --- Aurixel gateway audio (ASR_PROVIDER=aurixel, TTS_PROVIDER=aurixel-vc|aurixel) ---
     // OpenAI-compatible production gateway (AURIXEL_BASE): ONE AURIXEL_API_KEY does
-    // chat-translate + ASR + TTS+cloning. LIVE-VERIFIED on conduit-api.aurixel.ai.
+    // chat-translate + ASR + TTS+cloning. LIVE-VERIFIED on conduit-api.bifrostapi.net.
     // ASR: verbose_json passes through Speechmatics word/segment timestamps +
     // diarization; honors speaker_sensitivity. Use a speechmatics-* model (deepgram
     // via the gateway is still text-only). VC: qwen3-tts-vc clone (enroll+synth).

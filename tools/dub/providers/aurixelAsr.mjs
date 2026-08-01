@@ -1,5 +1,5 @@
 // providers/aurixelAsr.mjs — ASR via the Aurixel OpenAI-compatible gateway.
-// LIVE-VERIFIED on the production line (conduit-api.aurixel.ai) 2026-06-24: with
+// LIVE-VERIFIED on the production line (conduit-api.bifrostapi.net) 2026-06-24: with
 // response_format=verbose_json the gateway passes through Speechmatics' rich
 // result — per-segment AND per-word timestamps, plus speaker diarization when the
 // diarize flags are set.
@@ -32,7 +32,7 @@ function normSpeaker(s) {
 }
 
 export function makeAurixelAsr(cfg = {}) {
-  const base = (cfg.baseUrl || 'https://conduit-api.aurixel.ai/v1').replace(/\/$/, '');
+  const base = (cfg.baseUrl || 'https://conduit-api.bifrostapi.net/v1').replace(/\/$/, '');
   const key = cfg.apiKey;
   const model = cfg.model || 'speechmatics-enhanced';
   const speakerSensitivity = cfg.speakerSensitivity ?? 0.3; // low = fewer speakers (avoid over-split)

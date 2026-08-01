@@ -5,7 +5,7 @@
 
 - 代码位置:`tools/dub/`(纯 Node ESM,无 npm 依赖)
 - 一个 **Aurixel** key 跑通全部三段付费调用:ASR(语音转写+时间戳+分轨)、翻译(gpt-5.5)、TTS 克隆(qwen3-tts-vc)
-- 已在生产线 `conduit-api.aurixel.ai` 实测通过(单人 + 母女双人两种素材,见 README「Routing」节)
+- 已在生产线 `conduit-api.bifrostapi.net` 实测通过(单人 + 母女双人两种素材,见 README「Routing」节)
 
 ---
 
@@ -98,7 +98,7 @@ const res = await runPipeline(cfg, {
 
 ```bash
 AURIXEL_API_KEY=ck-…                              # 正式线 key
-AURIXEL_BASE=https://conduit-api.aurixel.ai/v1    # 默认即生产线,可省
+AURIXEL_BASE=https://conduit-api.bifrostapi.net/v1    # 默认即生产线,可省
 ASR_PROVIDER=aurixel
 TTS_PROVIDER=aurixel-vc
 ```
@@ -133,7 +133,7 @@ WB 可能会调的开关(都有合理默认,一般不用动):
 | Node 18+ | 运行时 | 用全局 `fetch`/`FormData`;无 npm 依赖 |
 | `ffmpeg` / `ffprobe` | 抽音/混音/封装 | 默认 `~/.local/bin`,可 `FFMPEG_PATH`/`FFPROBE_PATH` 覆盖 |
 | `uvx`(uv) | 跑 Demucs(背景分离)+ resemblyzer(择优声纹) | 默认 `~/.local/bin`;**首次会下载模型**(几百 MB,之后缓存) |
-| Aurixel 网关 | ASR/翻译/TTS | 外网可达 `conduit-api.aurixel.ai` |
+| Aurixel 网关 | ASR/翻译/TTS | 外网可达 `conduit-api.bifrostapi.net` |
 
 **纯本地、无需 key 的阶段**:Demucs(背景分离)、resemblyzer(择优)——离线跑。
 部署机建议预热一次(先跑一个样片),把 Demucs/resemblyzer 模型下好,避免首单超时。

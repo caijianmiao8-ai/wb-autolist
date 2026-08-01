@@ -18,7 +18,7 @@ function stripFences(s) {
 }
 
 export function makeAurixelTranslator(cfg) {
-  const base = (cfg.baseUrl || 'https://conduit-api.aurixel.ai/v1').replace(/\/$/, '');
+  const base = (cfg.baseUrl || 'https://conduit-api.bifrostapi.net/v1').replace(/\/$/, '');
   const key = cfg.apiKey;
   const model = cfg.model || 'gpt-5.5';
   const timeoutMs = cfg.timeoutMs || 120000;

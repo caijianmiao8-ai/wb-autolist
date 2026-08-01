@@ -1,5 +1,5 @@
 // providers/aurixelTts.mjs — TTS via the Aurixel OpenAI-compatible gateway.
-// LIVE-VERIFIED on the production line (conduit-api.aurixel.ai) 2026-06-24.
+// LIVE-VERIFIED on the production line (conduit-api.bifrostapi.net) 2026-06-24.
 //
 // Same qwen3-tts-vc cloning engine as providers/qwenTtsVc.mjs, but reached through
 // the gateway's OpenAI shape — so ONE Aurixel key (the same one used for chat
@@ -19,7 +19,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { fetchWithRetry, errorText } from '../http.mjs';
 
 export function makeAurixelTtsVc(cfg) {
-  const base = (cfg.baseUrl || 'https://conduit-api.aurixel.ai/v1').replace(/\/$/, '');
+  const base = (cfg.baseUrl || 'https://conduit-api.bifrostapi.net/v1').replace(/\/$/, '');
   const key = cfg.apiKey;
   const vcModel = cfg.model || 'qwen3-tts-vc';
   const presetModel = cfg.presetModel || 'qwen-tts'; // for distinct-preset fallback voices
@@ -89,7 +89,7 @@ export function makeAurixelTtsVc(cfg) {
  * (Cherry/Katerina/…) via POST {base}/audio/speech with model=qwen-tts.
  */
 export function makeAurixelTts(cfg) {
-  const base = (cfg.baseUrl || 'https://conduit-api.aurixel.ai/v1').replace(/\/$/, '');
+  const base = (cfg.baseUrl || 'https://conduit-api.bifrostapi.net/v1').replace(/\/$/, '');
   const key = cfg.apiKey;
   const model = cfg.model || 'qwen-tts';
   const defaultVoice = cfg.voice || 'Cherry';

@@ -8,7 +8,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const AURIXEL_BASE: &str = "https://conduit-api.aurixel.ai/v1";
+const AURIXEL_BASE: &str = "https://conduit-api.bifrostapi.net/v1";
 
 /// Image-to-image (edit): keep the input product, restyle per the prompt.
 /// Aurixel gpt-image-2 `/images/edits` — multipart form. Slow (~80-150s).
@@ -89,7 +89,7 @@ pub async fn generate_image(
     if cfg.image_provider == "aurixel" && !cfg.aurixel_api_key.is_empty() {
         return openai_compatible_image(
             http,
-            "https://conduit-api.aurixel.ai/v1",
+            "https://conduit-api.bifrostapi.net/v1",
             &cfg.aurixel_api_key,
             "gpt-image-2",
             prompt,

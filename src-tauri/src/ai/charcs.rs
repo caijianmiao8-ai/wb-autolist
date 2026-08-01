@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Duration;
 
-const AURIXEL_CHAT: &str = "https://conduit-api.aurixel.ai/v1/chat/completions";
+const AURIXEL_CHAT: &str = "https://conduit-api.bifrostapi.net/v1/chat/completions";
 
 /// Returns charcID → typed value (number for charcType 4, else array-of-string).
 pub async fn fill_characteristics(

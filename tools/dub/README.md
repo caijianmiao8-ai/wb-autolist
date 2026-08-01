@@ -103,7 +103,7 @@ the preset through `qwen3-tts-flash`.
 One Aurixel key (`AURIXEL_API_KEY`) now drives **all three paid stages**. The
 gateway is OpenAI-compatible (`/v1`); every provider takes a `*_BASE` + key from
 config, so you point a stage at the gateway and reuse the one key. Verified live on
-the production line `https://conduit-api.aurixel.ai/v1` on 2026-06-24:
+the production line `https://conduit-api.bifrostapi.net/v1` on 2026-06-24:
 
 | Stage | How to route through the gateway | Status |
 |---|---|---|
@@ -117,7 +117,7 @@ True single-key setup — ASR + translate + TTS all on the gateway:
 ```bash
 # .env.local — ONE key (AURIXEL_BASE defaults to the aurixel production line)
 AURIXEL_API_KEY=ck-…
-AURIXEL_BASE=https://conduit-api.aurixel.ai/v1
+AURIXEL_BASE=https://conduit-api.bifrostapi.net/v1
 ASR_PROVIDER=aurixel
 TTS_PROVIDER=aurixel-vc
 ```

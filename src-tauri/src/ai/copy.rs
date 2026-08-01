@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const AURIXEL_CHAT: &str = "https://conduit-api.aurixel.ai/v1/chat/completions";
+const AURIXEL_CHAT: &str = "https://conduit-api.bifrostapi.net/v1/chat/completions";
 
 /// Returns (copy, ai_used). ai_used=false means the AI call failed and we fell
 /// back to a deterministic template — the caller should surface that so the user
