@@ -195,6 +195,21 @@ export interface ConnTest {
   warehouses: Warehouse[];
 }
 
+/** Rich WB-token diagnostic (per-scope + env + expiry). scope fields:
+ *  "ok" | "missing" | "withdrawn" | "error" | "skip". */
+export interface WbCheck {
+  ok: boolean;
+  formatOk: boolean;
+  expired: boolean;
+  expiresInDays: number | null;
+  tokenEnv: string; // "sandbox" | "production" | ""
+  envMismatch: boolean;
+  content: string;
+  marketplace: string;
+  detail: string;
+  warehouses: Warehouse[];
+}
+
 // ── 批量「关联素材文件夹」──
 
 /** One image/video file found in a linked media folder. */

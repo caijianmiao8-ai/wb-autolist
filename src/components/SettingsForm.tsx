@@ -11,6 +11,7 @@ import {
   EyeOff,
   ChevronDown,
   CheckCircle2,
+  XCircle,
   Download,
   Video,
   Languages,
@@ -21,7 +22,7 @@ import { api } from "@/lib/api";
 import { EnvBadge } from "./EnvBadge";
 import { TemplateEditor } from "./TemplateEditor";
 import { envKind } from "@/lib/env";
-import type { Warehouse, EngineStatus, DubPreflight } from "@/lib/types";
+import type { Warehouse, EngineStatus, DubPreflight, WbCheck } from "@/lib/types";
 
 interface Redacted {
   authEnabled: boolean;
@@ -63,6 +64,8 @@ export function SettingsForm() {
   const [wbContentToken, setWbContentToken] = useState("");
   const [wbPricesToken, setWbPricesToken] = useState("");
   const [wbSandbox, setWbSandbox] = useState(false);
+  const [wbTest, setWbTest] = useState<WbCheck | null>(null);
+  const [wbTesting, setWbTesting] = useState(false);
   const [dryRun, setDryRun] = useState(true);
   const [imageProvider, setImageProvider] = useState("pollinations");
   const [openaiApiKey, setOpenaiApiKey] = useState("");
@@ -103,6 +106,24 @@ export function SettingsForm() {
       .catch(() => {});
   }, []);
 
+  async function testWbConn() {
+    const clean = wbContentToken.replace(/\s+/g, "");
+    if (!clean) return;
+    setWbTesting(true);
+    setWbTest(null);
+    try {
+      setWbTest(await api.testWb(clean, wbSandbox));
+    } catch (e) {
+      setWbTest({
+        ok: false, formatOk: false, expired: false, expiresInDays: null,
+        tokenEnv: "", envMismatch: false, content: "error", marketplace: "error",
+        detail: e instanceof Error ? e.message : "测试失败", warehouses: [],
+      });
+    } finally {
+      setWbTesting(false);
+    }
+  }
+
   async function save() {
     setSaving(true);
     setSaved(false);
@@ -118,8 +139,11 @@ export function SettingsForm() {
       defaultHeight,
       defaultWeight,
     };
-    if (wbContentToken.trim()) patch.wbContentToken = wbContentToken.trim();
-    if (wbPricesToken.trim()) patch.wbPricesToken = wbPricesToken.trim();
+    // JWTs never contain whitespace — strip any the paste dragged in (a wrapped-
+    // token newline is a top cause of WB "token is malformed"). Backend also strips.
+    const noWs = (s: string) => s.replace(/\s+/g, "");
+    if (noWs(wbContentToken)) patch.wbContentToken = noWs(wbContentToken);
+    if (noWs(wbPricesToken)) patch.wbPricesToken = noWs(wbPricesToken);
     if (openaiApiKey.trim()) patch.openaiApiKey = openaiApiKey.trim();
     if (aurixelApiKey.trim()) patch.aurixelApiKey = aurixelApiKey.trim();
     if (aurixelChatModel) patch.aurixelChatModel = aurixelChatModel;
@@ -273,15 +297,79 @@ export function SettingsForm() {
             />
             {editWb && (
               <div className="pb-3">
-                <input
-                  type={inputType}
-                  className="input mb-2"
-                  placeholder={redacted?.wbContentTokenSet ? "留空保持不变" : "粘贴 Content 范围 Token(JWT)"}
-                  value={wbContentToken}
-                  onChange={(e) => setWbContentToken(e.target.value)}
-                />
+                <div className="mb-2 flex gap-2">
+                  <input
+                    type={inputType}
+                    className="input"
+                    placeholder={redacted?.wbContentTokenSet ? "留空保持不变" : "粘贴 Token(JWT,eyJ…)"}
+                    value={wbContentToken}
+                    onChange={(e) => {
+                      setWbContentToken(e.target.value);
+                      setWbTest(null);
+                    }}
+                  />
+                  <button
+                    className="btn-ghost shrink-0 px-3 text-xs"
+                    onClick={testWbConn}
+                    disabled={wbTesting || !wbContentToken.replace(/\s+/g, "")}
+                    title="核对 内容/营销 两个权限 + 环境 + 有效期"
+                  >
+                    {wbTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : "测试"}
+                  </button>
+                </div>
+                {wbTest && (
+                  <div
+                    className={clsx(
+                      "mb-2 rounded-lg border px-3 py-2 text-[11px] font-medium",
+                      wbTest.ok
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+                    )}
+                  >
+                    <div className="flex items-start gap-1.5">
+                      {wbTest.ok ? (
+                        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span>{wbTest.detail}</span>
+                    </div>
+                    {wbTest.formatOk && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-5">
+                        {(["content", "marketplace"] as const).map((k) => {
+                          const s = wbTest[k];
+                          if (s === "skip") return null;
+                          const good = s === "ok";
+                          return (
+                            <span
+                              key={k}
+                              className={clsx(
+                                "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                                good
+                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                  : "bg-rose-500/15 text-rose-600 dark:text-rose-300"
+                              )}
+                            >
+                              {k === "content" ? "内容 Контент" : "营销 Маркетплейс"} {good ? "✓" : "✗"}
+                            </span>
+                          );
+                        })}
+                        {wbTest.tokenEnv && (
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                            {wbTest.tokenEnv === "sandbox" ? "沙盒 token" : "正式 token"}
+                          </span>
+                        )}
+                        {wbTest.expiresInDays != null && wbTest.expiresInDays >= 0 && (
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                            · {wbTest.expiresInDays} 天后过期
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <p className="text-[11px] text-slate-500">
-                  卖家后台「设置 → 访问 API」生成,勾选 <b>Контент</b> 与 <b>Цены и скидки</b>,且非只读。
+                  卖家后台「设置 → 访问 API」生成,<b>同一个 Token 勾选 Контент(内容) + Маркетплейс(营销)</b>(如需自动改价再加 Цены и скидки),且非只读。粘贴后点「测试」核对权限。
                 </p>
               </div>
             )}

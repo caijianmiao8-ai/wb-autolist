@@ -303,12 +303,15 @@ pub fn get_config(paths: &Paths) -> AppConfig {
     apply_env(&mut cfg);
     apply_file(&mut cfg, &paths.config());
     cfg.kc_error = false;
-    // Defensive: pasted tokens often carry a trailing space/newline that would
-    // corrupt the Authorization header.
-    cfg.wb_content_token = cfg.wb_content_token.trim().to_string();
-    cfg.wb_prices_token = cfg.wb_prices_token.trim().to_string();
-    cfg.aurixel_api_key = cfg.aurixel_api_key.trim().to_string();
-    cfg.openai_api_key = cfg.openai_api_key.trim().to_string();
+    // Defensive: pasted tokens/keys often carry stray whitespace. WB JWTs and
+    // Aurixel keys never contain ANY whitespace, so strip it all (not just the
+    // ends) — a newline the user copied from a wrapped token display is a common
+    // cause of WB's "token is malformed" rejection.
+    let strip_ws = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
+    cfg.wb_content_token = strip_ws(&cfg.wb_content_token);
+    cfg.wb_prices_token = strip_ws(&cfg.wb_prices_token);
+    cfg.aurixel_api_key = strip_ws(&cfg.aurixel_api_key);
+    cfg.openai_api_key = strip_ws(&cfg.openai_api_key);
     cfg
 }
 
@@ -379,6 +382,25 @@ pub fn wb_token_expiry_days(token: &str) -> Option<i64> {
     Some((secs as f64 / 86_400.0).floor() as i64)
 }
 
+/// Locally-readable WB JWT claims used by the connection check: `exp` (unix) and
+/// `t` (WB's sandbox flag — true = sandbox/test token). None if the token isn't a
+/// parseable JWT payload (→ caller reports "format bad, re-copy the whole token").
+pub fn wb_token_claims(token: &str) -> Option<(i64, bool)> {
+    use base64::Engine;
+    // A well-formed WB token is exactly 3 dot-separated base64url segments.
+    if token.split('.').count() != 3 {
+        return None;
+    }
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let v: Value = serde_json::from_slice(&bytes).ok()?;
+    let exp = v.get("exp").and_then(|x| x.as_i64())?;
+    let is_sandbox = v.get("t").and_then(|x| x.as_bool()).unwrap_or(false);
+    Some((exp, is_sandbox))
+}
+
 /// Never leak secrets to the client — booleans + non-secret fields only.
 pub fn redact_config(cfg: &AppConfig) -> Value {
     let dry =
@@ -409,4 +431,30 @@ pub fn redact_config(cfg: &AppConfig) -> Value {
         // Non-secret → the one sanctioned channel for the editable templates.
         "imageTemplates": serde_json::to_value(active_templates(cfg)).unwrap_or(Value::Null),
     })
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+    use base64::Engine;
+
+    fn b64(s: &str) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s)
+    }
+
+    #[test]
+    fn wb_token_claims_reads_env_and_exp() {
+        // production token (t=false)
+        let tok = format!("{}.{}.sig", b64("{}"), b64(r#"{"exp":1801349237,"t":false}"#));
+        let (exp, sandbox) = wb_token_claims(&tok).expect("parse");
+        assert_eq!(exp, 1801349237);
+        assert!(!sandbox);
+        // sandbox token (t=true)
+        let tok2 = format!("{}.{}.s", b64("{}"), b64(r#"{"exp":123,"t":true}"#));
+        assert!(wb_token_claims(&tok2).unwrap().1);
+        // not a 3-segment JWT → None (format guard)
+        assert!(wb_token_claims("not-a-token").is_none());
+        assert!(wb_token_claims("a.b").is_none());
+        assert!(wb_token_claims("a.b.c.d").is_none());
+    }
 }

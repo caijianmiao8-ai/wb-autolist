@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
-import type { ConnTest, Warehouse as Wh } from "@/lib/types";
+import type { ConnTest, WbCheck, Warehouse as Wh } from "@/lib/types";
 
 const STEPS = ["欢迎", "Aurixel", "店铺", "默认"];
 
@@ -30,7 +30,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [wbToken, setWbToken] = useState("");
   const [sandbox, setSandbox] = useState(true);
   const [wbBusy, setWbBusy] = useState(false);
-  const [wbRes, setWbRes] = useState<ConnTest | null>(null);
+  const [wbRes, setWbRes] = useState<WbCheck | null>(null);
   const [warehouses, setWarehouses] = useState<Wh[]>([]);
 
   const [warehouseId, setWarehouseId] = useState(0);
@@ -65,7 +65,11 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         if (r.warehouses[0]) setWarehouseId(r.warehouses[0].id);
       }
     } catch (e) {
-      setWbRes({ ok: false, detail: e instanceof Error ? e.message : "测试失败", warehouses: [] });
+      setWbRes({
+        ok: false, formatOk: false, expired: false, expiresInDays: null,
+        tokenEnv: "", envMismatch: false, content: "error", marketplace: "error",
+        detail: e instanceof Error ? e.message : "测试失败", warehouses: [],
+      });
     } finally {
       setWbBusy(false);
     }
@@ -108,6 +112,56 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
       >
         {res.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
         {res.detail}
+      </div>
+    );
+  }
+
+  function WbResult({ res }: { res: WbCheck | null }) {
+    if (!res) return null;
+    const chip = (label: string, s: string) => {
+      const good = s === "ok";
+      const skip = s === "skip";
+      if (skip) return null;
+      return (
+        <span
+          className={clsx(
+            "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+            good
+              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+              : "bg-rose-500/15 text-rose-600 dark:text-rose-300"
+          )}
+        >
+          {label} {good ? "✓" : "✗"}
+        </span>
+      );
+    };
+    return (
+      <div
+        className={clsx(
+          "mt-3 rounded-lg border px-3 py-2 text-xs font-medium",
+          res.ok
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+            : "border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+        )}
+      >
+        <div className="flex items-start gap-2">
+          {res.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+          <span>{res.detail}</span>
+        </div>
+        {res.formatOk && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-6">
+            {chip("内容 Контент", res.content)}
+            {chip("营销 Маркетплейс", res.marketplace)}
+            {res.tokenEnv && (
+              <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                {res.tokenEnv === "sandbox" ? "沙盒 token" : "正式 token"}
+              </span>
+            )}
+            {res.expiresInDays != null && res.expiresInDays >= 0 && (
+              <span className="text-[10px] text-slate-500 dark:text-slate-400">· {res.expiresInDays} 天后过期</span>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -209,7 +263,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
                 <Store className="h-4 w-4 text-wb-pink" /> 连接 Wildberries 店铺
               </div>
               <p className="mb-4 mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                从 WB 卖家后台生成 API Token 粘进来。建议授「内容 + 营销(Маркетплейс)」权限。
+                从 WB 卖家后台生成 API Token 粘进来。<b>同一个 Token 需同时勾选「Контент(内容)」+「Маркетплейс(营销)」</b>，且不要勾「只读」。测试会分别核对两个权限。
               </p>
               <label className="label">环境</label>
               <div className="mb-3 flex gap-1 rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.03] p-1 dark:border-white/[0.06] dark:bg-white/[0.03]">
@@ -245,7 +299,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
                   {wbBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "测试连接"}
                 </button>
               </div>
-              <Result res={wbRes} />
+              <WbResult res={wbRes} />
             </div>
           )}
 

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AurixelBalance,
   ConnTest,
+  WbCheck,
   DubOptions,
   DubPreflight,
   EngineStatus,
@@ -173,7 +174,7 @@ export const api = {
   aurixelBalance: () => invoke<AurixelBalance>("aurixel_balance"),
   /** First-run wizard: validate a WB token (+ return its FBS warehouses). */
   testWb: (token: string, sandbox: boolean) =>
-    invoke<ConnTest>("test_wb", { token, sandbox }),
+    invoke<WbCheck>("test_wb", { token, sandbox }),
   /** Read the whole panel from the local DB — instant, no network. */
   dbListCards: (warehouseId: number | null) =>
     invoke<ManageView>("db_list_cards", { warehouseId }),

@@ -915,6 +915,38 @@ pub struct ConnTest {
     pub warehouses: Vec<Warehouse>,
 }
 
+/// Rich WB-token diagnostic: decodes the JWT locally (format/expiry/env) then
+/// probes each scope the app needs (Контент content-api + Маркетплейс warehouses)
+/// with the real API, so the UI can say EXACTLY what's wrong instead of a vague
+/// "token invalid". Scope fields: "ok" | "missing" | "withdrawn" | "error" | "skip".
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WbCheck {
+    pub ok: bool,
+    pub format_ok: bool,
+    pub expired: bool,
+    pub expires_in_days: Option<i64>,
+    pub token_env: String, // "sandbox" | "production" | ""
+    pub env_mismatch: bool,
+    pub content: String,
+    pub marketplace: String,
+    pub detail: String,
+    #[serde(default)]
+    pub warehouses: Vec<Warehouse>,
+}
+
+/// Classify a WB error string into a scope-status for WbCheck.
+fn wb_scope_status(msg: &str) -> &'static str {
+    let m = msg.to_lowercase();
+    if m.contains("withdrawn") {
+        "withdrawn"
+    } else if m.contains("scope") || m.contains("not allowed") || m.contains("forbidden") || m.contains("403") {
+        "missing"
+    } else {
+        "error"
+    }
+}
+
 /// Validate an Aurixel key (GET /v1/models). Used by the first-run wizard.
 #[tauri::command]
 pub async fn test_aurixel(state: State<'_, Arc<AppState>>, key: String) -> Result<ConnTest, String> {
@@ -984,24 +1016,96 @@ pub async fn test_wb(
     state: State<'_, Arc<AppState>>,
     token: String,
     sandbox: bool,
-) -> Result<ConnTest, String> {
-    let token = token.trim().to_string();
+) -> Result<WbCheck, String> {
+    // Sanitize: WB JWTs never contain whitespace; strip any the paste dragged in
+    // (a mid-token newline from a wrapped display is a top cause of "malformed").
+    let token: String = token.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut chk = WbCheck {
+        ok: false,
+        format_ok: false,
+        expired: false,
+        expires_in_days: None,
+        token_env: String::new(),
+        env_mismatch: false,
+        content: "skip".into(),
+        marketplace: "skip".into(),
+        detail: String::new(),
+        warehouses: vec![],
+    };
     if token.is_empty() {
-        return Ok(ConnTest { ok: false, detail: "请填写 WB Token".into(), warehouses: vec![] });
+        chk.detail = "请填写 WB Token".into();
+        return Ok(chk);
     }
+
+    // 1) Local structural checks (no network) — fail fast with a clear reason.
+    let claims = crate::config::wb_token_claims(&token);
+    let Some((exp, t_sandbox)) = claims else {
+        chk.detail = "Token 格式不对：不是有效的 JWT（应为 3 段、以 eyJ 开头）。请确认整段完整复制、没缺字符。".into();
+        return Ok(chk);
+    };
+    chk.format_ok = true;
+    let now = chrono::Utc::now().timestamp();
+    chk.expires_in_days = Some(((exp - now) as f64 / 86_400.0).floor() as i64);
+    chk.expired = exp <= now;
+    chk.token_env = if t_sandbox { "sandbox".into() } else { "production".into() };
+    chk.env_mismatch = t_sandbox != sandbox;
+    if chk.expired {
+        chk.detail = "Token 已过期，请到 WB 后台重新生成一个。".into();
+        return Ok(chk);
+    }
+
+    // 2) Probe each scope against the token's OWN environment (a prod token only
+    // works on prod hosts), so scope detection is accurate even if the UI toggle
+    // is on the wrong environment — that mismatch is reported separately below.
     let st = state.inner().clone();
-    let ctx = WbCtx { token, sandbox };
-    Ok(match mp_list_warehouses(&st, &ctx).await {
-        Ok(whs) => ConnTest { ok: true, detail: format!("已连接 · {} 个仓库", whs.len()), warehouses: whs },
-        Err(e) => {
-            let msg = e.to_string();
-            ConnTest {
-                ok: false,
-                detail: format!("Token 无效或权限不足:{}", msg.chars().take(80).collect::<String>()),
-                warehouses: vec![],
-            }
+    let ctx = WbCtx { token, sandbox: t_sandbox };
+    // Контент (content-api) — a cheap read that requires the Content scope.
+    chk.content = match wb_fetch(
+        &st,
+        &ctx,
+        WbReq::get("/content/v2/object/parent/all").q("locale", "ru").on(crate::wb::client::Host::Content),
+    )
+    .await
+    {
+        Ok(_) => "ok".into(),
+        Err(e) => wb_scope_status(&e.to_string()).into(),
+    };
+    // Маркетплейс (warehouses) — requires the Marketplace scope.
+    match mp_list_warehouses(&st, &ctx).await {
+        Ok(whs) => {
+            chk.marketplace = "ok".into();
+            chk.warehouses = whs;
         }
-    })
+        Err(e) => chk.marketplace = wb_scope_status(&e.to_string()).into(),
+    }
+
+    // 3) Verdict + human-readable summary.
+    let withdrawn = chk.content == "withdrawn" || chk.marketplace == "withdrawn";
+    chk.ok = chk.content == "ok" && chk.marketplace == "ok" && !chk.env_mismatch;
+    chk.detail = if withdrawn {
+        "该 Token 已被撤销/删除，请到 WB 后台「设置 → 访问 API」新建一个。".into()
+    } else if chk.env_mismatch {
+        format!(
+            "环境不匹配：这是「{}」的 Token，但你选了「{}」。请把上面的环境切到「{}」。",
+            if t_sandbox { "沙盒测试" } else { "正式店铺" },
+            if sandbox { "沙盒测试" } else { "正式店铺" },
+            if t_sandbox { "沙盒测试" } else { "正式店铺" },
+        )
+    } else if chk.ok {
+        format!("已连接 · 内容✅ 营销✅ · {} 个仓库", chk.warehouses.len())
+    } else {
+        let part = |name: &str, s: &str| match s {
+            "ok" => format!("{}✅", name),
+            "missing" => format!("{}❌(缺权限)", name),
+            _ => format!("{}⚠(检测失败)", name),
+        };
+        format!(
+            "{} · {} —— 缺的权限请到 WB 后台重建 Token 勾选对应类目",
+            part("内容 Контент", &chk.content),
+            part("营销 Маркетплейс", &chk.marketplace),
+        )
+    };
+    Ok(chk)
 }
 
 /// Read the whole panel from the LOCAL DB — instant, offline, no rate-limit
