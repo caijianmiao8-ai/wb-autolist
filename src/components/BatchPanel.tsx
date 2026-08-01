@@ -672,8 +672,14 @@ function ImportOverlay({ active, label }: { active: boolean; label: string }) {
   );
 }
 
+/** A synthetic placeholder means image generation FAILED for that slot; publish
+ *  refuses those, so such a card must show up as 待修 (not silently "就绪"). */
+export function hasPlaceholder(l: Listing) {
+  return l.images.some((i) => i.templateKind === "placeholder");
+}
+
 function listingReady(l: Listing) {
-  return !l.error && !!l.copy && l.images.length > 0;
+  return !l.error && !!l.copy && l.images.length > 0 && !hasPlaceholder(l);
 }
 
 // ───────────────────────── Step 1: import + media matching ─────────────────────────
@@ -1132,6 +1138,13 @@ function ReviewStep({
                   <span className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-emerald-700/85 px-1.5 py-0.5 text-[10px] text-white">
                     <Video className="h-3 w-3" /> 俄
                   </span>
+                )}
+                {/* Say WHY it's not ready — publish refuses placeholder images, so
+                    without this the card would look fine and just fail at publish. */}
+                {hasPlaceholder(l) && (
+                  <div className="absolute inset-x-0 bottom-0 bg-rose-600/90 px-1.5 py-1 text-[10px] font-medium leading-snug text-white">
+                    ⚠ 有图片生成失败（占位图）· 需重新生成后才能上架
+                  </div>
                 )}
               </div>
               <div className="p-2.5">

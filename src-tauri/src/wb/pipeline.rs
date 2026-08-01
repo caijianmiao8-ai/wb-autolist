@@ -148,14 +148,23 @@ async fn run_pipeline(
             env_name(listing.sandbox)
         ));
     }
-    // (c) refuse to ship a synthetic placeholder as the live main photo.
-    if order_images(listing)
-        .first()
-        .map(|i| i.template_kind == "placeholder")
-        .unwrap_or(false)
-    {
+    // (c) refuse to ship ANY synthetic placeholder to the live storefront — not
+    // just the main photo. A gallery placeholder is a purple card with the product
+    // NAME printed on it; shipping one puts obvious junk on the seller's listing.
+    let placeholders: Vec<usize> = order_images(listing)
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.template_kind == "placeholder")
+        .map(|(n, _)| n + 1)
+        .collect();
+    if !placeholders.is_empty() {
         return Err(anyhow!(
-            "主图是占位图（图像服务此前失败）。请重新生成主图后再上架。"
+            "第 {} 张是占位图（图像服务当时失败，不是真实产品图）。请先重新生成这些图片再上架。",
+            placeholders
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join("、")
         ));
     }
 

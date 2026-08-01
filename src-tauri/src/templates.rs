@@ -93,8 +93,19 @@ pub fn fill(body: &str, ctx: &HashMap<String, String>) -> String {
         out = out.replace(&format!("{{{}}}", k), v);
     }
     let referenced_custom = body.contains("{CUSTOM}");
+    let referenced_product = body.contains("{PRODUCT}");
     out = strip_tokens(&out);
     out = collapse_ws(&out);
+    // The product description must reach EVERY prompt — otherwise the model only
+    // has a title/category and invents a different-looking product per image. Any
+    // template that doesn't place {PRODUCT} itself (incl. users' saved ones) gets
+    // it appended once, as an explicit "this is the product" clause.
+    if !referenced_product {
+        if let Some(p) = ctx.get("PRODUCT").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            out.push_str(" The product is exactly this, and must look the same in every image: ");
+            out.push_str(p);
+        }
+    }
     if !referenced_custom {
         if let Some(c) = ctx.get("CUSTOM").map(|s| s.trim()).filter(|s| !s.is_empty()) {
             out.push(' ');
@@ -266,6 +277,25 @@ mod tests {
         assert!(out.contains("red banner"));
         assert!(!out.contains("{MISSING}") && !out.contains("MISSING"));
         assert!(!out.contains("{TITLE}"));
+    }
+
+    #[test]
+    fn product_description_reaches_every_prompt() {
+        // The AI product description must land in EVERY prompt (this is what stops
+        // separate images from each inventing a different-looking product).
+        let mut c = ctx("");
+        c.insert("PRODUCT".into(), "white double-round electric pancake maker".into());
+        // template that never mentions {PRODUCT} → appended once
+        let out = fill("A clean studio photo. {ACCENT} accents.", &c);
+        assert!(out.contains("white double-round electric pancake maker"), "{out}");
+        assert_eq!(out.matches("white double-round").count(), 1, "{out}");
+        // template that places it itself → not duplicated
+        let out2 = fill("Photo of {PRODUCT} on a table.", &c);
+        assert_eq!(out2.matches("white double-round").count(), 1, "{out2}");
+        // empty product → nothing appended, no stray clause
+        let mut c2 = ctx("");
+        c2.insert("PRODUCT".into(), "".into());
+        assert!(!fill("A clean studio photo.", &c2).contains("must look the same"));
     }
 
     #[test]

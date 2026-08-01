@@ -88,22 +88,37 @@ pub(crate) fn build_ctx(copy: &ProductCopy, name: &str, keywords: &[String], cus
     m.insert("N".into(), n);
     m.insert("ACCENT".into(), accent);
     m.insert("KEY_BENEFIT".into(), key_benefit);
-    m.insert("SCENE".into(), "an attractive real-life scene where the product is used".into());
+    // Scene: anchored to the actual category so the model doesn't invent a random
+    // setting (a bare "a real-life scene" made every image pick its own product).
+    m.insert(
+        "SCENE".into(),
+        format!("a realistic everyday scene where a {} is actually used", category),
+    );
     m.insert("CATEGORY".into(), category);
     m.insert("NAME".into(), name.to_string());
+    // PRODUCT: the AI-written detailed English description of THIS product. Without
+    // it the model only saw a Russian title + category and had to INVENT what the
+    // product looks like — which is why separate images came back as different
+    // machines. `fill()` appends it to any template that doesn't place it itself.
+    m.insert(
+        "PRODUCT".into(),
+        copy.image_prompt.clone().unwrap_or_default().trim().to_string(),
+    );
     m.insert("CUSTOM".into(), custom.trim().to_string());
     m
 }
 
-/// Render ONE image for a template (shared by generate + regenerate). `base` =
-/// the seller's product photo for img2img (None → text-to-image). On failure it
-/// derives from the real photo rather than shipping a synthetic placeholder.
+/// Render ONE image for a template (shared by generate + regenerate). `bases` =
+/// ALL of the seller's product photos for img2img (empty → text-to-image). Every
+/// photo is sent as a reference so the model sees the real product from several
+/// angles — markedly better fidelity than a single shot. On failure it derives
+/// from the real photo rather than shipping a synthetic placeholder.
 pub(crate) async fn render_one(
     state: &AppState,
     cfg: &AppConfig,
     tmpl: &crate::templates::ImageTemplate,
     ctx: &HashMap<String, String>,
-    base: Option<&[u8]>,
+    bases: &[Vec<u8>],
     title: &str,
     bullets: &[String],
     product_name: &str,
@@ -112,12 +127,21 @@ pub(crate) async fn render_one(
 ) -> Result<GeneratedImage> {
     let prompt = fill(&tmpl.body, ctx);
     let mut is_placeholder = false;
-    let raw_bytes: Result<Vec<u8>> = match base {
-        Some(b) => match to_png_square(b, 1024) {
-            Ok(png) => edit_image(&state.http, cfg, &png, &prompt, "1024x1536").await,
-            Err(e) => Err(e),
-        },
-        None => generate_image(&state.http, cfg, &prompt, 1024, 1536, Some(1000 + idx as u64)).await,
+    let refs: Vec<Vec<u8>> = bases
+        .iter()
+        .take(crate::ai::image::MAX_REF_PHOTOS)
+        .filter_map(|b| to_png_square(b, 1024).ok())
+        .collect();
+    let raw_bytes: Result<Vec<u8>> = if !refs.is_empty() {
+        edit_image(&state.http, cfg, &refs, &prompt, "1024x1536").await
+    } else if bases.is_empty() {
+        generate_image(&state.http, cfg, &prompt, 1024, 1536, Some(1000 + idx as u64)).await
+    } else {
+        // The seller DID give us photos but none could be decoded. Never silently
+        // fall through to text-to-image here: that invents a product the seller
+        // never sold, while they believe their own photo was used. Fail loudly —
+        // the caller turns this into a visibly-flagged placeholder.
+        Err(anyhow::anyhow!("参考产品图无法读取（格式不支持或文件损坏），请换一张再试"))
     };
     let buf = match raw_bytes {
         Ok(b) => {
@@ -152,7 +176,8 @@ pub(crate) async fn render_one(
             }
         }
         Err(_) => {
-            let fallback = base
+            let fallback = bases
+                .first()
                 .and_then(|b| to_png_square(b, 1200).ok())
                 .and_then(|p| normalize_main(&p, 1200, 1600).ok());
             match fallback {
@@ -266,26 +291,48 @@ pub async fn generate_listing(
     // Generate the images CONCURRENTLY (bounded), preserving order (index 0 = main).
     // buffered() runs up to N at once but yields in order, so progress + the images
     // vec stay deterministic; the first render error aborts the whole gen (as before).
+    //
+    // VISUAL ANCHOR: when the seller uploaded no photo, every image would otherwise
+    // be an independent text-to-image and each one INVENTS its own product (the set
+    // came back as several different machines). So render the MAIN image first and
+    // then feed it back as the img2img reference for the rest — every later image is
+    // then a restyle of the same product. With real seller photos we already have a
+    // better anchor and use those instead.
     let mut images: Vec<GeneratedImage> = Vec::with_capacity(now_count);
+    let mut anchor: Vec<Vec<u8>> = bases.clone();
+    if anchor.is_empty() && now_count > 0 {
+        let first = render_one(
+            state, cfg, &plan[0], &ctx, &[], &copy.title, &copy.bullets,
+            &raw.product_name, &raw.keywords, 0,
+        )
+        .await?;
+        on("generate", true, &format!("已生成 1/{} 张…", now_count));
+        if first.template_kind != "placeholder" {
+            if let Ok(b) = std::fs::read(state.paths.images().join(&first.url)) {
+                anchor.push(b); // later images restyle THIS exact product
+            }
+        }
+        images.push(first);
+    }
     {
         // Bind references so each `async move` future captures cheap Copy refs (not a
         // move of the shared ctx/copy/raw). Build the futures in a for loop (same
         // anonymous type each iter → a Vec works) to avoid the closure-HRTB error that
         // `iter().map(|x| async move {…})` hits under buffered().
-        let (ctx_r, copy_r, raw_r, bases_r) = (&ctx, &copy, &raw, &bases);
-        let mut futs = Vec::with_capacity(now_count);
-        for (i, tmpl) in plan.iter().take(now_count).enumerate() {
-            let base = if bases_r.is_empty() { None } else { Some(bases_r[i % bases_r.len()].as_slice()) };
+        let done = images.len();
+        let (ctx_r, copy_r, raw_r, bases_r) = (&ctx, &copy, &raw, &anchor);
+        let mut futs = Vec::with_capacity(now_count.saturating_sub(done));
+        for (i, tmpl) in plan.iter().take(now_count).enumerate().skip(done) {
             futs.push(async move {
                 render_one(
-                    state, cfg, tmpl, ctx_r, base, &copy_r.title, &copy_r.bullets,
+                    state, cfg, tmpl, ctx_r, bases_r, &copy_r.title, &copy_r.bullets,
                     &raw_r.product_name, &raw_r.keywords, i,
                 )
                 .await
             });
         }
         let mut s = stream::iter(futs).buffered(IMAGE_CONCURRENCY);
-        let mut k = 0usize;
+        let mut k = done;
         while let Some(res) = s.next().await {
             k += 1;
             on("generate", true, &format!("已生成 {}/{} 张…", k, now_count));

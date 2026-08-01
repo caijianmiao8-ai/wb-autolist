@@ -10,30 +10,71 @@ use std::time::Duration;
 
 const AURIXEL_BASE: &str = "https://conduit-api.bifrostapi.net/v1";
 
+/// Attempts per image. Images are generated several-at-a-time, so a burst can hit
+/// the gateway's concurrency/rate limit (429); with too few, too-short retries the
+/// image silently degrades to a synthetic placeholder. Retry longer instead — by
+/// the later attempts the sibling jobs have finished and capacity is free again.
+const RETRIES: u32 = 5;
+
+/// A transport error (usually a 300s upload timeout on a slow uplink) is NOT a
+/// rate limit — retrying it 5× would burn ~25 min per image. Cap those tightly.
+const TRANSPORT_RETRIES: u32 = 2;
+
+/// Hard ceiling on total time spent on ONE image, retries included. Without it a
+/// pathological case (repeated 300s timeouts + backoff) could hang generation for
+/// half an hour per image with no cancel button.
+const DEADLINE: Duration = Duration::from_secs(600);
+
+/// Escalating backoff: 15s, 30s, 45s, 60s — long enough to outlast a burst.
+fn backoff(attempt: u32) -> Duration {
+    Duration::from_secs(15 * (attempt as u64 + 1))
+}
+
+/// True while there's still time for another attempt (incl. the backoff wait).
+fn have_time(start: std::time::Instant, wait: Duration) -> bool {
+    start.elapsed() + wait < DEADLINE
+}
+
+/// How many reference photos to send in ONE edit call. More angles = better
+/// product fidelity, but each is a full upload — cap it so the request stays sane.
+pub const MAX_REF_PHOTOS: usize = 4;
+
 /// Image-to-image (edit): keep the input product, restyle per the prompt.
 /// Aurixel gpt-image-2 `/images/edits` — multipart form. Slow (~80-150s).
+/// Accepts MULTIPLE reference photos (verified: the gateway takes `image[]`),
+/// so the model sees the real product from several angles instead of just one.
 pub async fn edit_image(
     http: &reqwest::Client,
     cfg: &AppConfig,
-    base_png: &[u8],
+    base_pngs: &[Vec<u8>],
     prompt: &str,
     size: &str,
 ) -> Result<Vec<u8>> {
     if cfg.aurixel_api_key.is_empty() {
         return Err(anyhow!("图生图需要 Aurixel Key"));
     }
+    if base_pngs.is_empty() {
+        return Err(anyhow!("图生图需要至少一张参考图"));
+    }
+    let refs: Vec<&Vec<u8>> = base_pngs.iter().take(MAX_REF_PHOTOS).collect();
     let url = format!("{}/images/edits", AURIXEL_BASE);
     let mut last_err = String::new();
-    for attempt in 0..3 {
-        let part = reqwest::multipart::Part::bytes(base_png.to_vec())
-            .file_name("in.png")
-            .mime_str("image/png")?;
-        let form = reqwest::multipart::Form::new()
+    let started = std::time::Instant::now();
+    for attempt in 0..RETRIES {
+        let mut form = reqwest::multipart::Form::new()
             .text("model", "gpt-image-2")
             .text("prompt", prompt.to_string())
             .text("size", size.to_string())
-            .text("n", "1")
-            .part("image", part);
+            .text("n", "1");
+        // Single photo → the classic `image` field (max compatibility);
+        // several → repeated `image[]` parts (verified accepted by the gateway).
+        let field = if refs.len() == 1 { "image" } else { "image[]" };
+        for (n, png) in refs.iter().enumerate() {
+            let part = reqwest::multipart::Part::bytes((*png).clone())
+                .file_name(format!("ref{}.png", n + 1))
+                .mime_str("image/png")?;
+            form = form.part(field, part);
+        }
         let res = http
             .post(&url)
             .header("Authorization", format!("Bearer {}", cfg.aurixel_api_key))
@@ -59,16 +100,20 @@ pub async fn edit_image(
                 }
                 let text = r.text().await.unwrap_or_default();
                 last_err = format!("HTTP {} {}", status, text.chars().take(160).collect::<String>());
-                if (status == 429 || status >= 500) && attempt < 2 {
-                    tokio::time::sleep(Duration::from_secs(10 * (attempt + 1))).await;
+                if (status == 429 || status >= 500)
+                    && attempt + 1 < RETRIES
+                    && have_time(started, backoff(attempt))
+                {
+                    tokio::time::sleep(backoff(attempt)).await;
                     continue;
                 }
                 break;
             }
             Err(e) => {
                 last_err = e.to_string();
-                if attempt < 2 {
-                    tokio::time::sleep(Duration::from_secs(8)).await;
+                // Transport failure (usually an upload timeout): retry only briefly.
+                if attempt + 1 < TRANSPORT_RETRIES && have_time(started, backoff(attempt)) {
+                    tokio::time::sleep(backoff(attempt)).await;
                     continue;
                 }
                 break;
@@ -132,7 +177,8 @@ async fn openai_compatible_image(
     };
     let url = format!("{}/images/generations", base_url.trim_end_matches('/'));
     let mut last_err = String::new();
-    for attempt in 0..3 {
+    let started = std::time::Instant::now();
+    for attempt in 0..RETRIES {
         let res = http
             .post(&url)
             .header("Authorization", format!("Bearer {}", api_key))
@@ -158,16 +204,19 @@ async fn openai_compatible_image(
                 }
                 let text = r.text().await.unwrap_or_default();
                 last_err = format!("HTTP {} {}", status, text.chars().take(160).collect::<String>());
-                if (status == 429 || status >= 500) && attempt < 2 {
-                    tokio::time::sleep(Duration::from_secs(10 * (attempt + 1))).await;
+                if (status == 429 || status >= 500)
+                    && attempt + 1 < RETRIES
+                    && have_time(started, backoff(attempt))
+                {
+                    tokio::time::sleep(backoff(attempt)).await;
                     continue;
                 }
                 break;
             }
             Err(e) => {
                 last_err = e.to_string();
-                if attempt < 2 {
-                    tokio::time::sleep(Duration::from_secs(10 * (attempt + 1))).await;
+                if attempt + 1 < TRANSPORT_RETRIES && have_time(started, backoff(attempt)) {
+                    tokio::time::sleep(backoff(attempt)).await;
                     continue;
                 }
                 break;

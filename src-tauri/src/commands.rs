@@ -1534,10 +1534,19 @@ pub async fn regenerate_image(
         .unwrap_or_else(|| crate::templates::built_in_defaults().templates[0].clone());
 
     let ctx = build_ctx(&copy, &l.product_name, &l.keywords, custom_prompt.as_deref().unwrap_or(""));
-    let bases: Vec<Vec<u8>> = base_photos.iter().filter_map(|s| decode_image_input(s)).collect();
-    let base = if bases.is_empty() { None } else { Some(bases[index % bases.len()].as_slice()) };
+    let mut bases: Vec<Vec<u8>> = base_photos.iter().filter_map(|s| decode_image_input(s)).collect();
+    // No seller photo → anchor a NON-main image to the main one so the redo keeps
+    // the same product. (Redoing the main itself must stay text-to-image, otherwise
+    // it would just copy the image the user is trying to replace.)
+    if bases.is_empty() && index > 0 {
+        if let Some(main) = l.images.first().filter(|i| i.template_kind != "placeholder") {
+            if let Ok(b) = std::fs::read(st.paths.images().join(&main.url)) {
+                bases.push(b);
+            }
+        }
+    }
     let new_img = render_one(
-        &st, &cfg, &tmpl, &ctx, base, &copy.title, &copy.bullets, &l.product_name, &l.keywords, index,
+        &st, &cfg, &tmpl, &ctx, &bases, &copy.title, &copy.bullets, &l.product_name, &l.keywords, index,
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -1575,8 +1584,17 @@ pub async fn generate_rest(
         plan = crate::templates::built_in_defaults().plan(want);
     }
     let ctx = build_ctx(&copy, &l.product_name, &l.keywords, custom_prompt.as_deref().unwrap_or(""));
-    let bases: Vec<Vec<u8>> = base_photos.iter().filter_map(|s| decode_image_input(s)).collect();
+    let mut bases: Vec<Vec<u8>> = base_photos.iter().filter_map(|s| decode_image_input(s)).collect();
     let start = l.images.len();
+    // No seller photo → anchor the remaining images to the ALREADY-APPROVED main
+    // image, so they show the same product instead of each inventing its own.
+    if bases.is_empty() {
+        if let Some(main) = l.images.first().filter(|i| i.template_kind != "placeholder") {
+            if let Ok(b) = std::fs::read(st.paths.images().join(&main.url)) {
+                bases.push(b);
+            }
+        }
+    }
 
     // Render the remaining images CONCURRENTLY (bounded, ordered) — same fan-out as
     // the initial gen so "出其余" isn't a slow serial crawl. Scoped so the borrows of
@@ -1589,9 +1607,8 @@ pub async fn generate_rest(
         let mut futs = Vec::new();
         for i in start..plan_r.len() {
             let tmpl = &plan_r[i];
-            let base = if bases_r.is_empty() { None } else { Some(bases_r[i % bases_r.len()].as_slice()) };
             futs.push(async move {
-                render_one(st_r, cfg_r, tmpl, ctx_r, base, &copy_r.title, &copy_r.bullets, &l_r.product_name, &l_r.keywords, i).await
+                render_one(st_r, cfg_r, tmpl, ctx_r, bases_r, &copy_r.title, &copy_r.bullets, &l_r.product_name, &l_r.keywords, i).await
             });
         }
         let mut s = stream::iter(futs).buffered(crate::generate::IMAGE_CONCURRENCY);

@@ -285,7 +285,9 @@ export function Workbench() {
           })
       )
     );
-    setBasePhotos((a) => [...a, ...urls].slice(0, 8));
+    // Cap at MAX_REF_PHOTOS (backend sends at most this many as references) — don't
+    // accept photos we'd silently ignore.
+    setBasePhotos((a) => [...a, ...urls].slice(0, 4));
     if (photoRef.current) photoRef.current.value = "";
   }
 
@@ -866,7 +868,7 @@ function InputForm(p: InputFormProps) {
               />
             </div>
             <p className="mt-2 text-[11px] leading-snug text-slate-400">
-              你的真实产品图。AI 据此出图；<b>留空则全自动生成</b>。
+              你的真实产品图，<b>可传多张</b>(不同角度/细节，最多 4 张一起参考，出图更像实物)；留空则全自动生成。
             </p>
           </div>
 
@@ -1970,6 +1972,13 @@ function ImagesPanel({
                   {labels[img.kind] ?? img.kind}
                 </span>
               </div>
+              {/* A placeholder means generation FAILED for this slot (it's a synthetic
+                  card, not a product photo). Say so — publish refuses these anyway. */}
+              {img.templateKind === "placeholder" && (
+                <div className="absolute inset-x-0 bottom-0 bg-rose-600/90 px-2 py-1 text-[10.5px] font-medium leading-snug text-white">
+                  ⚠ 这张生成失败（占位图，不能上架）· 点右上角重新生成
+                </div>
+              )}
               <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
                 <button
                   onClick={() => {
