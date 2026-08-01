@@ -443,6 +443,28 @@ mod token_tests {
     }
 
     #[test]
+    fn active_templates_keeps_user_edit_but_refreshes_stale_builtin() {
+        // A user-edited set (source="user") is kept forever — this is why an
+        // editor save no longer "reverts" after an app update.
+        let mut cfg = AppConfig::default();
+        let mut user = crate::templates::built_in_defaults();
+        user.source = "user".into();
+        user.templates[0].body = "USER EDIT KEEP ME".into();
+        cfg.image_templates = Some(user);
+        let a = active_templates(&cfg);
+        assert_eq!(a.source, "user");
+        assert_eq!(a.templates[0].body, "USER EDIT KEEP ME");
+
+        // A stale FROZEN-DEFAULT set (source="builtin") is refreshed to current.
+        let mut cfg2 = AppConfig::default();
+        let mut stale = crate::templates::built_in_defaults();
+        stale.source = "builtin".into();
+        stale.templates[0].body = "STALE FROZEN BODY".into();
+        cfg2.image_templates = Some(stale);
+        assert_ne!(active_templates(&cfg2).templates[0].body, "STALE FROZEN BODY");
+    }
+
+    #[test]
     fn wb_token_claims_reads_env_and_exp() {
         // production token (t=false)
         let tok = format!("{}.{}.sig", b64("{}"), b64(r#"{"exp":1801349237,"t":false}"#));

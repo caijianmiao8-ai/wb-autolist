@@ -99,6 +99,14 @@ export const api = {
   /** Edit the draft's title/description/bullets before publishing. */
   updateCopy: (id: string, title: string, description: string, bullets: string[]) =>
     invoke<Listing>("update_copy", { id, title, description, bullets }),
+  /** Translate a manually-written Chinese listing → Russian (title/desc/bullets).
+   *  Pure translate (no DB write); the copy editor fills the RU fields with it. */
+  translateCopy: (title: string, description: string, bullets: string[]) =>
+    invoke<{ title: string; description: string; bullets: string[] }>("translate_copy", {
+      title,
+      description,
+      bullets,
+    }),
   /** Attach (or clear with "") the dubbed RU video path on a draft. */
   setListingVideo: (id: string, path: string) =>
     invoke<Listing>("set_listing_video", { id, path }),

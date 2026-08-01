@@ -16,6 +16,8 @@ import {
   Settings,
   RefreshCw,
   Video,
+  Play,
+  Languages,
   Eye,
   ArrowLeft,
   ArrowRight,
@@ -462,12 +464,15 @@ export function Workbench() {
     }
   }
 
-  async function doRegenerate(index: number) {
+  async function doRegenerate(index: number, instruction?: string) {
     if (!listing) return;
     setRegenLoading(index);
     setError(null);
     try {
-      const updated = await api.regenerateImage(listing.id, index, basePhotos, customPrompt);
+      // A per-image instruction (e.g. "画煎饼,不要华夫饼") takes priority over the
+      // global custom prompt — it's appended as {CUSTOM} to just this image's prompt.
+      const extra = [customPrompt, instruction].map((s) => (s ?? "").trim()).filter(Boolean).join("；");
+      const updated = await api.regenerateImage(listing.id, index, basePhotos, extra);
       setListing(updated);
     } catch (e) {
       setError(e instanceof Error ? e.message : "重生成失败");
@@ -1915,7 +1920,7 @@ function ImagesPanel({
   regenLoading,
 }: {
   listing: Listing;
-  onRegenerate: (i: number) => void;
+  onRegenerate: (i: number, instruction?: string) => void;
   regenLoading: number | null;
 }) {
   const labels: Record<string, string> = {
@@ -1925,6 +1930,10 @@ function ImagesPanel({
   };
   const [savingIdx, setSavingIdx] = useState<number | null>(null);
   const [savedIdx, setSavedIdx] = useState<number | null>(null);
+  // Per-image "targeted fix": open a small box under one image, type a requirement
+  // (e.g. 展示煎饼,不要华夫饼) → regenerate ONLY that image with it appended.
+  const [instrIdx, setInstrIdx] = useState<number | null>(null);
+  const [instr, setInstr] = useState("");
   async function downloadImg(url: string, kind: string, i: number) {
     if (savingIdx !== null) return;
     setSavingIdx(i);
@@ -1963,9 +1972,12 @@ function ImagesPanel({
               </div>
               <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
                 <button
-                  onClick={() => onRegenerate(i)}
+                  onClick={() => {
+                    setInstrIdx((v) => (v === i ? null : i));
+                    setInstr("");
+                  }}
                   disabled={regenLoading !== null}
-                  title="重新生成这一张"
+                  title="重新生成这一张（可提要求）"
                   className="grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white backdrop-blur disabled:opacity-50"
                 >
                   <RefreshCw className="h-4 w-4" />
@@ -1993,6 +2005,35 @@ function ImagesPanel({
                   </div>
                 </div>
               )}
+              {instrIdx === i && !busy && (
+                <div className="absolute inset-x-0 bottom-0 space-y-1.5 bg-black/75 p-2 backdrop-blur">
+                  <textarea
+                    autoFocus
+                    rows={2}
+                    value={instr}
+                    onChange={(e) => setInstr(e.target.value)}
+                    placeholder="对这张图的要求(可留空)，例如：展示煎饼，不要华夫饼"
+                    className="w-full resize-none rounded bg-white/95 px-2 py-1 text-[11px] leading-snug text-slate-900 outline-none"
+                  />
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => {
+                        onRegenerate(i, instr);
+                        setInstrIdx(null);
+                      }}
+                      className="flex-1 rounded bg-wb-pink px-2 py-1 text-[11px] font-medium text-white"
+                    >
+                      重新生成
+                    </button>
+                    <button
+                      onClick={() => setInstrIdx(null)}
+                      className="rounded bg-white/20 px-2 py-1 text-[11px] text-white"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -2009,6 +2050,28 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
   const [eBullets, setEBullets] = useState("");
   const [savingCopy, setSavingCopy] = useState(false);
   const [copyErr, setCopyErr] = useState<string | null>(null);
+  // Manual "write in Chinese → translate to Russian" helper (fills the RU fields).
+  const [zhOpen, setZhOpen] = useState(false);
+  const [zhTitle, setZhTitle] = useState("");
+  const [zhDesc, setZhDesc] = useState("");
+  const [zhBullets, setZhBullets] = useState("");
+  const [translating, setTranslating] = useState(false);
+  async function translateFromZh() {
+    if (!zhTitle.trim() && !zhDesc.trim()) return;
+    setTranslating(true);
+    setCopyErr(null);
+    try {
+      const bl = zhBullets.split("\n").map((s) => s.trim()).filter(Boolean);
+      const r = await api.translateCopy(zhTitle.trim(), zhDesc.trim(), bl);
+      if (r.title) setETitle(r.title.slice(0, 60));
+      if (r.description) setEDesc(r.description.slice(0, 2000));
+      if (r.bullets?.length) setEBullets(r.bullets.join("\n"));
+    } catch (e) {
+      setCopyErr(e instanceof Error ? e.message : "翻译失败");
+    } finally {
+      setTranslating(false);
+    }
+  }
   // Bilingual view: 俄(发布用) / 中(参考) / 双语. Chinese is reference-only.
   const [lang, setLang] = useState<"ru" | "zh" | "both">("both");
   const showRu = lang !== "zh";
@@ -2096,6 +2159,58 @@ function CopyPanel({ listing, onUpdate }: { listing: Listing; onUpdate?: (l: Lis
       </div>
       {editing ? (
         <div className="space-y-3 text-sm">
+          {/* 手动写中文 → 翻译成俄文（填入下面的俄文字段，再校对保存） */}
+          <div className="rounded-xl border border-wb-purple/25 bg-wb-purple/[0.04] p-3">
+            <button
+              onClick={() => setZhOpen((v) => !v)}
+              className="flex w-full items-center gap-1.5 text-xs font-medium text-wb-purple"
+            >
+              <Languages className="h-3.5 w-3.5" /> 用中文写，翻译成俄文
+              <ChevronDown className={clsx("ml-auto h-3.5 w-3.5 transition", zhOpen && "rotate-180")} />
+            </button>
+            {zhOpen && (
+              <div className="mt-2 space-y-2">
+                <input
+                  className="input"
+                  placeholder="中文标题"
+                  value={zhTitle}
+                  onChange={(e) => setZhTitle(e.target.value)}
+                />
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="中文描述"
+                  value={zhDesc}
+                  onChange={(e) => setZhDesc(e.target.value)}
+                />
+                <textarea
+                  className="input"
+                  rows={2}
+                  placeholder="中文卖点（每行一条）"
+                  value={zhBullets}
+                  onChange={(e) => setZhBullets(e.target.value)}
+                />
+                <button
+                  onClick={translateFromZh}
+                  disabled={translating || (!zhTitle.trim() && !zhDesc.trim())}
+                  className="btn-primary w-full py-2 text-xs"
+                >
+                  {translating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> 翻译中…
+                    </>
+                  ) : (
+                    <>
+                      <Languages className="h-4 w-4" /> 翻译成俄文（填入下方）
+                    </>
+                  )}
+                </button>
+                <p className="text-[10.5px] leading-snug text-slate-500">
+                  译文会填入下面的俄文字段，可再校对/微调，最后点「保存」。
+                </p>
+              </div>
+            )}
+          </div>
           <div>
             <span className="label">标题（{eTitle.length}/60）</span>
             <input
@@ -2429,6 +2544,13 @@ function VideoPanel({
           <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
             发布时随卡片一起上传。
           </span>
+          <button
+            className="btn-ghost px-2.5 py-1 text-xs"
+            onClick={() => listing.videoRu && api.openPath(listing.videoRu).catch(() => {})}
+            title="用系统播放器预览配俄语后的成片"
+          >
+            <Play className="h-3 w-3" /> 预览
+          </button>
           <button className="btn-ghost px-2.5 py-1 text-xs" onClick={reDub}>
             <RefreshCw className="h-3 w-3" /> 重配
           </button>

@@ -71,6 +71,10 @@ export function TemplateEditor() {
     try {
       // save_config does a shallow merge — must send the COMPLETE object.
       await api.saveSettings({ imageTemplates: tpl });
+      // Re-read what actually persisted and show it, so the edit visibly STICKS
+      // (backend stamps source="user" → these are kept forever, never auto-reset).
+      const d = await api.getSettings();
+      if (d.imageTemplates) setTpl(d.imageTemplates);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {

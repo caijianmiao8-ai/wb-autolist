@@ -260,6 +260,41 @@ pub async fn update_copy(
     Ok(hydrate(&st.paths, updated))
 }
 
+/// Result of translating a hand-written Chinese listing into Russian.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslatedCopy {
+    pub title: String,
+    pub description: String,
+    pub bullets: Vec<String>,
+}
+
+/// Translate a manually-written Chinese listing into Russian (no DB mutation) so
+/// the copy editor can pre-fill the RU fields for the user to review, then save.
+#[tauri::command]
+pub async fn translate_copy(
+    state: State<'_, Arc<AppState>>,
+    title: String,
+    description: String,
+    bullets: Vec<String>,
+) -> Result<TranslatedCopy, String> {
+    let st = state.inner().clone();
+    let cfg = get_config(&st.paths);
+    let key = cfg.aurixel_api_key.trim().to_string();
+    if key.is_empty() {
+        return Err("未配置 Aurixel Key，无法翻译".into());
+    }
+    let model = if cfg.aurixel_chat_model.trim().is_empty() {
+        "gpt-5.5".to_string()
+    } else {
+        cfg.aurixel_chat_model.clone()
+    };
+    let (t, d, b) = crate::ai::copy::translate_copy(&st.http, &key, &model, &title, &description, &bullets)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(TranslatedCopy { title: t, description: d, bullets: b })
+}
+
 /// Attach (or clear) the Russian-dubbed video path on a draft, so publish uploads
 /// it as the card's video. Called by the single-flow after dubbing completes.
 #[tauri::command]

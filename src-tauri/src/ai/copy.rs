@@ -180,6 +180,52 @@ async fn aurixel_image_prompt(
     Ok(p)
 }
 
+/// Translate a MANUALLY-written Chinese listing (title/description/bullets) into
+/// natural selling Russian for WB. Returns (ru_title, ru_description, ru_bullets).
+/// The caller keeps the Chinese as the zh reference copy.
+pub async fn translate_copy(
+    http: &reqwest::Client,
+    api_key: &str,
+    model: &str,
+    title: &str,
+    description: &str,
+    bullets: &[String],
+) -> Result<(String, String, Vec<String>)> {
+    let payload = json!({ "title": title, "description": description, "bullets": bullets });
+    let body = json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": "You are a professional Russian e-commerce copywriter/translator for Wildberries. Translate the given Chinese product listing into natural, fluent, persuasive Russian that reads like a native WB listing (not a literal machine translation). Keep the meaning and all facts. Respond with valid JSON only." },
+            { "role": "user", "content": format!("Translate this product listing from Chinese to Russian. Return JSON with the SAME shape: title (string), description (string), bullets (string[] — keep the same number of bullets, translate each).\n{}", payload) }
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": { "name": "ru_copy", "strict": true, "schema": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                    "title": { "type": "string" },
+                    "description": { "type": "string" },
+                    "bullets": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["title", "description", "bullets"]
+            } }
+        }
+    });
+    let content = chat(http, api_key, &body, 90).await?;
+    let v: Value = serde_json::from_str(&extract_json(&content)).unwrap_or(json!({}));
+    let title = str_field(&v, "title");
+    let description = str_field(&v, "description");
+    let bullets: Vec<String> = arr_field(&v, "bullets")
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if title.trim().is_empty() && description.trim().is_empty() {
+        return Err(anyhow!("翻译返回为空"));
+    }
+    Ok((title, description, bullets))
+}
+
 async fn chat(http: &reqwest::Client, api_key: &str, body: &Value, timeout_s: u64) -> Result<String> {
     let res = http
         .post(AURIXEL_CHAT)
