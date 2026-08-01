@@ -214,6 +214,11 @@ export const api = {
   /** Engine state (downloading / ready / last progress) — for Settings + re-hydrate. */
   dubEngineStatus: () => invoke<EngineStatus>("dub_engine_status"),
   /** Open a local file with the OS default app. */
+  /** Save a generated image (data: URL) to disk via a native dialog. The webview
+   *  ignores <a download>, so the 下载 button uses this. Returns the saved path
+   *  (absolute) or null if the user cancelled. */
+  saveImageFile: (dataUrl: string, suggestedName: string) =>
+    invoke<string | null>("save_image_file", { dataUrl, suggestedName }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   /** Reveal a local file in the OS file manager. */
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),

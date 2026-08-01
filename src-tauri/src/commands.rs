@@ -1108,6 +1108,53 @@ pub async fn test_wb(
     Ok(chk)
 }
 
+/// Save a generated image to a user-chosen file via a native "Save As" dialog.
+/// The webview silently ignores `<a download>` on a data: URL, so the "下载"
+/// button calls this. `data_url` is the `data:image/...;base64,…` the UI holds.
+/// Returns the saved absolute path, or None if the user cancelled.
+#[tauri::command]
+pub async fn save_image_file(
+    app: AppHandle,
+    data_url: String,
+    suggested_name: String,
+) -> Result<Option<String>, String> {
+    use base64::Engine;
+    use tauri_plugin_dialog::DialogExt;
+    let (mime, b64) = data_url
+        .strip_prefix("data:")
+        .and_then(|s| s.split_once(";base64,"))
+        .ok_or_else(|| "图片数据格式不对".to_string())?;
+    let ext = match mime {
+        "image/png" => "png",
+        "image/webp" => "webp",
+        _ => "jpg",
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("解码图片失败: {e}"))?;
+    let stem = std::path::Path::new(&suggested_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("image");
+    let default_name = format!("{stem}.{ext}");
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&default_name)
+        .add_filter("图片", &[ext])
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let picked = rx.await.map_err(|e| e.to_string())?;
+    let Some(path) = picked.and_then(|fp| fp.into_path().ok()) else {
+        return Ok(None); // user cancelled
+    };
+    std::fs::write(&path, &bytes).map_err(|e| format!("写入失败: {e}"))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 /// Read the whole panel from the LOCAL DB — instant, offline, no rate-limit
 /// risk. Never touches WB. The frontend calls the sync_* commands to refresh.
 #[tauri::command]

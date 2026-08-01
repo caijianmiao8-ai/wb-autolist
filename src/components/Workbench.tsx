@@ -1923,6 +1923,23 @@ function ImagesPanel({
     gallery: "细节图",
     promo: "宣传图",
   };
+  const [savingIdx, setSavingIdx] = useState<number | null>(null);
+  const [savedIdx, setSavedIdx] = useState<number | null>(null);
+  async function downloadImg(url: string, kind: string, i: number) {
+    if (savingIdx !== null) return;
+    setSavingIdx(i);
+    try {
+      const path = await api.saveImageFile(url, `${labels[kind] ?? kind}-${i + 1}.jpg`);
+      if (path) {
+        setSavedIdx(i);
+        setTimeout(() => setSavedIdx((v) => (v === i ? null : v)), 1800);
+      }
+    } catch (e) {
+      alert("保存失败：" + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSavingIdx(null);
+    }
+  }
   return (
     <div className="card p-6">
       <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
@@ -1953,13 +1970,20 @@ function ImagesPanel({
                 >
                   <RefreshCw className="h-4 w-4" />
                 </button>
-                <a
-                  href={img.url}
-                  download
-                  className="grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white backdrop-blur"
+                <button
+                  onClick={() => downloadImg(img.url, img.kind, i)}
+                  disabled={savingIdx !== null}
+                  title="下载这张图片"
+                  className="grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white backdrop-blur disabled:opacity-50"
                 >
-                  <Download className="h-4 w-4" />
-                </a>
+                  {savingIdx === i ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : savedIdx === i ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                </button>
               </div>
               {busy && (
                 <div className="absolute inset-0 grid place-items-center bg-black/40 backdrop-blur-sm">

@@ -74,6 +74,7 @@ pub fn run() {
             commands::test_aurixel,
             commands::aurixel_balance,
             commands::test_wb,
+            commands::save_image_file,
             commands::db_list_cards,
             commands::sync_products,
             commands::sync_warehouses,
