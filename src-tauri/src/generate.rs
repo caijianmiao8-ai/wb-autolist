@@ -283,6 +283,9 @@ pub async fn generate_listing(
             &format!("{} 张产品图无法读取已忽略（建议用 JPG/PNG）。", supplied - bases.len()),
         );
     }
+    // "Use my own media": the seller's photos ARE the listing images — no image
+    // model, no spend, no waiting. Copy/characteristics still run normally.
+    let own_media = raw.use_own_media && !bases.is_empty();
     let is_edit = !bases.is_empty();
     let requested = raw.image_count.unwrap_or(3).clamp(1, 12) as usize;
     let custom = raw.custom_prompt.clone().unwrap_or_default();
@@ -295,19 +298,28 @@ pub async fn generate_listing(
         // user disabled/emptied every template → never ship zero images.
         plan = crate::templates::built_in_defaults().plan(requested);
     }
-    let full_count = plan.len().max(1);
+    let full_count = if own_media { bases.len() } else { plan.len().max(1) };
     // main-first: render only the lead image now; the rest go through generate_rest.
-    let now_count = if main_only && full_count > 1 { 1 } else { full_count };
+    // (own-media has nothing to render, so it's always "complete" immediately.)
+    let now_count = if own_media {
+        full_count
+    } else if main_only && full_count > 1 {
+        1
+    } else {
+        full_count
+    };
 
-    on(
-        "generate",
-        true,
-        &format!(
-            "文案完成，开始生成 {} 张图（{}，每张约 1-2 分钟）…",
-            now_count,
-            if is_edit { "基于你的产品图改造，保留实物" } else { "AI 全自动生成（未传产品图）" }
-        ),
-    );
+    if !own_media {
+        on(
+            "generate",
+            true,
+            &format!(
+                "文案完成，开始生成 {} 张图（{}，每张约 1-2 分钟）…",
+                now_count,
+                if is_edit { "基于你的产品图改造，保留实物" } else { "AI 全自动生成（未传产品图）" }
+            ),
+        );
+    }
 
     // Generate the images CONCURRENTLY (bounded), preserving order (index 0 = main).
     // buffered() runs up to N at once but yields in order, so progress + the images
@@ -320,8 +332,23 @@ pub async fn generate_listing(
     // then a restyle of the same product. With real seller photos we already have a
     // better anchor and use those instead.
     let mut images: Vec<GeneratedImage> = Vec::with_capacity(now_count);
+    if own_media {
+        // Publish the seller's own photos: normalize each to WB's 3:4 and keep the
+        // given order (first = main). Nothing is generated and nothing is charged.
+        on("generate", true, &format!("使用你上传的 {} 张图片（不出图、不消耗额度）…", bases.len()));
+        for (i, b) in bases.iter().enumerate() {
+            let norm = normalize_main(b, 1200, 1600)
+                .map_err(|e| anyhow::anyhow!("第 {} 张图片处理失败: {}", i + 1, e))?;
+            let slot = if i == 0 { "main" } else { "gallery" };
+            let mut img = save_image(&state.paths, &norm, slot, "用户上传的商品图片", 1200, 1600, "jpg")?;
+            // Real seller media: NOT a placeholder (safe to publish) and not a
+            // template render (the UI hides the "regenerate this" affordance).
+            img.template_kind = "uploaded".to_string();
+            images.push(img);
+        }
+    }
     let mut anchor: Vec<Vec<u8>> = bases.clone();
-    if anchor.is_empty() && now_count > 0 {
+    if !own_media && anchor.is_empty() && now_count > 0 {
         let first = render_one(
             state, cfg, &plan[0], &ctx, &[], &copy.title, &copy.bullets,
             &raw.product_name, &raw.keywords, 0,
@@ -335,7 +362,7 @@ pub async fn generate_listing(
         }
         images.push(first);
     }
-    {
+    if !own_media {
         // Bind references so each `async move` future captures cheap Copy refs (not a
         // move of the shared ctx/copy/raw). Build the futures in a for loop (same
         // anonymous type each iter → a Vec works) to avoid the closure-HRTB error that
@@ -364,7 +391,9 @@ pub async fn generate_listing(
     on(
         "generate",
         true,
-        if now_count < full_count {
+        if own_media {
+            "文案已生成，图片用你上传的原图"
+        } else if now_count < full_count {
             "主图已生成，确认后再出其余"
         } else {
             "全部生成完成"

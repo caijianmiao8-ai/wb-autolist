@@ -1,6 +1,6 @@
 [package]
 name = "wb-autolist"
-version = "1.0.37"
+version = "1.0.38"
 description = "Wildberries 商品自动化上架"
 authors = ["WB AutoList"]
 edition = "2021"

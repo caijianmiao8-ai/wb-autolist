@@ -75,6 +75,9 @@ export interface GenerateInput {
   imageCount?: number;
   /** Real product photos (data URLs) → img2img base; empty = text-to-image. */
   basePhotos?: string[];
+  /** Publish `basePhotos` AS the product images — no AI image generation at all
+   *  (no image spend, no waiting). Copy/characteristics still run normally. */
+  useOwnMedia?: boolean;
   /** Package dimensions (cm) + gross weight (kg). 0/unset → seller defaults. */
   length?: number;
   width?: number;

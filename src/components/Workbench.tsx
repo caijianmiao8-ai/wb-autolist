@@ -72,6 +72,7 @@ type Draft = {
   imageCount?: number;
   mainOnly?: boolean;
   basePhotos?: string[];
+  ownMedia?: boolean;
 };
 function loadDraft(): Draft {
   if (typeof window === "undefined") return {};
@@ -108,6 +109,8 @@ export function Workbench() {
   const [height, setHeight] = useState(draft0.height ?? 5);
   const [weight, setWeight] = useState(draft0.weight ?? 0.3);
   const [basePhotos, setBasePhotos] = useState<string[]>(draft0.basePhotos ?? []);
+  // 自有素材模式:直接用卖家自己的图片上架,完全跳过 AI 出图(不花额度、秒完成)。
+  const [ownMedia, setOwnMedia] = useState<boolean>(draft0.ownMedia ?? false);
   // English product video to dub into Russian and attach to the card (optional).
   // Restore the picked English video across tab switches (so the dub card +
   // 「配成俄语」button don't vanish when the listing re-hydrates into preview).
@@ -178,12 +181,13 @@ export function Workbench() {
         customPrompt,
         imageCount,
         mainOnly,
+        ownMedia,
       };
       sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
     } catch {
       /* sessionStorage unavailable/full — text draft is best-effort */
     }
-  }, [productName, keywords, price, discount, brand, length, width, height, weight, showAdvanced, customPrompt, imageCount, mainOnly]);
+  }, [productName, keywords, price, discount, brand, length, width, height, weight, showAdvanced, customPrompt, imageCount, mainOnly, ownMedia]);
 
   // Photos separately (base64 → can be MBs): only re-serialize when they change,
   // and degrade gracefully if it overflows the quota (text draft still survives).
@@ -285,9 +289,9 @@ export function Workbench() {
           })
       )
     );
-    // Cap at MAX_REF_PHOTOS (backend sends at most this many as references) — don't
-    // accept photos we'd silently ignore.
-    setBasePhotos((a) => [...a, ...urls].slice(0, 4));
+    // AI 模式:最多 4 张(后端最多送 4 张当参考,多了会被忽略)。
+    // 自有素材模式:这些图就是要上架的商品图,放宽到 10 张。
+    setBasePhotos((a) => [...a, ...urls].slice(0, ownMedia ? 10 : 4));
     if (photoRef.current) photoRef.current.value = "";
   }
 
@@ -329,12 +333,14 @@ export function Workbench() {
           customPrompt,
           imageCount,
           basePhotos,
+          useOwnMedia: ownMedia,
           length,
           width,
           height,
           weight,
         },
-        mainOnly
+        // 自有素材没有"先出主图再出其余"这回事 —— 图片是现成的,一次到位。
+        ownMedia ? false : mainOnly
       );
       setListing(data);
       setStep("preview");
@@ -588,6 +594,8 @@ export function Workbench() {
                 priceOutOfRange={priceOutOfRange}
                 basePhotos={basePhotos}
                 setBasePhotos={setBasePhotos}
+                ownMedia={ownMedia}
+                setOwnMedia={setOwnMedia}
                 photoRef={photoRef}
                 onPhotos={onPhotos}
                 videoPath={videoPath}
@@ -642,6 +650,8 @@ export function Workbench() {
               restLoading={restLoading}
               restMissing={restMissing}
               hasVideo={!!videoPath}
+              ownMedia={ownMedia}
+              ownPhotoCount={basePhotos.length}
               onGenerate={handleGenerate}
               onPublish={handlePublish}
               onGenerateRest={doGenerateRest}
@@ -663,6 +673,8 @@ export function Workbench() {
               basePhotos={basePhotos}
               imageCount={imageCount}
               hasVideo={!!videoPath}
+              ownMedia={ownMedia}
+              ownPhotoCount={basePhotos.length}
             />
           )}
           {step === "generating" && <GeneratingState msg={genMsg} />}
@@ -720,6 +732,8 @@ interface InputFormProps {
   priceOutOfRange: boolean;
   basePhotos: string[];
   setBasePhotos: React.Dispatch<React.SetStateAction<string[]>>;
+  ownMedia: boolean;
+  setOwnMedia: (v: boolean) => void;
   photoRef: React.RefObject<HTMLInputElement>;
   onPhotos: (e: React.ChangeEvent<HTMLInputElement>) => void;
   videoPath: string | null;
@@ -826,22 +840,95 @@ function InputForm(p: InputFormProps) {
 
       {/* 素材:两个独立、含义清晰的上传区 */}
       <div>
-        <label className="label">素材（都可选）</label>
+        {/* 图片来源:一个开关决定"AI 出图" 还是 "直接用我的图" —— 后者不花额度、秒完成 */}
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <label className="label mb-0">商品图片</label>
+          <div className="flex gap-0.5 rounded-lg border border-slate-900/[0.08] bg-slate-900/[0.03] p-0.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
+            <button
+              type="button"
+              onClick={() => p.setOwnMedia(false)}
+              className={clsx(
+                "flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition",
+                !p.ownMedia
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-white/[0.12] dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              )}
+            >
+              <Sparkles className="h-3 w-3" /> AI 生成
+            </button>
+            <button
+              type="button"
+              onClick={() => p.setOwnMedia(true)}
+              className={clsx(
+                "flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition",
+                p.ownMedia
+                  ? "bg-white text-slate-900 shadow-sm dark:bg-white/[0.12] dark:text-white"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              )}
+            >
+              <ImageIcon className="h-3 w-3" /> 用我自己的图
+            </button>
+          </div>
+          {p.ownMedia && (
+            <span className="chip border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-300">
+              不出图 · 不消耗额度 · 秒完成
+            </span>
+          )}
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          {/* 参考产品图 → 喂 AI */}
-          <div className="rounded-xl border border-slate-900/[0.08] bg-slate-900/[0.02] p-3 dark:border-white/[0.07] dark:bg-white/[0.02]">
+          {/* 参考产品图 → 喂 AI；自有素材模式下这些图直接上架 */}
+          <div
+            className={clsx(
+              "rounded-xl border p-3",
+              p.ownMedia
+                ? "border-wb-purple/30 bg-wb-purple/[0.04]"
+                : "border-slate-900/[0.08] bg-slate-900/[0.02] dark:border-white/[0.07] dark:bg-white/[0.02]"
+            )}
+          >
             <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200">
-              <ImageIcon className="h-3.5 w-3.5 text-wb-purple" /> 参考产品图
+              <ImageIcon className="h-3.5 w-3.5 text-wb-purple" />
+              {p.ownMedia ? "商品图片（直接上架）" : "参考产品图"}
+              <span className="ml-auto text-[10px] font-normal text-slate-400">
+                {p.basePhotos.length}/{p.ownMedia ? 10 : 4}
+              </span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {p.basePhotos.map((ph, i) => (
-                <div key={i} className="relative">
+                <div key={i} className="group/ph relative">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={ph}
                     alt=""
-                    className="h-12 w-12 rounded-lg border border-slate-900/10 object-cover dark:border-white/10"
+                    className={clsx(
+                      "h-12 w-12 rounded-lg border object-cover",
+                      p.ownMedia && i === 0
+                        ? "border-2 border-wb-purple"
+                        : "border-slate-900/10 dark:border-white/10"
+                    )}
                   />
+                  {/* 自有素材:第一张就是 WB 主图 —— 标出来,并允许一键换主图 */}
+                  {p.ownMedia && i === 0 && (
+                    <span className="absolute inset-x-0 bottom-0 rounded-b-lg bg-wb-purple/90 text-center text-[9px] leading-[13px] text-white">
+                      主图
+                    </span>
+                  )}
+                  {p.ownMedia && i > 0 && (
+                    <button
+                      type="button"
+                      title="设为主图"
+                      onClick={() =>
+                        p.setBasePhotos((a) => {
+                          const n = [...a];
+                          const [x] = n.splice(i, 1);
+                          n.unshift(x);
+                          return n;
+                        })
+                      }
+                      className="absolute inset-x-0 bottom-0 rounded-b-lg bg-black/70 text-center text-[9px] leading-[13px] text-white opacity-0 transition group-hover/ph:opacity-100"
+                    >
+                      设为主图
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => p.setBasePhotos((a) => a.filter((_, idx) => idx !== i))}
@@ -868,7 +955,16 @@ function InputForm(p: InputFormProps) {
               />
             </div>
             <p className="mt-2 text-[11px] leading-snug text-slate-400">
-              你的真实产品图，<b>可传多张</b>(不同角度/细节，最多 4 张一起参考，出图更像实物)；留空则全自动生成。
+              {p.ownMedia ? (
+                <>
+                  这些图<b>原样上架</b>（自动裁成 WB 的 3:4），第一张为主图，最多 10 张。
+                  <b>不调用 AI 出图</b>。
+                </>
+              ) : (
+                <>
+                  你的真实产品图，<b>可传多张</b>(不同角度/细节，最多 4 张一起参考，出图更像实物)；留空则全自动生成。
+                </>
+              )}
             </p>
           </div>
 
@@ -979,7 +1075,9 @@ function InputForm(p: InputFormProps) {
               </p>
             </div>
 
-            <div>
+            {/* 出图相关的设置在"用我自己的图"模式下无意义 —— 直接隐藏,别让用户
+                对着不起作用的选项调半天 */}
+            <div className={clsx(p.ownMedia && "hidden")}>
               <label className="label">自定义提示词（可选）</label>
               <textarea
                 className="input"
@@ -990,7 +1088,7 @@ function InputForm(p: InputFormProps) {
               />
             </div>
 
-            <div>
+            <div className={clsx(p.ownMedia && "hidden")}>
               <label className="label">生成图片数量</label>
               <div className="flex items-center gap-1.5">
                 {[5, 8, 10].map((n) => (
@@ -1026,7 +1124,12 @@ function InputForm(p: InputFormProps) {
               </p>
             </div>
 
-            <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+            <label
+              className={clsx(
+                "flex cursor-pointer items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300",
+                p.ownMedia && "hidden"
+              )}
+            >
               <input
                 type="checkbox"
                 className="mt-0.5 h-4 w-4 accent-wb-purple"
@@ -1657,6 +1760,8 @@ function PrimaryAction({
   restLoading,
   restMissing,
   hasVideo,
+  ownMedia,
+  ownPhotoCount,
   onGenerate,
   onPublish,
   onGenerateRest,
@@ -1672,6 +1777,8 @@ function PrimaryAction({
   restLoading: boolean;
   restMissing: number;
   hasVideo: boolean;
+  ownMedia: boolean;
+  ownPhotoCount: number;
   onGenerate: () => void;
   onPublish: () => void;
   onGenerateRest: () => void;
@@ -1680,13 +1787,31 @@ function PrimaryAction({
   onReset: () => void;
 }) {
   if (step === "input") {
+    // 自有素材模式必须真的有图 —— 没图就没东西可上架,把原因说清楚而不是让它失败。
+    const needPhotos = ownMedia && ownPhotoCount === 0;
     return (
       <>
-        <button className="btn-primary w-full" data-tour="generate" onClick={onGenerate}>
-          <Sparkles className="h-4 w-4" /> 一键生成
+        <button
+          className="btn-primary w-full"
+          data-tour="generate"
+          onClick={onGenerate}
+          disabled={needPhotos}
+        >
+          <Sparkles className="h-4 w-4" /> {ownMedia ? "生成文案并预览" : "一键生成"}
         </button>
         <p className="mt-2 text-center text-[11px] text-slate-400">
-          生成俄语图文 + 配图 · 消耗你的 Aurixel 余额{hasVideo ? "（视频在预览里点「配成俄语」）" : ""}
+          {needPhotos ? (
+            <span className="text-amber-600 dark:text-amber-400">请先上传至少 1 张商品图片</span>
+          ) : ownMedia ? (
+            <>
+              只生成俄语文案（约 10 秒）· 图片用你上传的 {ownPhotoCount} 张，<b>不消耗出图额度</b>
+            </>
+          ) : (
+            <>
+              生成俄语图文 + 配图 · 消耗你的 Aurixel 余额
+              {hasVideo ? "（视频在预览里点「配成俄语」）" : ""}
+            </>
+          )}
         </p>
       </>
     );
@@ -1770,6 +1895,8 @@ function LivePreview({
   basePhotos,
   imageCount,
   hasVideo,
+  ownMedia,
+  ownPhotoCount,
 }: {
   productName: string;
   price: number;
@@ -1778,6 +1905,8 @@ function LivePreview({
   basePhotos: string[];
   imageCount: number;
   hasVideo: boolean;
+  ownMedia: boolean;
+  ownPhotoCount: number;
 }) {
   return (
     <div className="card flex h-full min-h-0 flex-col p-5">
@@ -1796,7 +1925,9 @@ function LivePreview({
             ) : (
               <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-300 dark:text-slate-600">
                 <ImageIcon className="h-9 w-9" />
-                <span className="text-[11px] text-slate-400">AI 主图将显示在这里</span>
+                <span className="text-[11px] text-slate-400">
+                  {ownMedia ? "上传的第一张图 = 主图" : "AI 主图将显示在这里"}
+                </span>
               </div>
             )}
           </div>
@@ -1820,10 +1951,13 @@ function LivePreview({
       </div>
 
       <div className="mt-4 shrink-0 rounded-xl bg-slate-900/[0.04] px-3.5 py-3 text-xs leading-relaxed text-slate-600 dark:bg-white/5 dark:text-slate-300">
-        <span className="font-medium text-slate-800 dark:text-slate-100">点「一键生成」后产出：</span>
+        <span className="font-medium text-slate-800 dark:text-slate-100">
+          {ownMedia ? "点「生成文案并预览」后产出：" : "点「一键生成」后产出："}
+        </span>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           <span className="chip">
-            <ImageIcon className="h-3 w-3 text-wb-purple" /> 图片 ×{imageCount}
+            <ImageIcon className="h-3 w-3 text-wb-purple" />
+            {ownMedia ? `你的图片 ×${ownPhotoCount}` : `图片 ×${imageCount}`}
           </span>
           <span className="chip">
             <Sparkles className="h-3 w-3 text-wb-pink" /> 俄语文案 + 中文对照
@@ -1954,8 +2088,18 @@ function ImagesPanel({
   return (
     <div className="card p-6">
       <div className="mb-4 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
-        <ImageIcon className="h-4 w-4 text-wb-pink" /> 生成的图片
-        <span className="text-xs font-normal text-slate-400">（不满意可单张重生成）</span>
+        <ImageIcon className="h-4 w-4 text-wb-pink" />
+        {listing.images.every((i) => i.templateKind === "uploaded") ? (
+          <>
+            商品图片
+            <span className="text-xs font-normal text-slate-400">（你上传的原图，第一张为主图）</span>
+          </>
+        ) : (
+          <>
+            生成的图片
+            <span className="text-xs font-normal text-slate-400">（不满意可单张重生成）</span>
+          </>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {listing.images.map((img, i) => {
@@ -1980,17 +2124,20 @@ function ImagesPanel({
                 </div>
               )}
               <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition group-hover:opacity-100">
-                <button
-                  onClick={() => {
-                    setInstrIdx((v) => (v === i ? null : i));
-                    setInstr("");
-                  }}
-                  disabled={regenLoading !== null}
-                  title="重新生成这一张（可提要求）"
-                  className="grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white backdrop-blur disabled:opacity-50"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </button>
+                {/* 用户自己上传的图不存在"重新生成"——那会用 AI 覆盖掉他的原图 */}
+                {img.templateKind !== "uploaded" && (
+                  <button
+                    onClick={() => {
+                      setInstrIdx((v) => (v === i ? null : i));
+                      setInstr("");
+                    }}
+                    disabled={regenLoading !== null}
+                    title="重新生成这一张（可提要求）"
+                    className="grid h-8 w-8 place-items-center rounded-lg bg-black/50 text-white backdrop-blur disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
+                )}
                 <button
                   onClick={() => downloadImg(img.url, img.kind, i)}
                   disabled={savingIdx !== null}
@@ -2617,6 +2764,22 @@ function VideoPanel({
             disabled={!!listing.nmID}
           >
             <Video className="h-3.5 w-3.5" /> 配成俄语
+          </button>
+          {/* 视频已经是俄语/不需要处理时,直接拿来上架,不走配音也不花钱 */}
+          <button
+            className="btn-ghost w-full py-2 text-xs"
+            onClick={async () => {
+              setErr(null);
+              try {
+                onUpdate(await api.setListingVideo(listing.id, videoPath));
+              } catch (e) {
+                setErr(e instanceof Error ? e.message : "设置视频失败");
+              }
+            }}
+            disabled={!!listing.nmID}
+            title="视频已经是俄语或不需要处理时，直接随卡片上架"
+          >
+            直接使用（不配音、不花钱）
           </button>
         </div>
       )}

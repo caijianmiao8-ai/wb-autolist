@@ -211,6 +211,9 @@ fn clean_parts(
         custom_prompt: None,
         image_count: None,
         base_photos: vec![],
+        // Batch rows go through AI generation; the batch UI sets this per row when
+        // the seller opts into using their own matched photos instead.
+        use_own_media: false,
         // batch/Excel rows carry no per-item dims → 0 makes generate_listing fall
         // back to the seller's configured default package.
         length: 0,

@@ -154,6 +154,11 @@ pub struct ListingInput {
     /// Empty → text-to-image.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub base_photos: Vec<String>,
+    /// "Use my own media": publish `base_photos` AS the product images instead of
+    /// feeding them to the image model. Skips generation entirely — no image spend,
+    /// no waiting. Copy/characteristics are still produced normally.
+    #[serde(default)]
+    pub use_own_media: bool,
     /// Package dimensions (cm) + gross weight (kg). 0/unset → fall back to the
     /// seller's configured defaults (see config.rs) in generate_listing.
     #[serde(default)]
