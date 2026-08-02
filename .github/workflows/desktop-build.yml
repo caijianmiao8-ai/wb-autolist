@@ -102,6 +102,31 @@ jobs:
           releaseDraft: false
           prerelease: false
 
+  # Mirror the finished release to the bifrostapi.net S3 bucket. Customers behind a
+  # network that can't reach GitHub download AND auto-update from there instead
+  # (the app's updater lists the mirror first, GitHub second). Runs once, after
+  # BOTH platform builds finish, so latest.json already has every platform in it.
+  # Skipped automatically when the AWS secrets aren't configured.
+  mirror:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mirror release to S3 (bifrostapi.net)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.MIRROR_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MIRROR_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.MIRROR_AWS_REGION || 'us-east-1' }}
+          MIRROR_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+            echo "::warning::未配置 MIRROR_AWS_* secrets，跳过 S3 镜像"; exit 0
+          fi
+          chmod +x scripts/mirror-release.sh
+          ./scripts/mirror-release.sh "${{ github.ref_name }}"
+
       # Keep artifacts for MANUAL/dev builds only — tag builds already attach the
       # installers to the GitHub Release (the real download page). Skipping on tags
       # avoids the artifact-storage quota failing an otherwise-successful release
